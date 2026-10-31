@@ -1,0 +1,11 @@
+node_modules/
+.env
+dist/
+out/
+*.log
+.DS_Store
+vigil-report-*.html
+vigil-report-*.md
+vigil-report-*.sarif
+vigil-report-*.json
+vigil-report-*.pdf

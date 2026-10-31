@@ -1,0 +1,53 @@
+{
+  "name": "vigil",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KI-gestuetztes, defensives Sicherheits-Audit fuer eigene Dateien, Ordner, Archive, Binaries und erreichbare Endpunkte.",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "cli": "node src/cli.js",
+    "test": "node test/run.js",
+    "make-icon": "node tools/make-icon.js",
+    "dist": "electron-builder --win"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "dotenv": "^16.4.7",
+    "socks": "^2.8.10",
+    "undici": "^6.21.1"
+  },
+  "build": {
+    "appId": "com.passimoritz.vigil",
+    "productName": "Vigil",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "assets/**/*",
+      "package.json",
+      "!test/**",
+      "!tools/**",
+      "!dist/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Vigil"
+    }
+  }
+}

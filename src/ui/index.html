@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vigil</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m8.5 12 2.3 2.4L15.8 9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div>
+        <div class="title">Vigil</div>
+        <div class="tag">Findet Sicherheitslücken in deinen Sachen – und erklärt, wie du sie behebst</div>
+      </div>
+    </div>
+    <button id="historyBtn" class="btn ghost small" aria-label="Scan-Verlauf">Verlauf</button>
+    <button id="settingsBtn" class="btn ghost icon-btn" aria-label="Einstellungen">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.5-2-3.4-2.3 1a7.6 7.6 0 0 0-1.7-1l-.4-2.6h-4l-.3 2.6a7.6 7.6 0 0 0-1.8 1l-2.3-1-2 3.4L4.6 11a7.6 7.6 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7.6 7.6 0 0 0 1.7 1l.4 2.6h4l.3-2.6a7.6 7.6 0 0 0 1.8-1l2.3 1 2-3.4-2-1.5z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+      <span>Einstellungen</span>
+    </button>
+  </header>
+
+  <main>
+    <p class="lede">Vigil durchsucht deine <b>eigenen</b> Dateien, Programme und Projekte nach Sicherheitslücken. Du bekommst für jedes Problem: <b>wie schlimm</b> es ist, <b>wo</b> es steckt und <b>wie du es reparierst</b> – in normaler Sprache.</p>
+
+    <!-- Schritt 1: KI -->
+    <section class="step">
+      <div class="step-head"><span class="num">1</span><h2>Welche KI soll prüfen?</h2></div>
+      <div class="step-body">
+        <div class="prov-row">
+          <select id="providerSelect" aria-label="KI-Anbieter"></select>
+          <button id="pingBtn" class="btn">Verbindung testen</button>
+          <span id="status" class="status"><span class="dot" id="statusDot"></span><span id="statusText">noch nicht getestet</span></span>
+        </div>
+        <p id="providerDesc" class="muted small"></p>
+        <p class="hint-box">
+          <b>Lokal (Ollama)</b> läuft auf deinem Rechner – kostenlos und deine Daten bleiben bei dir.
+          <b>Claude / OpenAI / Gemini</b> sind stärker, brauchen aber einen Schlüssel (unter ⚙ Einstellungen).
+        </p>
+      </div>
+    </section>
+
+    <!-- Schritt 2: Was prüfen -->
+    <section class="step">
+      <div class="step-head"><span class="num">2</span><h2>Was soll geprüft werden?</h2></div>
+      <div class="step-body">
+        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Dateien hierher ziehen oder zum Auswählen aktivieren">
+          <svg viewBox="0 0 24 24" class="dz-icon" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <div class="dz-text">Dateien, Ordner, ZIP, JAR oder EXE hierher ziehen</div>
+          <div class="dz-sub">z. B. ein ganzes Projekt, eine App oder ein einzelnes Skript</div>
+          <div class="dz-buttons">
+            <button id="pickFilesBtn" class="btn">Dateien auswählen…</button>
+            <button id="pickFolderBtn" class="btn">Ordner auswählen…</button>
+          </div>
+        </div>
+
+        <button id="advToggle" class="adv-toggle" aria-expanded="true">▾ Webseite oder Server prüfen</button>
+        <div id="advPanel" class="adv-panel">
+          <p class="caution">Nur für Ziele, die <b>dir gehören</b> oder die du prüfen darfst. Vigil führt <b>ausschließlich zerstörungsfreie</b> Prüfungen durch: TLS/Zertifikat, Sicherheits-Header, Cookies, CORS, HTTP-Methoden und versehentlich offengelegte Pfade (z. B. <code>/.git</code>, <code>/.env</code>). Keine Angriffe, kein Fuzzing, keine Last-Tests.</p>
+          <div class="field">
+            <label for="urlInput">Webadresse (URL)</label>
+            <div class="row"><input id="urlInput" type="text" placeholder="https://meine-seite.example/pfad" /><button id="addUrlBtn" class="btn small">Hinzufügen</button></div>
+          </div>
+          <div class="field">
+            <label for="ipInput">IP-Adresse oder Host</label>
+            <div class="row"><input id="ipInput" type="text" placeholder="z. B. 192.0.2.10 oder host.example" /><button id="addIpBtn" class="btn small">Hinzufügen</button></div>
+            <label class="check"><input type="checkbox" id="authChk" /> Ich bin berechtigt, dieses Ziel zu prüfen.</label>
+          </div>
+        </div>
+
+        <div id="targets" class="targets" hidden>
+          <div class="targets-head"><span>Zu prüfen (<span id="targetCount">0</span>)</span><button id="clearBtn" class="btn ghost small">Alles entfernen</button></div>
+          <ul id="targetList"></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Schritt 3: Start -->
+    <section class="step">
+      <div class="step-head"><span class="num">3</span><h2>Prüfung starten</h2></div>
+      <div class="step-body">
+        <div class="run-row">
+          <button id="runBtn" class="btn primary big" disabled>Jetzt prüfen</button>
+          <button id="cancelBtn" class="btn big" hidden>Abbrechen</button>
+          <p class="muted small" id="runHint">Füge oben zuerst etwas zur Prüfliste hinzu.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Fortschritt -->
+    <section class="card" id="progressPanel" hidden aria-live="polite">
+      <div class="progress-head">
+        <strong id="progressTitle">Prüfung läuft …</strong>
+        <div class="bar"><div id="barFill" class="bar-fill"></div></div>
+      </div>
+      <div id="stepper" class="stepper"></div>
+      <div id="costPanel" class="cost-panel" hidden title="Grobe Schätzung – echte Tarife können abweichen. Lokale Modelle (Ollama) sind kostenlos und werden hier nicht angezeigt."></div>
+      <button id="logToggle" class="adv-toggle" aria-expanded="false">▸ Technische Details</button>
+      <pre id="log" class="log" hidden></pre>
+    </section>
+
+    <!-- Ergebnis -->
+    <section id="resultPanel" hidden>
+      <div id="verdict" class="verdict"></div>
+      <div class="card">
+        <div class="result-head">
+          <div class="legend" id="legend"></div>
+          <div class="result-actions">
+            <button id="exportHtmlBtn" class="btn small">Als HTML speichern</button>
+            <button id="exportMdBtn" class="btn small">Als Markdown speichern</button>
+            <button id="exportSarifBtn" class="btn small" title="SARIF 2.1.0 – lädt direkt in VS Code, GitHub Code Scanning, CI u. a.">Als SARIF speichern</button>
+            <button id="exportPdfBtn" class="btn small" title="Bericht als PDF – gut zum Teilen oder Archivieren.">Als PDF speichern</button>
+            <button id="baselineBtn" class="btn small" title="Merkt sich die aktuellen Befunde als Vergleichsbasis – beim nächsten Lauf werden nur neue hervorgehoben.">Als Baseline merken</button>
+          </div>
+        </div>
+        <p id="baselineStatus" class="muted small" aria-live="polite"></p>
+        <div class="filters" id="filters" role="tablist"></div>
+        <div class="filters" id="viewToggles"></div>
+        <div id="findings" class="findings"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Einstellungen -->
+  <div id="historyOverlay" class="overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+      <div class="modal-head">
+        <h2 id="historyTitle">Scan-Verlauf</h2>
+        <button id="historyClose" class="btn ghost small" aria-label="Schließen">✕ Schließen</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted small">Die letzten Läufe, lokal auf deinem Rechner gespeichert. Zum Ansehen anklicken.</p>
+        <div id="historyList" class="history-list"></div>
+      </div>
+      <div class="modal-foot">
+        <span id="historyStatus" class="muted small"></span>
+        <button id="historyClearBtn" class="btn ghost small">Verlauf leeren</button>
+      </div>
+    </div>
+  </div>
+  <div id="settingsOverlay" class="overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="modal-head">
+        <h2 id="settingsTitle">Einstellungen</h2>
+        <button id="settingsClose" class="btn ghost small" aria-label="Schließen">✕ Schließen</button>
+      </div>
+      <div class="modal-body">
+        <div class="set-block">
+          <h3>Genauigkeit der KI <span class="infotip" tabindex="0" role="note" data-tip="Niedrig = die KI bleibt sachlich und nachvollziehbar (empfohlen für Sicherheitsprüfungen). Hoch = kreativer, erfindet aber eher Dinge.">i</span></h3>
+          <div class="slider-row">
+            <input type="range" id="tempRange" min="0" max="1" step="0.1" />
+            <span id="tempVal" class="temp-val">0.1</span>
+          </div>
+          <p class="muted small" id="tempDesc"></p>
+        </div>
+        <div class="set-block">
+          <label class="check big"><input type="checkbox" id="cveChk" /> Abhängigkeiten gegen bekannte Schwachstellen-Datenbank (OSV.dev) prüfen
+            <span class="infotip" tabindex="0" role="note" data-tip="Vergleicht gefundene Bibliotheken (npm, PyPI, Maven, Go, Cargo, RubyGems) mit öffentlich bekannten CVEs. Kostenlos, kein Schlüssel nötig, braucht aber Internet.">i</span>
+          </label>
+        </div>
+        <div class="set-block">
+          <h3>Gründlichkeit der KI-Analyse <span class="infotip" tabindex="0" role="note" data-tip="Schnell = ein KI-Durchgang. Gründlich = fünf fokussierte Durchgänge (Zugriff, Injection, Krypto, Logik, Konfig) – findet deutlich mehr, dauert länger und kostet mehr API-Nutzung.">i</span></h3>
+          <select id="depthSelect">
+            <option value="thorough">Gründlich – 5 fokussierte Durchgänge (empfohlen)</option>
+            <option value="standard">Schnell – 1 Durchgang</option>
+          </select>
+        </div>
+        <div class="set-block">
+          <h3>Externe Sicherheits-Tools einbeziehen <span class="infotip" tabindex="0" role="note" data-tip="Nutzt etablierte Werkzeuge, falls auf dem Rechner installiert. Bei Servern (nur eigene/freigegebene, mit gesetzter Berechtigung): Port-/Dienst-Scan (nmap) und Schwachstellen-Templates (nuclei) – kein DoS, kein Brute-Force. Bei Ordnern/Dateien: Secrets (gitleaks, trufflehog), Schwachstellen & Fehlkonfiguration (trivy), Paket-Schwachstellen (grype), Code-Analyse (semgrep), Python-Code (bandit), Infrastruktur/IaC (checkov), verwundbare JS-Libs (retire.js), Dockerfiles (hadolint) und verwundbare Abhängigkeiten über viele Ökosysteme gegen OSV.dev (osv-scanner). Nicht installierte Tools werden einfach übersprungen.">i</span></h3>
+          <label class="check big"><input type="checkbox" id="activeChk"> Externe Tools einschalten (Server nur für autorisierte Ziele)</label>
+          <p class="muted small">Bei Servern gilt das nur für Ziele mit bestätigter Berechtigung. Für Ordner/Dateien laufen zusätzlich die installierten Datei- und Abhängigkeits-Scanner. Kann je nach Ziel einige Minuten dauern; mit „Abbrechen" stoppbar.</p>
+        </div>
+        <div class="set-block">
+          <h3>Netzwerk: Proxy / VPN <span class="infotip" tabindex="0" role="note" data-tip="Leitet alle Anfragen (KI, Schwachstellen-DB, Web-Checks) über einen Proxy. Der Zielserver sieht dann die IP des Proxys statt deiner. Unterstützt: http://, https://, socks5:// (z. B. Tor unter socks5://127.0.0.1:9050), socks4://. Nur so lässt sich die IP verbergen – durch Verschlüsselung allein nicht.">i</span></h3>
+          <p class="muted small">Leer = Direktverbindung (der Anbieter sieht deine echte IP). Mit Proxy/VPN sieht er dessen IP. „Testen" zeigt dir die nach außen sichtbare IP.</p>
+          <div class="field" style="margin-top:8px">
+            <div class="row">
+              <input type="text" id="proxyInput" placeholder="z. B. socks5://127.0.0.1:9050 oder http://proxy:3128" />
+              <button id="proxyTestBtn" class="btn small">Testen</button>
+            </div>
+            <p class="muted small" id="proxyTestStatus"></p>
+          </div>
+        </div>
+        <div class="set-block">
+          <h3>Eigene Regeln &amp; Muster <span class="infotip" tabindex="0" role="note" data-tip="Ergänze eigene Muster (regulärer Ausdruck), die Vigil als möglichen Fund meldet – z. B. ein firmeninternes Schlüsselformat. Oder schalte eingebaute Regeln ab, die bei dir nur Rauschen erzeugen. Alles wird lokal gespeichert.">i</span></h3>
+          <p class="muted small">Eigene Secret-/Text-Muster als regulären Ausdruck hinzufügen oder eingebaute Regeln abschalten.</p>
+          <div id="customRules"></div>
+          <button id="addRuleBtn" type="button" class="btn small">+ Eigene Regel</button>
+          <details class="rules-off">
+            <summary>Eingebaute Regeln deaktivieren</summary>
+            <div id="disabledRules" class="rules-grid"></div>
+          </details>
+        </div>
+        <div class="set-block">
+          <h3>KI-Zugänge</h3>
+          <p class="muted small">Schlüssel werden nur lokal auf deinem Rechner gespeichert und nur an den jeweils gewählten Anbieter gesendet – immer über eine verschlüsselte HTTPS-Verbindung (unverschlüsselte externe Ziele werden abgelehnt). Leere Felder nutzen ggf. Werte aus der <code>.env</code>. <b>Hinweis:</b> Deine IP-Adresse sieht der Anbieter technisch bedingt trotzdem – ganz vermeiden lässt sich das nur mit „Lokal (Ollama)" oder einem eigenen VPN/Proxy.</p>
+          <div id="providerSettings"></div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <span id="settingsStatus" class="muted small"></span>
+        <button id="settingsSave" class="btn primary small">Speichern</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
