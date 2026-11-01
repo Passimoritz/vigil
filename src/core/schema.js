@@ -3,6 +3,7 @@
 // Zentrale Definitionen fuer Befunde (Findings) und Hilfsfunktionen.
 
 const crypto = require('crypto');
+const { UnifiedFindingSchema, check } = require('./validation');
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
@@ -29,6 +30,24 @@ function clampScore(v) {
   return Math.max(0, Math.min(10, Math.round(n * 10) / 10));
 }
 
+// Secret fuer die Anzeige/Speicherung kuerzen: nur die ersten 3 und letzten 2 Zeichen bleiben.
+function redactSecret(s) {
+  const v = String(s || '').trim();
+  if (!v) return '';
+  if (v.length <= 8) return '****';
+  return `${v.slice(0, 3)}****…**${v.slice(-2)}`;
+}
+
+// Stabile Regel-ID: explizit gesetzt, sonst CVE/GHSA aus dem Titel, sonst Kurzform des Titels.
+function deriveRuleId(f) {
+  if (f.ruleId) return String(f.ruleId).trim().slice(0, 200);
+  const id = String(f.title || '').match(VULN_ID_RE);
+  if (id) return id[0].toUpperCase();
+  return String(f.title || 'befund').toLowerCase().replace(TOOL_PREFIX_RE, '')
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'befund';
+}
+
 // Rohen Befund (von KI oder Prescan) in eine einheitliche Form bringen.
 function normalizeFinding(raw, source) {
   const f = raw && typeof raw === 'object' ? raw : {};
@@ -40,12 +59,24 @@ function normalizeFinding(raw, source) {
   let category = String(f.category || 'Other').trim();
   if (!CATEGORIES.includes(category)) category = 'Other';
 
-  return {
+  // "https://x.com - Response-Header der 301-Antwort" -> Ort = URL, Rest = Detail.
+  let location = String(f.location || f.file || '').trim();
+  let locationDetail = '';
+  const lm = location.match(/^(https?:\/\/[^\s'"]+)\s+(.+)$/i);
+  if (lm) {
+    location = lm[1].replace(/[,.;]+$/, '');
+    locationDetail = lm[2].replace(/^[-–—:>|,\s]+/, '').replace(/^\((.*)\)$/, '$1').trim();
+  }
+
+  const out = {
+    ruleId: deriveRuleId(f),
+    ...(locationDetail ? { locationDetail: locationDetail.slice(0, 200) } : {}),
+    ...(f.evidence ? { evidence: String(f.evidence).slice(0, 500) } : {}),
     title: String(f.title || 'Unbenannter Befund').trim().slice(0, 200),
     severity,
     cvss,
     category,
-    location: String(f.location || f.file || '').trim().slice(0, 300),
+    location: location.slice(0, 300),
     description: String(f.description || '').trim(),
     reachability: String(f.reachability || f.exploitability || '').trim(),
     impact: String(f.impact || '').trim(),
@@ -56,6 +87,10 @@ function normalizeFinding(raw, source) {
       : 'medium',
     source: source || f.source || 'ai',
   };
+  // Zod-Pruefung als letzte Sicherung: was hier durchfaellt, ist ein Programmierfehler.
+  const v = check(UnifiedFindingSchema, out);
+  if (!v.ok) throw new Error('Ungueltiger Befund: ' + v.error);
+  return out;
 }
 
 // Stabiler Fingerabdruck eines Befunds (fuer Baseline-Vergleich und
@@ -86,8 +121,39 @@ function vulnIds(f) {
   return [...new Set(ids.map((s) => s.toUpperCase()))];
 }
 
+// Host eines Web-Orts: "https://www.x.com/de - Response-Header …" -> "x.com"; "x.com:443" -> "x.com".
+function hostKey(loc) {
+  const s = String(loc || '').trim().toLowerCase();
+  const m = s.match(/https?:\/\/([^\s/'"?#)]+)/) || s.match(/^((?:[a-z0-9-]+\.)+[a-z]{2,}|(?:\d{1,3}\.){3}\d{1,3})(?::\d+)?$/);
+  return m ? m[1].replace(/:\d+$/, '').replace(/^www\./, '') : null;
+}
+
+// Themen eines Web-Befunds – dieselbe Luecke, egal wie Titel oder Kategorie formuliert sind.
+const WEB_TOPICS = [
+  ['hsts', /hsts|strict-transport/i, 'HSTS'],
+  ['csp', /\bcsp\b|content-security-policy/i, 'Content-Security-Policy'],
+  ['xcto', /x-content-type|nosniff/i, 'X-Content-Type-Options'],
+  ['clickjacking', /x-frame-options|clickjacking|frame-ancestors/i, 'X-Frame-Options'],
+  ['referrer', /referrer-policy/i, 'Referrer-Policy'],
+  ['permissions', /permissions-policy/i, 'Permissions-Policy'],
+  ['powered-by', /x-powered-by/i, 'X-Powered-By'],
+  ['banner', /server-banner|server-header|server header|\bbanner\b|software-(?:typ|version)|server:\s/i, 'Server-Banner'],
+];
+const GENERIC_HEADERS = /sicherheits-?header|security[- ]?header|response-header/i;
+function webTopics(f) {
+  const text = `${f.ruleId || ''} ${f.title || ''}`;
+  const set = new Set(WEB_TOPICS.filter(([, re]) => re.test(text)).map(([k]) => k));
+  if (!set.size && GENERIC_HEADERS.test(text)) set.add('headers');
+  return set;
+}
+// Sammel-Befund ("Fehlende Header: HSTS, CSP, …") statt einer einzelnen Luecke.
+const isAggregate = (topics) => topics.size >= 2 || topics.has('headers');
+const intersects = (a, b) => [...a].some((x) => b.has(x));
+
 // "C:\proj\src\app.js line 12" / "./src/app.js:12-14" -> { file: 'src/app.js', line: 12 }
 function splitLoc(loc) {
+  // Web-Orte zaehlen nur ueber den Host – die KI haengt gern Beschreibungen an die URL.
+  if (/https?:\/\//i.test(String(loc || ''))) return { file: 'web:' + hostKey(loc), line: null };
   let s = String(loc || '').trim().toLowerCase().replace(/\\/g, '/').replace(/^\.\//, '').replace(/:\?$/, '');
   let line = null;
   const m = s.match(/^(.*?)(?::l?|#l|\s+\(?(?:line|zeile|l\.)\s*)(\d+)(?:\s*[-–:,]\s*\d+)?\)?\s*$/);
@@ -111,6 +177,14 @@ function similarity(a, b) {
 
 function isDuplicate(a, b) {
   if (a.ids.length && b.ids.length && a.f.category === b.f.category) return a.ids.some((id) => b.ids.includes(id));
+  // Web-Befunde: gleicher Host + gleiches Thema = gleiche Luecke (Kategorie/Wortlaut egal).
+  // Sammel-Befunde werden nur untereinander vereint und danach in absorbAggregates aufgeloest.
+  if (a.host && a.host === b.host && a.topics.size && b.topics.size) {
+    const aggA = isAggregate(a.topics), aggB = isAggregate(b.topics);
+    if (aggA && aggB) return intersects(a.topics, b.topics) || a.topics.has('headers') || b.topics.has('headers');
+    if (aggA || aggB) return false;
+    return [...a.topics].every((t) => b.topics.has(t)) && a.topics.size === b.topics.size;
+  }
   if (a.loc.file !== b.loc.file) return false;
   const sameCat = a.f.category === b.f.category;
   const sim = similarity(a.tokens, b.tokens);
@@ -134,9 +208,10 @@ function mergeGroup(group) {
   const cvssVals = group.map((f) => f.cvss).filter((v) => v != null);
   // Lesbarer Titel: eigene Pruefungen/KI statt Tool-Regel-IDs ("gitleaks: aws-access-token").
   const readable = ranked.find((f) => !TOOL_PREFIX_RE.test(f.title || '')) || primary;
-  // Ort: mit Zeilennummer bevorzugt, dann der kuerzeste (relativer statt absoluter Pfad).
+  // Ort: saubere URL bzw. Zeilennummer bevorzugt, dann der kuerzeste (relativer statt absoluter Pfad).
+  const cleanUrl = group.filter((f) => /^https?:\/\/\S+$/i.test(String(f.location || '').trim()));
   const withLine = group.filter((f) => splitLoc(f.location).line != null);
-  const locPool = (withLine.length ? withLine : group).map((f) => f.location).filter(Boolean);
+  const locPool = (cleanUrl.length ? cleanUrl : withLine.length ? withLine : group).map((f) => f.location).filter(Boolean);
   return {
     ...primary,
     title: readable.title,
@@ -147,20 +222,81 @@ function mergeGroup(group) {
     impact: longest(group.map((f) => f.impact)),
     remediation: longest(group.map((f) => f.remediation)),
     patch: longest(group.map((f) => f.patch)),
+    ...((group.find((f) => f.evidence) || {}).evidence ? { evidence: group.find((f) => f.evidence).evidence } : {}),
     sources: [...new Set(group.map((f) => f.source))],
     mergedCount: group.length,
   };
 }
 
+// Sammel-Befunde aufloesen: Was ein Einzelbefund am selben Host schon abdeckt, wird dort als
+// weitere Quelle vermerkt. Bleibt nichts uebrig, faellt der Sammel-Befund weg; sonst nennt er
+// nur noch die wirklich zusaetzlich fehlenden Header.
+function absorbAggregates(list) {
+  const out = [];
+  const singles = list.filter((f) => { const t = webTopics(f); return t.size && !isAggregate(t) && hostKey(f.location); });
+  for (const f of list) {
+    const topics = webTopics(f);
+    const host = hostKey(f.location);
+    if (!host || !isAggregate(topics)) { out.push(f); continue; }
+    const covering = singles.filter((s) => hostKey(s.location) === host && intersects(webTopics(s), topics));
+    for (const s of covering) {
+      s.sources = [...new Set([...(s.sources || [s.source]), ...(f.sources || [f.source])])];
+      s.mergedCount = (s.mergedCount || 1) + 1;
+    }
+    const covered = new Set(covering.flatMap((s) => [...webTopics(s)]));
+    const rest = WEB_TOPICS.filter(([k]) => topics.has(k) && !covered.has(k));
+    if (!rest.length && covering.length) {
+      // komplett abgedeckt: weitere Duplikat-Zaehlung beim ersten Abdecker
+      covering[0].mergedCount += (f.mergedCount || 1) - 1;
+      continue;
+    }
+    if (!rest.length) { out.push(f); continue; } // nur generisch "Header fehlen" und nichts zum Zuordnen
+    out.push({
+      ...f,
+      ruleId: 'missing-security-headers',
+      title: rest.length === 1 ? `${rest[0][2]} fehlt` : `Weitere fehlende Sicherheits-Header: ${rest.map((r) => r[2]).join(', ')}`,
+    });
+  }
+  return out;
+}
+
+// Offene Ports eines Hosts (reine Info von nmap) zu einem Befund buendeln – riskante Dienste bleiben einzeln.
+function groupOpenPorts(list) {
+  const byHost = new Map();
+  const out = [];
+  for (const f of list) {
+    if (f.source === 'nmap' && f.severity === 'info' && /^offener port/i.test(f.title || '')) {
+      const host = hostKey(f.location) || f.location;
+      if (!byHost.has(host)) { byHost.set(host, []); out.push({ __ports: host }); }
+      byHost.get(host).push(f);
+    } else out.push(f);
+  }
+  return out.map((f) => {
+    if (!f.__ports) return f;
+    const ports = byHost.get(f.__ports);
+    if (ports.length === 1) return ports[0];
+    const names = ports.map((p) => (p.title.match(/port\s+(\S+)/i) || [])[1] || p.location);
+    return {
+      ...ports[0],
+      ruleId: 'open-ports',
+      title: `Offene Ports: ${names.join(', ')}`,
+      location: f.__ports,
+      description: `Von außen erreichbar: ${names.join(', ')}. Jeder offene Dienst ist Angriffsfläche – prüfe, ob alle davon öffentlich nötig sind.`,
+      groupedCount: ports.length,
+    };
+  });
+}
+
 function dedupeFindings(findings) {
   const groups = []; // [{ items, keys }]
   for (const f of findings) {
-    const k = { f, ids: vulnIds(f), loc: splitLoc(f.location), tokens: titleTokens(f.title) };
+    const loc = splitLoc(f.location);
+    const k = { f, ids: vulnIds(f), loc, tokens: titleTokens(f.title), host: hostKey(f.location), topics: webTopics(f) };
     const g = groups.find((grp) => grp.keys.some((x) => isDuplicate(x, k)));
     if (g) { g.items.push(f); g.keys.push(k); }
     else groups.push({ items: [f], keys: [k] });
   }
-  return groups.map((g) => mergeGroup(g.items));
+  return groupOpenPorts(absorbAggregates(groups.map((g) => mergeGroup(g.items))));
 }
 
 function sortFindings(findings) {
@@ -195,6 +331,7 @@ module.exports = {
   clampScore,
   normalizeFinding,
   fingerprint,
+  redactSecret,
   dedupeFindings,
   splitLoc,
   sortFindings,

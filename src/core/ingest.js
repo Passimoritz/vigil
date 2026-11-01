@@ -256,15 +256,16 @@ async function ingestEndpoint(col, rawTarget, authorized) {
 }
 
 // --- Oeffentliche API ---------------------------------------------------
-// targets: [{ type: 'path'|'url'|'endpoint', value, authorized? }]
+// targets: [{ type: 'path'|'url'|'endpoint'|'image', value, authorized? }]
 async function ingestTargets(targets, onProgress = () => {}) {
   const col = new Collector();
   for (const t of targets) {
     if (col.atCapacity()) break;
+    if (t.type === 'image') continue; // Container-Images prueft trivy direkt (kein Quelltext zum Einlesen)
     onProgress({ phase: 'ingest', message: `Lese: ${t.value}` });
     try {
       if (t.type === 'url' || t.type === 'endpoint') {
-        await ingestEndpoint(col, t.value, t.type === 'url' ? true : !!t.authorized);
+        await ingestEndpoint(col, t.value, !!t.authorized);
       } else {
         // Pfad: Datei oder Ordner
         let stat;

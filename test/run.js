@@ -286,6 +286,35 @@ console.log('Duplikate zusammenfuehren:');
   check('dedupe: Einzelbefund behaelt sources', d.every((f) => Array.isArray(f.sources) && f.sources.length >= 1));
 }
 
+console.log('Duplikate bei Web-Zielen (KI-Freitext + Sammel-Befunde):');
+{
+  const { normalizeFinding: nf } = require('../src/core/schema');
+  const W = (title, location, source, severity = 'low', category = 'Config') => nf({ title, location, severity, category }, source);
+  const raw = [
+    W('Fehlende HTTP-Sicherheits-Header (HSTS, CSP, X-Content-Type-Options, X-Frame-Options)', 'https://shop.example - HTTP-Response-Header der 301-Antwort', 'ai', 'medium'),
+    W('Content-Security-Policy fehlt', 'https://www.shop.example/de', 'webscan', 'medium'),
+    W('Fehlende Security-Header in HTTP-Antwort', 'https://shop.example (301-Antwort, Response-Header)', 'ai'),
+    W('Fehlende HTTP-Sicherheits-Header (HSTS, CSP, X-Content-Type-Options etc.)', 'https://shop.example - Response-Header der 301-Antwort', 'ai', 'low', 'Transport'),
+    W('Fehlende HTTP Strict-Transport-Security (HSTS)', 'https://shop.example - Response-Header (301 Redirect)', 'ai', 'low', 'Transport'),
+    W('Server-Banner gibt Software-Typ preis', "https://shop.example - Header 'server: nginx'", 'ai', 'low', 'Logging'),
+    W('Clickjacking-Schutz fehlt', 'https://www.shop.example/de', 'webscan'),
+    W('Server-Banner offengelegt (nginx)', 'https://shop.example - Header', 'ai', 'info', 'Logging'),
+    W('Server-Banner offenbart eingesetzte Software (nginx)', 'https://shop.example -> Response-Header', 'ai', 'info'),
+    W('Offener Port 80/http', 'shop.example:80', 'nmap', 'info'),
+    W('Offener Port 443/ssl/http', 'shop.example:443', 'nmap', 'info'),
+    W('Content-Security-Policy fehlt', 'https://other.example/', 'webscan', 'medium'),
+  ];
+  const d = dedupeFindings(raw);
+  const t = (re) => d.filter((f) => re.test(f.title));
+  check('web-dedupe: 12 -> 7 Befunde', d.length === 7);
+  check('web-dedupe: CSP pro Host genau einmal', t(/Content-Security-Policy fehlt/).length === 2);
+  check('web-dedupe: Banner fuenffach -> einmal', t(/Banner/).length === 1);
+  check('web-dedupe: Sammel-Befund nur mit Rest-Header', t(/X-Content-Type-Options/).length === 1 && !d.some((f) => /HSTS, CSP/.test(f.title)));
+  check('web-dedupe: KI als zusaetzliche Quelle bei CSP', d.find((f) => /Content-Security/.test(f.title) && /shop/.test(f.location)).sources.includes('ai'));
+  check('web-dedupe: Ports gebuendelt', t(/^Offene Ports: 80\/http, 443/).length === 1);
+  check('web-dedupe: Ort ohne KI-Freitext', d.every((f) => !/\s/.test(f.location)) && d.some((f) => f.locationDetail));
+}
+
 console.log('.vigilignore (Matcher):');
 const m = makeMatcher(['*.log', 'node_modules/', '**/*.min.js', '# kommentar', 'secrets.txt']);
 check('ignore: *.log trifft Basenamen', m('src/app.log', 'app.log') === true);
@@ -354,10 +383,116 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
 
   const en = enrich(v.findings, hUnits);
   const byT = (t) => en.find((f) => f.title === t);
-  check('evidence: KI bestaetigt -> ai-verified', byT('SQLi').evidence === 'ai-verified');
-  check('evidence: unsicher -> unverified', byT('Unklar').evidence === 'unverified');
-  check('evidence: prescan+ai -> confirmed-multi', byT('Secret').evidence === 'confirmed-multi');
+  check('evidence: KI bestaetigt -> ai-verified', byT('SQLi').assurance === 'ai-verified');
+  check('evidence: unsicher -> unverified', byT('Unklar').assurance === 'unverified');
+  check('evidence: prescan+ai -> confirmed-multi', byT('Secret').assurance === 'confirmed-multi');
   check('context: Route -> request-handler', byT('SQLi').context.includes('request-handler'));
+
+  console.log('Validierung, Schwaerzung, Scanner-Parser:');
+  {
+    const { check: zcheck, TargetSchema, ScanRequestSchema, StatusUpdateSchema } = require('../src/core/validation');
+    const { redactSecret, normalizeFinding } = require('../src/core/schema');
+    const { parseGitleaks, parseTrivy } = require('../src/core/tools');
+    check('zod: gueltige URL ok', zcheck(TargetSchema, { type: 'url', value: 'https://a.example' }).ok);
+    check('zod: URL ohne Schema abgelehnt', !zcheck(TargetSchema, { type: 'url', value: 'a.example' }).ok);
+    check('zod: Image-Referenz ok', zcheck(TargetSchema, { type: 'image', value: 'ghcr.io/org/app:2.1' }).ok);
+    check('zod: Image mit Shell-Zeichen abgelehnt', !zcheck(TargetSchema, { type: 'image', value: 'nginx; rm -rf /' }).ok);
+    check('zod: Steuerzeichen abgelehnt', !zcheck(TargetSchema, { type: 'path', value: 'a\nb' }).ok);
+    check('zod: leere Zielliste abgelehnt', !zcheck(ScanRequestSchema, { targets: [] }).ok);
+    check('zod: unbekannter Status abgelehnt', !zcheck(StatusUpdateSchema, { status: 'DONE' }).ok);
+    check('redact: 3 vorne + 2 hinten', redactSecret('sk_live_abcdef1234567890') === 'sk_****…**90');
+    check('redact: kurz -> komplett', redactSecret('abc123') === '****');
+    const nf = normalizeFinding({ title: 'trivy: x (CVE-2024-1234)', severity: 'high', category: 'Dependencies' }, 'trivy');
+    check('ruleId: CVE aus Titel', nf.ruleId === 'CVE-2024-1234');
+    const gl = parseGitleaks(JSON.stringify([{ RuleID: 'aws-access-token', File: 'a.js', StartLine: 3, Secret: 'AKIAIOSFODNN7EXAMPLE' }]));
+    check('gitleaks: geparst + Regel-ID', gl.length === 1 && gl[0].ruleId === 'aws-access-token');
+    check('gitleaks: Klartext-Secret nie gespeichert', !JSON.stringify(gl).includes('IOSFODNN7EXAMP') && gl[0].evidence === 'AKI****…**LE');
+    check('gitleaks: kaputte Ausgabe -> null', parseGitleaks('{"oops":1}') === null);
+    const tv = parseTrivy(JSON.stringify({ Results: [{ Target: 'nginx:1.25 (debian 12)', Vulnerabilities: [{ VulnerabilityID: 'CVE-2023-44487', PkgName: 'libnghttp2', InstalledVersion: '1.52', Severity: 'HIGH' }], Misconfigurations: [{ ID: 'DS002', Title: 'Image user should not be root', Severity: 'HIGH' }] }] }), 'nginx:1.25');
+    check('trivy: Vuln + Misconfig', tv.length === 2 && tv[0].ruleId === 'CVE-2023-44487' && tv[1].ruleId === 'DS002');
+    const { enrich: enrich2 } = require('../src/core/harness');
+    const { dedupeFindings: dd } = require('../src/core/schema');
+    const kept = enrich2(dd([{ ...gl[0], location: 'a.js:3' }, normalizeFinding({ title: 'Secret im Code', severity: 'critical', category: 'Secrets', location: 'a.js:3' }, 'ai')]));
+    check('evidence: Fundstelle bleibt nach Merge + Anreicherung erhalten', kept.length === 1 && kept[0].evidence === 'AKI****…**LE' && kept[0].assurance === 'confirmed-multi');
+  }
+
+  console.log('Scope-Durchsetzung:');
+  {
+    const { enforceScope, isInternalHost, isAllowlisted } = require('../src/core/scope');
+    check('scope: Pfad immer erlaubt', enforceScope([{ type: 'path', value: 'C:\\x' }], []).ok);
+    check('scope: URL ohne Freigabe abgelehnt (API)', !enforceScope([{ type: 'url', value: 'https://a.example' }], []).ok);
+    check('scope: URL auf Allowlist ok', enforceScope([{ type: 'url', value: 'https://shop.a.example/x' }], ['a.example']).targets[0].authorized === true);
+    const ia = enforceScope([{ type: 'endpoint', value: '192.168.1.5:8443', authorized: true }], [], { interactive: true });
+    check('scope: UI-Bestaetigung gibt Host frei', ia.ok && ia.allow[0] === '192.168.1.5');
+    check('scope: API ignoriert authorized-Flag', !enforceScope([{ type: 'url', value: 'https://b.example', authorized: true }], []).ok);
+    check('scope: *.x nur Subdomains', isAllowlisted('a.x.example', ['*.x.example']) && !isAllowlisted('x.example', ['*.x.example']));
+    check('scope: interne Adressen erkannt', isInternalHost('10.0.0.1') && isInternalHost('server.local') && !isInternalHost('8.8.8.8'));
+  }
+
+  console.log('Befund-Lebenszyklus:');
+  {
+    const store = require('../src/core/store');
+    const db = store.emptyStore();
+    const tgt = [{ type: 'path', value: 'C:\\proj' }];
+    const F = (o) => ({ severity: 'high', category: 'Secrets', cvss: null, description: '', remediation: '', source: 'prescan', sources: ['prescan'], ...o });
+    const a = F({ ruleId: 'secret-aws', title: 'AWS', location: 'proj/a.js:1' });
+    const b = F({ ruleId: 'secret-gh', title: 'GH', location: 'proj/b.js:2' });
+    const ai = F({ ruleId: 'idor', title: 'IDOR', location: 'proj/c.js:9', source: 'ai', sources: ['ai'], category: 'AccessControl' });
+    const ran = [{ target: 'C:\\proj', source: 'prescan' }];
+    const r1 = store.applyRun(db, { targets: tgt, findings: [a, b, ai], scannersRun: ran, now: '2026-11-01T10:00:00Z' });
+    check('lifecycle: neue Befunde OPEN', r1.counters.created === 3 && r1.findings.every((f) => f.status === 'OPEN' && f.isNew));
+    const idA = r1.findings[0].id, idB = r1.findings[1].id;
+    check('lifecycle: Fingerabdruck SHA-256', /^[a-f0-9]{64}$/.test(idA));
+    store.setStatus(db, idB, 'FALSE_POSITIVE');
+    const r2 = store.applyRun(db, { targets: tgt, findings: [b], scannersRun: ran, now: '2026-11-02T10:00:00Z' });
+    check('lifecycle: fehlender Befund -> RESOLVED', db.findings[idA].status === 'RESOLVED' && r2.counters.resolved === 1);
+    check('lifecycle: FALSE_POSITIVE bleibt + lastSeen', db.findings[idB].status === 'FALSE_POSITIVE' && db.findings[idB].lastSeenAt === '2026-11-02T10:00:00Z' && r2.findings[0].suppressed);
+    check('lifecycle: KI-Befund nicht auto-geschlossen', Object.values(db.findings).find((f) => f.ruleId === 'idor').status === 'OPEN');
+    const r3 = store.applyRun(db, { targets: tgt, findings: [a, b], scannersRun: ran, now: '2026-11-03T10:00:00Z' });
+    check('lifecycle: RESOLVED taucht wieder auf -> OPEN (Regression)', db.findings[idA].status === 'OPEN' && r3.findings[0].regression);
+    check('lifecycle: firstSeen bleibt erhalten', db.findings[idA].firstSeenAt === '2026-11-01T10:00:00Z');
+    store.applyRun(db, { targets: tgt, findings: [], scannersRun: [], now: '2026-11-04T10:00:00Z' });
+    check('lifecycle: ohne vollstaendigen Lauf kein Auto-Resolve', db.findings[idA].status === 'OPEN');
+    const st = store.stats(db);
+    check('stats: offene nach Schweregrad', st.open.high === 2 && st.targets.length === 1);
+    check('list: Statusfilter', store.listFindings(db, { status: 'FALSE_POSITIVE' }).length === 1);
+  }
+
+  console.log('REST-API:');
+  {
+    const os = require('os'); const path = require('path'); const fs = require('fs');
+    const { createOrchestrator } = require('../electron/orchestrator');
+    const { createApi } = require('../electron/api');
+    const { enforceScope } = require('../src/core/scope');
+    const file = path.join(os.tmpdir(), `vigil-test-store-${process.pid}.json`);
+    const fakeAudit = async (targets) => ({ result: { findings: [normalizeTestFinding()], summary: { total: 1, counts: { medium: 1 } }, errors: [], meta: { scannersRun: targets.map((t) => ({ target: t.value, source: 'webscan' })) } } });
+    function normalizeTestFinding() { return require('../src/core/schema').normalizeFinding({ ruleId: 'missing-csp-header', title: 'CSP fehlt', severity: 'medium', category: 'Config', location: 'https://ok.example/' }, 'webscan'); }
+    const orch = createOrchestrator({ storeFile: file, runAudit: fakeAudit, buildConfig: () => ({}) });
+    const cfg = { apiToken: 'test-token-123', allowlist: ['ok.example'], selected: 'ollama' };
+    const api = createApi({ orchestrator: orch, getConfig: () => cfg, enforceScope });
+    const freePort = await new Promise((r) => { const s = require('net').createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
+    check('api: startet auf 127.0.0.1', (await api.start(freePort)).ok);
+    const url = (p) => `http://127.0.0.1:${freePort}${p}`;
+    const H = { Authorization: 'Bearer test-token-123', 'Content-Type': 'application/json' };
+    check('api: ohne Token 401', (await fetch(url('/api/stats'))).status === 401);
+    check('api: falsches Token 401', (await fetch(url('/api/stats'), { headers: { Authorization: 'Bearer nope' } })).status === 401);
+    const bad = await fetch(url('/api/scans'), { method: 'POST', headers: H, body: JSON.stringify({ targets: [{ type: 'url', value: 'https://evil.example' }] }) });
+    check('api: Ziel ausserhalb der Freigabe 403', bad.status === 403);
+    const inv = await fetch(url('/api/scans'), { method: 'POST', headers: H, body: JSON.stringify({ targets: [{ type: 'image', value: 'x; rm -rf /' }] }) });
+    check('api: ungueltige Eingabe 400', inv.status === 400);
+    const ok = await fetch(url('/api/scans'), { method: 'POST', headers: H, body: JSON.stringify({ targets: [{ type: 'url', value: 'https://ok.example/' }] }) });
+    const { scanId } = await ok.json();
+    check('api: Scan angenommen 202', ok.status === 202 && !!scanId);
+    for (let i = 0; i < 50 && orch.getRun(scanId).status !== 'COMPLETED'; i++) await new Promise((r) => setTimeout(r, 20));
+    check('api: Lauf COMPLETED', (await (await fetch(url('/api/scans/' + scanId), { headers: H })).json()).status === 'COMPLETED');
+    const list = await (await fetch(url('/api/findings?status=OPEN'), { headers: H })).json();
+    check('api: Befund gespeichert', list.findings.length === 1 && list.findings[0].ruleId === 'missing-csp-header');
+    const patch = await fetch(url(`/api/findings/${list.findings[0].id}/status`), { method: 'PATCH', headers: H, body: JSON.stringify({ status: 'ACCEPTED_RISK' }) });
+    check('api: Status aendern', patch.status === 200 && (await patch.json()).finding.status === 'ACCEPTED_RISK');
+    check('api: Browser-Origin abgewiesen', (await fetch(url('/api/stats'), { headers: { ...H, Origin: 'https://evil.example' } })).status === 403);
+    await api.stop();
+    try { fs.unlinkSync(file); } catch { /* egal */ }
+  }
 
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);

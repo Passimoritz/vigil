@@ -9,7 +9,8 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { normalizeFinding, cvssToSeverity, clampScore } = require('./schema');
+const { normalizeFinding, cvssToSeverity, clampScore, redactSecret } = require('./schema');
+const { check, TrivyOutputSchema, SemgrepOutputSchema, GitleaksOutputSchema } = require('./validation');
 
 function firstExisting(cands, fallback) {
   for (const c of cands) { try { if (c && fs.existsSync(c)) return c; } catch { /* ignore */ } }
@@ -172,58 +173,88 @@ async function runNuclei(target, { signal, onProgress = () => {} } = {}) {
 // --- gitleaks: Secret-Scan ueber Dateien/Ordner ------------------------
 async function runGitleaks(targetPath, { signal, onProgress = () => {} } = {}) {
   onProgress({ phase: 'active', message: `gitleaks: Secret-Scan in ${targetPath} …` });
-  const tmp = path.join(os.tmpdir(), `vigil-gitleaks-${Date.now()}.json`);
-  const res = await runTool(GITLEAKS, ['detect', '--source', targetPath, '--no-git', '--redact', '--report-format', 'json', '--report-path', tmp], { signal, timeoutMs: 180000 });
+  // JSON direkt auf stdout ("-"); den Klartext-Secret schwaerzen wir selbst, bevor er irgendwo landet.
+  const res = await runTool(GITLEAKS, ['detect', '--source', targetPath, '--no-git', '--report-format', 'json', '--report-path', '-', '--no-banner'], { signal, timeoutMs: 180000 });
   if (!res.ok) return { findings: [], notes: ['gitleaks nicht ausgefuehrt (nicht installiert?).'] };
   if (res.aborted) return { findings: [], notes: ['gitleaks abgebrochen.'] };
-  let arr = [];
-  try { arr = JSON.parse(fs.readFileSync(tmp, 'utf8')); } catch { arr = []; }
-  try { fs.unlinkSync(tmp); } catch { /* ignore */ }
-  const findings = (Array.isArray(arr) ? arr : []).slice(0, 200).map((g) => normalizeFinding({
+  const findings = parseGitleaks(res.stdout);
+  if (findings === null) return { findings: [], notes: ['gitleaks: Ausgabe nicht lesbar.'] };
+  return { findings, notes: [`gitleaks: ${findings.length} Fund(e).`] };
+}
+// JSON-Ausgabe -> Befunde (null = ungueltige Ausgabe).
+function parseGitleaks(stdout) {
+  const s = String(stdout || '').trim();
+  if (!s) return [];
+  let raw; try { raw = JSON.parse(s.slice(s.indexOf('['))); } catch { return null; }
+  const v = check(GitleaksOutputSchema, raw);
+  if (!v.ok) return null;
+  return v.data.slice(0, 200).map((g) => normalizeFinding({
+    ruleId: g.RuleID || 'gitleaks-secret',
     title: `gitleaks: ${g.RuleID || g.Description || 'Secret'}`,
     severity: 'high', category: 'Secrets',
     location: `${g.File || '?'}:${g.StartLine || '?'}`,
+    evidence: redactSecret(g.Secret || g.Match),
     description: `${g.Description || 'Moegliches Secret'} (Regel ${g.RuleID || '?'}).`,
     reachability: 'Direkt im Code/Repo lesbar.',
     impact: 'Falls echt: Uebernahme des zugehoerigen Dienstes/Kontos.',
     remediation: 'Secret rotieren und aus Code/History entfernen; ueber Secret-Store laden.',
     confidence: 'medium',
   }, 'gitleaks'));
-  return { findings, notes: [`gitleaks: ${findings.length} Fund(e).`] };
 }
 
-// --- trivy: Schwachstellen/Secrets/Misconfig im Dateisystem ------------
-async function runTrivyFs(targetPath, { signal, onProgress = () => {} } = {}) {
-  onProgress({ phase: 'active', message: `trivy: Dateisystem-Scan in ${targetPath} … (erster Lauf laedt DB)` });
-  const res = await runTool(TRIVY, ['fs', '--quiet', '--format', 'json', '--scanners', 'vuln,secret,misconfig', targetPath], { signal, timeoutMs: 360000 });
-  if (!res.ok) return { findings: [], notes: ['trivy nicht ausgefuehrt (nicht installiert?).'] };
-  if (res.aborted) return { findings: [], notes: ['trivy abgebrochen.'] };
-  let j; try { j = JSON.parse(res.stdout); } catch { return { findings: [], notes: ['trivy: Ausgabe nicht lesbar.'] }; }
+// --- trivy: Schwachstellen/Secrets/Misconfig (Dateisystem oder Container-Image) ---
+function parseTrivy(stdout, fallbackTarget) {
+  let raw; try { raw = JSON.parse(stdout); } catch { return null; }
+  const v = check(TrivyOutputSchema, raw);
+  if (!v.ok) return null;
   const findings = [];
-  for (const r of j.Results || []) {
-    const where = r.Target || targetPath;
-    for (const v of r.Vulnerabilities || []) findings.push(normalizeFinding({
-      title: `trivy: ${v.PkgName}@${v.InstalledVersion} (${v.VulnerabilityID})`,
-      severity: mapSev(v.Severity), category: 'Dependencies', location: where,
-      description: `${v.Title || v.VulnerabilityID}. ${(v.Description || '').slice(0, 300)}`.trim(),
-      impact: `Bekannte Schwachstelle ${v.VulnerabilityID}.`,
-      remediation: v.FixedVersion ? `Auf ${v.FixedVersion} aktualisieren.` : 'Auf eine gepatchte Version aktualisieren.',
+  for (const r of v.data.Results || []) {
+    const where = r.Target || fallbackTarget;
+    for (const x of r.Vulnerabilities || []) findings.push(normalizeFinding({
+      ruleId: x.VulnerabilityID,
+      title: `trivy: ${x.PkgName}@${x.InstalledVersion} (${x.VulnerabilityID})`,
+      severity: mapSev(x.Severity), category: 'Dependencies', location: where,
+      description: `${x.Title || x.VulnerabilityID}. ${(x.Description || '').slice(0, 300)}`.trim(),
+      impact: `Bekannte Schwachstelle ${x.VulnerabilityID}.`,
+      remediation: x.FixedVersion ? `Auf ${x.FixedVersion} aktualisieren.` : 'Auf eine gepatchte Version aktualisieren.',
       confidence: 'high',
     }, 'trivy'));
     for (const s of r.Secrets || []) findings.push(normalizeFinding({
+      ruleId: s.RuleID || 'trivy-secret',
       title: `trivy: Secret – ${s.RuleID || s.Title || 'Fund'}`,
       severity: 'high', category: 'Secrets', location: `${where}:${s.StartLine || '?'}`,
+      evidence: redactSecret(s.Match),
       description: `${s.Title || 'Secret gefunden'} (${s.RuleID || '?'}).`,
       remediation: 'Secret rotieren und aus dem Code entfernen.', confidence: 'medium',
     }, 'trivy'));
     for (const mc of r.Misconfigurations || []) findings.push(normalizeFinding({
+      ruleId: mc.ID || 'trivy-misconfig',
       title: `trivy: ${mc.Title || mc.ID || 'Fehlkonfiguration'}`,
       severity: mapSev(mc.Severity), category: 'Config', location: where,
       description: `${mc.Description || mc.Message || ''} (${mc.ID || ''}).`.trim(),
       remediation: mc.Resolution || 'Konfiguration gemaess Empfehlung haerten.', confidence: 'high',
     }, 'trivy'));
   }
+  return findings;
+}
+async function runTrivyFs(targetPath, { signal, onProgress = () => {} } = {}) {
+  onProgress({ phase: 'active', message: `trivy: Dateisystem-Scan in ${targetPath} … (erster Lauf laedt DB)` });
+  const res = await runTool(TRIVY, ['fs', '--quiet', '--format', 'json', '--scanners', 'vuln,secret,misconfig', targetPath], { signal, timeoutMs: 360000 });
+  if (!res.ok) return { findings: [], notes: ['trivy nicht ausgefuehrt (nicht installiert?).'] };
+  if (res.aborted) return { findings: [], notes: ['trivy abgebrochen.'] };
+  const findings = parseTrivy(res.stdout, targetPath);
+  if (findings === null) return { findings: [], notes: ['trivy: Ausgabe nicht lesbar.'] };
   return { findings, notes: [`trivy: ${findings.length} Fund(e).`] };
+}
+// Container-Image (SBOM + CVE-Abgleich). Die Referenz ist vorher per Zod geprueft.
+async function runTrivyImage(image, { signal, onProgress = () => {} } = {}) {
+  onProgress({ phase: 'active', message: `trivy: Container-Image ${image} … (erster Lauf laedt DB und Image)` });
+  const res = await runTool(TRIVY, ['image', '--quiet', '--format', 'json', '--scanners', 'vuln,secret,misconfig', image], { signal, timeoutMs: 600000 });
+  if (!res.ok) return { findings: [], notes: ['Container-Image-Scan braucht trivy – nicht installiert (https://trivy.dev).'], missing: true };
+  if (res.aborted) return { findings: [], notes: ['trivy abgebrochen.'] };
+  const findings = parseTrivy(res.stdout, image);
+  if (findings === null) return { findings: [], notes: [`trivy: Image ${image} konnte nicht geprueft werden. ${String(res.stderr || '').split('\n').filter(Boolean).slice(-1)[0] || ''}`.trim()] };
+  return { findings, notes: [`trivy (Image ${image}): ${findings.length} Fund(e).`] };
 }
 
 // --- semgrep: statische Code-Analyse (SAST) ----------------------------
@@ -232,8 +263,11 @@ async function runSemgrep(targetPath, { signal, onProgress = () => {} } = {}) {
   const res = await runTool(SEMGREP, ['scan', '--config', 'auto', '--json', '--quiet', targetPath], { signal, timeoutMs: 360000 });
   if (!res.ok) return { findings: [], notes: ['semgrep nicht ausgefuehrt (nicht installiert?).'] };
   if (res.aborted) return { findings: [], notes: ['semgrep abgebrochen.'] };
-  let j; try { j = JSON.parse(res.stdout); } catch { return { findings: [], notes: ['semgrep: Ausgabe nicht lesbar.'] }; }
-  const findings = (j.results || []).slice(0, 300).map((r) => normalizeFinding({
+  let raw; try { raw = JSON.parse(res.stdout); } catch { return { findings: [], notes: ['semgrep: Ausgabe nicht lesbar.'] }; }
+  const parsed = check(SemgrepOutputSchema, raw);
+  if (!parsed.ok) return { findings: [], notes: ['semgrep: unerwartetes Ausgabeformat – ' + parsed.error] };
+  const findings = parsed.data.results.slice(0, 300).map((r) => normalizeFinding({
+    ruleId: r.check_id,
     title: `semgrep: ${r.check_id}`,
     severity: mapSev(r.extra && r.extra.severity), category: 'Other',
     location: `${r.path}:${r.start && r.start.line}`,
@@ -465,11 +499,12 @@ function parseTrufflehog(stdout, sourcePath) {
     const fsmeta = j.SourceMetadata && j.SourceMetadata.Data && j.SourceMetadata.Data.Filesystem;
     const where = (fsmeta && fsmeta.file) || sourcePath || '?';
     const lineNo = fsmeta && fsmeta.line != null ? ':' + fsmeta.line : '';
-    const redacted = j.Redacted ? ` (${String(j.Redacted).slice(0, 40)})` : '';
     findings.push(normalizeFinding({
+      ruleId: `trufflehog-${String(j.DetectorName || 'secret').toLowerCase()}`,
       title: `trufflehog: ${j.DetectorName || 'Secret'}${j.Verified ? ' – verifiziert' : ''}`,
       severity: j.Verified ? 'critical' : 'high', category: 'Secrets', location: `${where}${lineNo}`,
-      description: `Moegliches Secret vom Typ ${j.DetectorName || '?'}${redacted}.${j.Verified ? ' Als gueltig verifiziert.' : ''}`,
+      evidence: redactSecret(j.Raw || j.Redacted),
+      description: `Moegliches Secret vom Typ ${j.DetectorName || '?'}.${j.Verified ? ' Als gueltig verifiziert.' : ''}`,
       reachability: 'Direkt im Code/in der Datei lesbar.',
       impact: j.Verified ? 'Verifiziert gueltig: direkter Zugriff auf den zugehoerigen Dienst moeglich.' : 'Falls echt: Uebernahme des zugehoerigen Dienstes/Kontos.',
       remediation: 'Secret rotieren und aus Code/History entfernen; ueber einen Secret-Store laden.',
@@ -520,4 +555,4 @@ async function runBandit(targetPath, { signal, onProgress = () => {} } = {}) {
   return { findings, notes: [`bandit: ${findings.length} Fund(e).`] };
 }
 
-module.exports = { runNmap, runNuclei, runGitleaks, runTrivyFs, runSemgrep, runCheckov, runRetire, runHadolint, runOsvScanner, parseOsv, runGrype, parseGrype, runTrufflehog, parseTrufflehog, runBandit, parseBandit, NMAP, NUCLEI, GITLEAKS, TRIVY, SEMGREP, CHECKOV, RETIRE_JS, HADOLINT, OSV, GRYPE, TRUFFLEHOG, BANDIT };
+module.exports = { runNmap, runNuclei, runGitleaks, parseGitleaks, runTrivyFs, runTrivyImage, parseTrivy, runSemgrep, runCheckov, runRetire, runHadolint, runOsvScanner, parseOsv, runGrype, parseGrype, runTrufflehog, parseTrufflehog, runBandit, parseBandit, NMAP, NUCLEI, GITLEAKS, TRIVY, SEMGREP, CHECKOV, RETIRE_JS, HADOLINT, OSV, GRYPE, TRUFFLEHOG, BANDIT };

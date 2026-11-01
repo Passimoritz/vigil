@@ -1,5 +1,6 @@
 'use strict';
 
+const { throttle, limiter } = require('./ratelimit');
 // Abhaengigkeiten gegen die OSV.dev-Datenbank pruefen (bekannte CVEs/Advisories).
 // OSV ist kostenlos und braucht keinen API-Key. https://osv.dev
 
@@ -16,8 +17,12 @@ async function withTimeout(ms, fn, extSignal) {
   try { return await fn(signal); } finally { clearTimeout(t); }
 }
 
+// OSV.dev schonen: max. 3 parallele Abfragen, mind. 100 ms Abstand.
+const OSV_LIMIT = limiter(3);
+const osvFetch = (url, init) => OSV_LIMIT(async () => { await throttle('osv', 100); return fetch(url, init); });
+
 async function postJson(url, body, ms = 20000, extSignal) {
-  const res = await withTimeout(ms, (signal) => fetch(url, {
+  const res = await withTimeout(ms, (signal) => osvFetch(url, {
     method: 'POST', signal,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -27,7 +32,7 @@ async function postJson(url, body, ms = 20000, extSignal) {
 }
 
 async function getJson(url, ms = 20000, extSignal) {
-  const res = await withTimeout(ms, (signal) => fetch(url, { signal }), extSignal);
+  const res = await withTimeout(ms, (signal) => osvFetch(url, { signal }), extSignal);
   if (!res.ok) throw new Error(`OSV HTTP ${res.status}`);
   return res.json();
 }

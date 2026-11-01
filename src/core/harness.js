@@ -135,7 +135,8 @@ const EXPOSED_PATH = /(^|\/)(routes?|controllers?|api|handlers?|endpoints?|views
 const EXPOSED_CODE = /\b(?:app|router)\.(?:get|post|put|patch|delete|all)\s*\(|@(?:app|bp|router)\.(?:route|get|post)|@(?:Get|Post|Put|Delete|Request)Mapping|\[Http(?:Get|Post|Put|Delete)\]|createServer\s*\(|ipcMain\.handle/;
 const SENSITIVE = /\b(?:password|passwort|passwd|credit.?card|iban|payment|zahlung|ssn|token|session|secret|private.?key|invoice|rechnung|email)\b/i;
 
-function evidenceOf(f) {
+// Beleg-Status ("assurance"): wie gut ist ein Befund abgesichert? Getrennt vom Feld `evidence` (Ausschnitt).
+function assuranceOf(f) {
   const srcs = f.sources || [f.source];
   if (srcs.some((s) => s !== 'ai')) return srcs.length > 1 ? 'confirmed-multi' : 'deterministic';
   if (f.validation && f.validation.verdict === 'confirmed') return 'ai-verified';
@@ -157,7 +158,7 @@ function contextOf(f, units) {
 }
 
 function enrich(findings, units = []) {
-  return findings.map((f) => ({ ...f, evidence: evidenceOf(f), context: contextOf(f, units) }));
+  return findings.map((f) => ({ ...f, assurance: assuranceOf(f), context: contextOf(f, units) }));
 }
 
-module.exports = { redactSecrets, shouldRedact, extractSlice, validateFindings, enrich, evidenceOf, parseVerdicts, VALIDATOR_PROMPT };
+module.exports = { redactSecrets, shouldRedact, extractSlice, validateFindings, enrich, assuranceOf, parseVerdicts, VALIDATOR_PROMPT };

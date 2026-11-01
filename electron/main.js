@@ -1,31 +1,28 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // .env aus dem Projektordner laden (Schluessel-Fallback).
 try { require('dotenv').config({ path: path.join(__dirname, '..', '.env') }); } catch { /* optional */ }
 
-const { runAudit, report, fingerprint, ruleNames, PROVIDERS, pingProvider, fetchModels } = require('../src/core');
+const { runAudit, report, ruleNames, PROVIDERS, pingProvider, fetchModels } = require('../src/core');
+const { enforceScope, normalizeAllowlist } = require('../src/core/scope');
+const { check, ScanRequestSchema, StatusUpdateSchema } = require('../src/core/validation');
+const { createOrchestrator } = require('./orchestrator');
+const { createApi } = require('./api');
 const { applyProxy, testProxy } = require('./proxy');
+const ollama = require('./ollama');
 
 let win;
 let lastResult = null;
-let currentAbort = null;
+let orchestrator = null;
+let api = null;
 
 const CONFIG_PATH = () => path.join(app.getPath('userData'), 'config.json');
-const BASELINE_PATH = () => path.join(app.getPath('userData'), 'baseline.json');
-const SUPPRESS_PATH = () => path.join(app.getPath('userData'), 'suppressed.json');
-
-// Kleine Fingerprint-Listen ({ items:[...], at:ISO }) laden/speichern.
-function loadFpStore(p) {
-  try { const j = JSON.parse(fs.readFileSync(p, 'utf8')); return { items: Array.isArray(j.items) ? j.items : [], at: j.at || null }; }
-  catch { return { items: [], at: null }; }
-}
-function saveFpStore(p, obj) {
-  try { fs.writeFileSync(p, JSON.stringify(obj, null, 2), 'utf8'); return true; } catch { return false; }
-}
+const STORE_PATH = () => path.join(app.getPath('userData'), 'findings-store.json');
 
 // --- Scan-Verlauf (History) ---------------------------------------------
 const HISTORY_PATH = () => path.join(app.getPath('userData'), 'history.json');
@@ -66,25 +63,15 @@ async function saveReportPdf(outPath) {
   } finally { try { w.destroy(); } catch { /* egal */ } try { fs.unlinkSync(tmp); } catch { /* egal */ } }
 }
 
-// Befunde mit stabilem Fingerabdruck versehen und gegen Baseline/Ausblend-Liste markieren.
-function tagResult(result) {
-  if (!result || !Array.isArray(result.findings)) return result;
-  const base = loadFpStore(BASELINE_PATH());
-  const supp = loadFpStore(SUPPRESS_PATH());
-  const baseSet = new Set(base.items);
-  const suppSet = new Set(supp.items);
-  const hasBaseline = base.items.length > 0;
-  let suppressedCount = 0;
+// Gespeichertes Ergebnis (Verlauf) mit dem aktuellen Status aus dem Befund-Speicher abgleichen.
+function refreshStatuses(result) {
+  if (!result || !Array.isArray(result.findings) || !orchestrator) return result;
+  const current = new Map(orchestrator.listFindings({ limit: 5000 }).map((f) => [f.id, f.status]));
   for (const f of result.findings) {
-    const fp = fingerprint(f);
-    f.id = fp;
-    f.isNew = hasBaseline ? !baseSet.has(fp) : false;
-    f.suppressed = suppSet.has(fp);
-    if (f.suppressed) suppressedCount++;
+    if (!f.id || !current.has(f.id)) continue;
+    f.status = current.get(f.id);
+    f.suppressed = f.status === 'FALSE_POSITIVE' || f.status === 'ACCEPTED_RISK';
   }
-  result.hasBaseline = hasBaseline;
-  result.baselineAt = base.at;
-  result.suppressedCount = suppressedCount;
   return result;
 }
 
@@ -100,19 +87,20 @@ function defaultConfig() {
   for (const [id, p] of Object.entries(PROVIDERS)) {
     providers[id] = { model: p.defaultModel, apiKey: '', baseUrl: p.defaultBaseUrl };
   }
-  return { selected: 'ollama', temperature: 0.1, maxTokens: 8192, cveLookup: true, analysisDepth: 'thorough', aiValidation: true, redactSecrets: true, activeScan: false, proxyUrl: '', customRules: [], disabledRules: [], providers };
+  return { selected: 'ollama', temperature: 0.1, maxTokens: 8192, cveLookup: true, analysisDepth: 'thorough', aiValidation: true, redactSecrets: true, activeScan: false, proxyUrl: '', customRules: [], disabledRules: [], allowlist: [], apiEnabled: false, apiPort: 7811, apiToken: '', providers };
 }
 
 function loadConfig() {
+  let cfg;
   try {
     const saved = JSON.parse(fs.readFileSync(CONFIG_PATH(), 'utf8'));
     const def = defaultConfig();
-    return {
-      ...def,
-      ...saved,
-      providers: { ...def.providers, ...(saved.providers || {}) },
-    };
-  } catch { return defaultConfig(); }
+    cfg = { ...def, ...saved, providers: { ...def.providers, ...(saved.providers || {}) } };
+  } catch { cfg = defaultConfig(); }
+  cfg.allowlist = normalizeAllowlist(cfg.allowlist);
+  // Zufaelliges API-Token beim ersten Start erzeugen.
+  if (!cfg.apiToken) { cfg.apiToken = crypto.randomBytes(24).toString('base64url'); saveConfig(cfg); }
+  return cfg;
 }
 
 function saveConfig(cfg) {
@@ -175,8 +163,26 @@ function applyProxySafe(cfg) {
   catch (e) { console.warn('Proxy konnte nicht gesetzt werden:', e.message); }
 }
 
+// REST-API je nach Einstellung starten/stoppen.
+async function applyApi(cfg) {
+  if (!api) return { ok: false, running: false };
+  await api.stop();
+  if (!cfg.apiEnabled) return { ok: true, running: false };
+  const port = Math.min(65535, Math.max(1024, Number(cfg.apiPort) || 7811));
+  const r = await api.start(port);
+  return { ...r, running: r.ok };
+}
+
 app.whenReady().then(() => {
-  applyProxySafe(loadConfig());
+  const cfg = loadConfig();
+  applyProxySafe(cfg);
+  orchestrator = createOrchestrator({
+    storeFile: STORE_PATH(),
+    runAudit,
+    buildConfig: (providerId) => { const c = loadConfig(); applyProxySafe(c); return effectiveConfig(c, providerId || c.selected); },
+  });
+  api = createApi({ orchestrator, getConfig: loadConfig, enforceScope });
+  applyApi(cfg);
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -189,7 +195,16 @@ ipcMain.handle('meta:providers', () => {
 });
 
 ipcMain.handle('config:get', () => loadConfig());
-ipcMain.handle('config:save', (_e, cfg) => { const ok = saveConfig(cfg); applyProxySafe(cfg); return { ok }; });
+ipcMain.handle('config:save', async (_e, cfg) => {
+  const prev = loadConfig();
+  // Das API-Token setzt nur der Main-Prozess; die Freigabeliste wird normalisiert.
+  cfg.allowlist = normalizeAllowlist(cfg.allowlist);
+  cfg.apiToken = prev.apiToken;
+  const ok = saveConfig(cfg);
+  applyProxySafe(cfg);
+  if (prev.apiEnabled !== !!cfg.apiEnabled || prev.apiPort !== cfg.apiPort) await applyApi(loadConfig());
+  return { ok };
+});
 
 // Proxy testen: wendet die (noch ungespeicherte) Proxy-URL an und meldet die
 // nach aussen sichtbare IP; stellt danach den gespeicherten Proxy wieder her.
@@ -227,70 +242,61 @@ ipcMain.handle('provider:models', async (_e, { providerId, apiKey, baseUrl }) =>
   return fetchModels(eff);
 });
 
-ipcMain.handle('audit:run', async (e, { targets, providerId }) => {
+ipcMain.handle('audit:run', async (e, payload) => {
+  const v = check(ScanRequestSchema, payload);
+  if (!v.ok) return { ok: false, error: 'Ungültige Eingabe: ' + v.error };
   const cfg = loadConfig();
-  applyProxySafe(cfg);
-  const eff = effectiveConfig(cfg, providerId || cfg.selected);
-  const ctrl = new AbortController();
-  currentAbort = ctrl;
-  eff.signal = ctrl.signal;
+  // Scope: Webadressen/Server nur freigegeben oder nach ausdruecklicher Bestaetigung im UI.
+  const scope = enforceScope(v.data.targets, cfg.allowlist, { interactive: true });
+  if (!scope.ok) return { ok: false, error: scope.errors.join(' ') };
+  if (scope.allow.length) { cfg.allowlist = normalizeAllowlist([...cfg.allowlist, ...scope.allow]); saveConfig(cfg); }
+  const job = orchestrator.enqueue({
+    targets: scope.targets, providerId: v.data.providerId || cfg.selected, origin: 'app',
+    onProgress: (p) => { try { e.sender.send('audit:progress', p); } catch { /* Fenster weg */ } },
+  });
+  const out = await job.done;
+  if (out.ok) { lastResult = out.result; recordHistory(out.result, scope.targets); }
+  return out;
+});
+
+ipcMain.handle('audit:cancel', () => ({ ok: orchestrator.cancel() }));
+
+// --- Befund-Lebenszyklus & Uebersicht ------------------------------------
+ipcMain.handle('finding:setStatus', (_e, id, body) => {
+  const v = check(StatusUpdateSchema, body);
+  if (!v.ok) return { ok: false, error: v.error };
+  const r = orchestrator.setStatus(String(id || ''), v.data.status, v.data.note);
+  if (r.ok && lastResult) refreshStatuses(lastResult);
+  return r.ok ? { ok: true, status: r.finding.status } : r;
+});
+ipcMain.handle('dashboard:get', (_e, filter) => ({ stats: orchestrator.stats(), findings: orchestrator.listFindings(filter || {}) }));
+ipcMain.handle('store:clear', () => { orchestrator.clear(); return { ok: true }; });
+ipcMain.handle('api:info', () => { const c = loadConfig(); return { enabled: !!c.apiEnabled, port: c.apiPort, token: c.apiToken, running: !!(api && api.running()) }; });
+ipcMain.handle('api:regenerateToken', () => { const c = loadConfig(); c.apiToken = crypto.randomBytes(24).toString('base64url'); saveConfig(c); return { token: c.apiToken }; });
+
+// --- Ollama-Verwaltung --------------------------------------------------
+const ollamaBase = () => effectiveConfig(loadConfig(), 'ollama').baseUrl;
+let pullAbort = null;
+ipcMain.handle('ollama:status', () => ollama.status(ollamaBase()));
+ipcMain.handle('ollama:recommended', () => ollama.RECOMMENDED);
+ipcMain.handle('ollama:start', () => ollama.start(ollamaBase()));
+ipcMain.handle('ollama:install', async (e) => {
+  const r = await ollama.install((line) => { try { e.sender.send('ollama:log', line); } catch { /* window weg */ } });
+  if (r.ok) { const s = await ollama.start(ollamaBase()); return { ok: true, status: s.status || (await ollama.status(ollamaBase())) }; }
+  return r;
+});
+ipcMain.handle('ollama:pull', async (e, model) => {
+  if (!/^[\w.\-/:]{1,120}$/.test(String(model || ''))) return { ok: false, error: 'Ungültiger Modellname.' };
+  if (pullAbort) return { ok: false, error: 'Es läuft bereits ein Download.' };
+  pullAbort = new AbortController();
   try {
-    const { result } = await runAudit(targets, eff, (p) => {
-      try { e.sender.send('audit:progress', p); } catch { /* window weg */ }
-    });
-    tagResult(result);
-    lastResult = result;
-    recordHistory(result, targets);
-    return { ok: true, result, canceled: ctrl.signal.aborted };
-  } catch (err) {
-    if (ctrl.signal.aborted) return { ok: true, result: lastResult, canceled: true, partial: true };
-    return { ok: false, error: err.message };
-  } finally {
-    if (currentAbort === ctrl) currentAbort = null;
-  }
+    return await ollama.pull(ollamaBase(), model, (p) => { try { e.sender.send('ollama:progress', { model, ...p }); } catch { /* window weg */ } }, pullAbort.signal);
+  } finally { pullAbort = null; }
 });
-
-ipcMain.handle('audit:cancel', () => {
-  if (currentAbort) { currentAbort.abort(); return { ok: true }; }
-  return { ok: false };
-});
-
-// --- Baseline (Scan-Vergleich) ------------------------------------------
-ipcMain.handle('baseline:info', () => { const b = loadFpStore(BASELINE_PATH()); return { count: b.items.length, at: b.at }; });
-ipcMain.handle('baseline:save', () => {
-  if (!lastResult || !Array.isArray(lastResult.findings)) return { ok: false, error: 'Noch kein Ergebnis vorhanden.' };
-  const items = [...new Set(lastResult.findings.map((f) => f.id || fingerprint(f)))];
-  const at = new Date().toISOString();
-  const ok = saveFpStore(BASELINE_PATH(), { items, at });
-  if (ok) { for (const f of lastResult.findings) f.isNew = false; lastResult.hasBaseline = true; lastResult.baselineAt = at; }
-  return { ok, count: items.length, at };
-});
-ipcMain.handle('baseline:clear', () => {
-  const ok = saveFpStore(BASELINE_PATH(), { items: [], at: null });
-  if (ok && lastResult) { lastResult.hasBaseline = false; lastResult.baselineAt = null; for (const f of lastResult.findings) f.isNew = false; }
-  return { ok };
-});
-
-// --- Befunde dauerhaft ausblenden ---------------------------------------
-ipcMain.handle('suppress:info', () => { const s = loadFpStore(SUPPRESS_PATH()); return { count: s.items.length }; });
-ipcMain.handle('suppress:toggle', (_e, fp) => {
-  if (!fp) return { ok: false };
-  const s = loadFpStore(SUPPRESS_PATH());
-  const set = new Set(s.items);
-  const suppressed = !set.has(fp);
-  if (suppressed) set.add(fp); else set.delete(fp);
-  const ok = saveFpStore(SUPPRESS_PATH(), { items: [...set], at: new Date().toISOString() });
-  if (ok && lastResult) {
-    for (const f of lastResult.findings) if ((f.id || '') === fp) f.suppressed = suppressed;
-    lastResult.suppressedCount = lastResult.findings.filter((f) => f.suppressed).length;
-  }
-  return { ok, suppressed };
-});
-ipcMain.handle('suppress:clear', () => {
-  const ok = saveFpStore(SUPPRESS_PATH(), { items: [], at: null });
-  if (ok && lastResult) { for (const f of lastResult.findings) f.suppressed = false; lastResult.suppressedCount = 0; }
-  return { ok };
-});
+ipcMain.handle('ollama:cancelPull', () => { if (pullAbort) pullAbort.abort(); return { ok: true }; });
+ipcMain.handle('ollama:remove', (_e, model) => ollama.remove(ollamaBase(), String(model || '')));
+// Nur die feste offizielle Download-Seite – keine beliebigen URLs aus dem Renderer.
+ipcMain.handle('ollama:openDownload', () => shell.openExternal(ollama.DOWNLOAD_URL));
 
 // --- Scan-Verlauf -------------------------------------------------------
 ipcMain.handle('history:list', () => loadHistory());
@@ -298,7 +304,7 @@ ipcMain.handle('history:open', (_e, id) => {
   const safe = String(id || '').replace(/[^a-z0-9]/gi, '');
   try {
     const result = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR(), safe + '.json'), 'utf8'));
-    tagResult(result);
+    refreshStatuses(result);
     lastResult = result;
     return { ok: true, result };
   } catch (e) { return { ok: false, error: e.message }; }

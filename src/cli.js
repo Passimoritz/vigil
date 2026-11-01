@@ -18,7 +18,8 @@ function parseArgs(argv) {
     else if (a === '--model') opts.model = argv[++i];
     else if (a === '--base-url') opts.baseUrl = argv[++i];
     else if (a === '--out') opts.out = argv[++i];
-    else if (a === '--url') opts.targets.push({ type: 'url', value: argv[++i] });
+    else if (a === '--url') opts.targets.push({ type: 'url', value: argv[++i], authorized: true }); // explizit auf der Kommandozeile = freigegeben
+    else if (a === '--image') opts.targets.push({ type: 'image', value: argv[++i] });
     else if (a === '--endpoint') opts.targets.push({ type: 'endpoint', value: argv[++i], authorized: true });
     else if (a === '--authorize') opts.authorize = true;
     else if (a === '--no-cve') opts.cveLookup = false;

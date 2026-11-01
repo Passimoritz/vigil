@@ -10,7 +10,8 @@ const CONTEXT_LABEL = { 'internet-exposed': 'aus dem Internet erreichbar', 'requ
 // "Beleg: … · Kontext: …" fuer einen Befund (leer, wenn nichts bekannt).
 function evidenceLine(f) {
   const parts = [];
-  if (f.evidence) parts.push('Beleg: ' + (EVIDENCE_LABEL[f.evidence] || f.evidence));
+  if (f.assurance) parts.push('Beleg: ' + (EVIDENCE_LABEL[f.assurance] || f.assurance));
+  if (f.evidence) parts.push('Fundstelle: ' + f.evidence);
   const ctx = (f.context || []).map((c) => CONTEXT_LABEL[c]).filter(Boolean);
   if (ctx.length) parts.push('Kontext: ' + ctx.join(', '));
   return parts.join(' · ');
@@ -149,7 +150,7 @@ function toSarif(result, toolVersion = '0.1.0') {
       properties: {
         severity: f.severity, cvss: f.cvss, confidence: f.confidence,
         source: f.source, sources: f.sources || [f.source], category: f.category,
-        evidence: f.evidence, context: f.context,
+        assurance: f.assurance, evidence: f.evidence, context: f.context, ruleId: f.ruleId,
       },
     };
     const { uri, line } = splitLocation(f.location);

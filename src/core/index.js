@@ -6,18 +6,24 @@ const { ingestTargets } = require('./ingest');
 const { prescan, ruleNames } = require('./prescan');
 const { lookupCves } = require('./cve');
 const { scanWeb } = require('./webscan');
-const { runNmap, runNuclei, runGitleaks, runTrivyFs, runSemgrep, runCheckov, runRetire, runHadolint, runOsvScanner, runGrype, runTrufflehog, runBandit } = require('./tools');
+const { runNmap, runNuclei, runGitleaks, runTrivyFs, runTrivyImage, runSemgrep, runCheckov, runRetire, runHadolint, runOsvScanner, runGrype, runTrufflehog, runBandit } = require('./tools');
 const { analyze } = require('./analyze');
 const { enrich } = require('./harness');
 const report = require('./report');
 const { fingerprint, atOrAbove, dedupeFindings, sortFindings, summarize } = require('./schema');
 const { PROVIDERS, callProvider, pingProvider, fetchModels } = require('./providers');
 
-// targets: [{type:'path'|'url'|'endpoint', value, authorized?}]
+// Hat ein Tool-Lauf wirklich stattgefunden? (Nur dann duerfen fehlende Befunde als behoben gelten.)
+const DID_NOT_RUN = /nicht ausgefuehrt|nicht installiert|abgebrochen|nicht lesbar|unerwartet|nicht erreichbar|uebersprungen|fehlgeschlagen|konnte nicht/i;
+const completed = (notes) => !(notes || []).some((n) => DID_NOT_RUN.test(n));
+
+// targets: [{type:'path'|'url'|'endpoint'|'image', value, authorized?}]
 // config:  { provider, model, apiKey, baseUrl, temperature, maxTokens }
 async function runAudit(targets, config, onProgress = () => {}) {
   onProgress({ phase: 'ingest', message: 'Sammle Pruefmaterial …' });
   const ing = await ingestTargets(targets, onProgress);
+  const scannersRun = []; // [{ target, source }] – vollstaendig gelaufene Pruefungen je Ziel
+  for (const t of targets) if (t.type === 'path' && !ing.notes.some((n) => n.includes(t.value) && /nicht gefunden|Fehler/.test(n))) scannersRun.push({ target: t.value, source: 'prescan' });
 
   onProgress({ phase: 'prescan', message: 'Statische Vorpruefung (Secrets, Deps, Muster) …' });
   const pre = prescan(ing.units, { customSecrets: config.customRules, disabledRules: config.disabledRules });
@@ -31,6 +37,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
       const cve = await lookupCves(pre.deps, onProgress, config.signal);
       cveFindings = cve.findings;
       cveNotes = cve.notes;
+      if (completed(cve.notes)) for (const t of targets) if (t.type === 'path') scannersRun.push({ target: t.value, source: 'osv' });
     } catch (e) {
       cveNotes = ['CVE-Abgleich fehlgeschlagen: ' + e.message];
     }
@@ -41,11 +48,13 @@ async function runAudit(targets, config, onProgress = () => {}) {
   const webTargets = targets.filter((t) => t.type === 'url' || t.type === 'endpoint');
   for (const t of webTargets) {
     if (aborted()) break;
-    const authorized = t.type === 'url' ? true : !!t.authorized;
+    // Scope: nur bestaetigte bzw. freigegebene Ziele (die App setzt `authorized` erst nach Pruefung).
+    const authorized = !!t.authorized;
     try {
       const w = await scanWeb(t.value, authorized, onProgress, config.signal);
       webFindings.push(...w.findings);
       webNotes.push(...w.notes);
+      if (authorized && completed(w.notes)) scannersRun.push({ target: t.value, source: 'webscan' });
     } catch (e) { webNotes.push(`Server-Pruefung ${t.value} fehlgeschlagen: ${e.message}`); }
 
     // Aktive Pruefung ueber nmap/nuclei - nur mit Opt-in und bestaetigter Berechtigung.
@@ -62,6 +71,15 @@ async function runAudit(targets, config, onProgress = () => {}) {
       }
     }
   }
+  // Container-Images: SBOM + CVE-Abgleich ueber trivy (einziger sinnvolle Check fuer ein Image).
+  for (const t of targets.filter((x) => x.type === 'image')) {
+    if (aborted()) break;
+    try {
+      const r = await runTrivyImage(t.value, { signal: config.signal, onProgress });
+      webFindings.push(...r.findings); webNotes.push(...r.notes);
+      if (completed(r.notes)) scannersRun.push({ target: t.value, source: 'trivy' });
+    } catch (e) { webNotes.push(`trivy ${t.value}: ${e.message}`); }
+  }
   // Externe statische Scanner fuer Pfad-Ziele (gitleaks/trivy/semgrep) - opt-in + wenn installiert.
   if (config.activeScan) {
     const pathTargets = targets.filter((t) => t.type === 'path');
@@ -72,6 +90,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
         try {
           const r = await fn(t.value, { signal: config.signal, onProgress });
           webFindings.push(...r.findings); webNotes.push(...r.notes);
+          if (completed(r.notes)) scannersRun.push({ target: t.value, source: nm === 'retire' ? 'retire' : nm });
         } catch (e) { webNotes.push(`${nm} ${t.value}: ${e.message}`); }
       }
     }
@@ -83,8 +102,8 @@ async function runAudit(targets, config, onProgress = () => {}) {
     const empty = {
       findings,
       summary: summarize(findings),
-      errors: [...(webTargets.length ? [] : ['Kein lesbares Pruefmaterial gefunden.']), ...webNotes, ...cveNotes, ...ing.notes],
-      meta: { provider: config.provider, model: config.model, at: new Date().toISOString(), units: 0, batches: 0 },
+      errors: [...(webTargets.length || targets.some((t) => t.type === 'image') ? [] : ['Kein lesbares Pruefmaterial gefunden.']), ...webNotes, ...cveNotes, ...ing.notes],
+      meta: { provider: config.provider, model: config.model, at: new Date().toISOString(), units: 0, batches: 0, scannersRun },
     };
     return { result: empty, ingest: ing, prescan: pre };
   }
@@ -97,6 +116,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
     onProgress,
   });
   result.errors = [...result.errors, ...webNotes, ...cveNotes, ...ing.notes];
+  result.meta.scannersRun = scannersRun;
   onProgress({ phase: 'done', message: `Fertig: ${result.summary.total} Befund(e).` });
   return { result, ingest: ing, prescan: pre };
 }

@@ -4,7 +4,7 @@
 // Liefert (a) direkte Befunde (z.B. Secrets - zu wichtig, um sie der KI zu ueberlassen)
 // und (b) "Fakten", die als Kontext mit in den KI-Prompt gegeben werden.
 
-const { normalizeFinding } = require('./schema');
+const { normalizeFinding, redactSecret } = require('./schema');
 const { findHighEntropy } = require('./entropy');
 const { fsaudit } = require('./fsaudit');
 
@@ -232,6 +232,8 @@ function prescan(units, opts = {}) {
       while ((m = rule.re.exec(content)) && hits < 20) {
         hits++;
         findings.push(normalizeFinding({
+          ruleId: (rule.custom ? 'custom-' : 'secret-') + rule.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+          evidence: redactSecret(m[0]),
           title: rule.custom ? `Eigene Regel: ${rule.name}` : `Moegliches Secret im Klartext: ${rule.name}`,
           severity: rule.sev,
           category: 'Secrets',

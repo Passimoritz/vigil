@@ -28,6 +28,7 @@ const state = { targets: [], providers: [], config: null, lastFindings: [], last
 let RULE_NAMES = null; // Namen der eingebauten Regeln (lazy via IPC)
 
 // --- Ziele --------------------------------------------------------------
+const KIND_LABEL = { path: 'Datei/Ordner', url: 'Webadresse', endpoint: 'Server', image: 'Container-Image' };
 function addTarget(type, value, authorized = false) {
   if (!value) return;
   if (state.targets.some((t) => t.type === type && t.value === value)) return;
@@ -38,9 +39,8 @@ function renderTargets() {
   const ul = $('targetList');
   ul.innerHTML = '';
   state.targets.forEach((t, i) => {
-    const kind = t.type === 'path' ? 'Datei/Ordner' : t.type === 'url' ? 'Webadresse' : 'Server';
     const li = document.createElement('li');
-    li.innerHTML = `<span class="t-kind ${t.type}">${kind}</span><span class="t-val" title="${esc(t.value)}">${esc(t.value)}</span>`;
+    li.innerHTML = `<span class="t-kind ${t.type}">${KIND_LABEL[t.type]}</span><span class="t-val" title="${esc(t.value)}">${esc(t.value)}</span>`;
     const rm = document.createElement('button');
     rm.className = 't-rm'; rm.textContent = '✕'; rm.setAttribute('aria-label', 'Entfernen');
     rm.onclick = () => { state.targets.splice(i, 1); renderTargets(); };
@@ -51,9 +51,59 @@ function renderTargets() {
   $('targets').hidden = state.targets.length === 0;
   updateRunState();
 }
+
+// Freitext deuten: lokaler Pfad, Webadresse, Container-Image oder Server (IP/Host).
+function classifyInput(v) {
+  if (/^image:/i.test(v)) return { type: 'image', value: v.slice(6).trim() };
+  if (/^https?:\/\//i.test(v)) return { type: 'url', value: v };
+  if (/^[a-z]:[\\/]|^\\\\|^\/|^\.{1,2}[\\/]|^~[\\/]/i.test(v)) return { type: 'path', value: v };
+  // Image mit Tag (nginx:1.25, ghcr.io/org/app:2.1) oder Digest – ein reiner Zahlen-"Tag" ist ein Port.
+  const img = v.match(/^[a-z0-9][a-z0-9._/-]*(?::([\w][\w.-]*)|@sha256:[a-f0-9]{64})$/);
+  if (img && !(img[1] && /^\d+$/.test(img[1]))) return { type: 'image', value: v };
+  if (/^(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?$|^localhost(?::\d+)?$|^\[?[0-9a-f:]+\]?$|:\d+$/i.test(v)) return { type: 'endpoint', value: v };
+  if (/^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(v)) return { type: 'url', value: 'https://' + v };
+  return { type: 'endpoint', value: v };
+}
+
+// Webadressen und Server brauchen eine Freigabe; steht der Host schon auf der Liste, entfaellt die Bestaetigung.
+function hostOfTarget(t) {
+  if (t.type === 'url') { try { return new URL(t.value).hostname.toLowerCase(); } catch { return ''; } }
+  if (t.type !== 'endpoint') return '';
+  const m = t.value.match(/^\[([^\]]+)\]/);
+  return (m ? m[1] : t.value.replace(/:\d+$/, '')).toLowerCase();
+}
+function isAllowlisted(host) {
+  return !!host && (state.config.allowlist || []).some((e) => (e.startsWith('*.') ? host.endsWith(e.slice(1)) : host === e || host.endsWith('.' + e)));
+}
+const needsConfirm = (t) => (t.type === 'url' || t.type === 'endpoint') && !isAllowlisted(hostOfTarget(t));
+
+function onTargetInput() {
+  const v = $('targetInput').value.trim();
+  const t = v ? classifyInput(v) : null;
+  $('authRow').hidden = !(t && needsConfirm(t));
+  $('authLabel').textContent = t && t.type === 'url' ? 'Diese Webseite gehört mir bzw. ich darf sie prüfen.' : 'Ich bin berechtigt, diesen Server zu prüfen.';
+  $('webNote').hidden = !(t && (t.type === 'url' || t.type === 'endpoint'));
+  $('imageNote').hidden = !(t && t.type === 'image');
+}
+function addTypedTarget() {
+  const v = $('targetInput').value.trim();
+  if (!v) return;
+  const t = classifyInput(v);
+  if (needsConfirm(t) && !$('authChk').checked) { flash('Bitte bestätige zuerst, dass du dieses Ziel prüfen darfst.'); $('authChk').focus(); return; }
+  addTarget(t.type, t.value, t.type === 'url' || t.type === 'endpoint');
+  $('targetInput').value = ''; $('authChk').checked = false; onTargetInput();
+}
+
+// Startknopf + Hinweis: sagt immer, was als Naechstes fehlt.
+// Nur Dateien/Ordner analysiert die KI – Webadressen, Server und Images laufen ohne sie.
+const needsAi = () => state.targets.some((t) => t.type === 'path');
 function updateRunState() {
-  $('runBtn').disabled = state.running || state.targets.length === 0;
-  if (!state.running) $('runHint').textContent = state.targets.length ? 'Bereit. Die Prüfung kann je nach Menge ein paar Minuten dauern.' : 'Füge oben zuerst etwas zur Prüfliste hinzu.';
+  const ready = needsAi() ? aiReady() : { ok: true, label: 'den passiven Checks (ohne KI)' };
+  $('runBtn').disabled = state.running || !state.targets.length || !ready.ok;
+  if (state.running) return;
+  if (!state.targets.length) $('runHint').textContent = 'Füge oben zuerst etwas zur Prüfliste hinzu.';
+  else if (!ready.ok) $('runHint').textContent = ready.why;
+  else $('runHint').textContent = `Bereit – ${state.targets.length} ${state.targets.length === 1 ? 'Ziel' : 'Ziele'} mit ${ready.label}. Je nach Umfang dauert das ein paar Minuten.`;
 }
 
 // --- Drag & Drop --------------------------------------------------------
@@ -67,27 +117,12 @@ function setupDropzone() {
       const p = window.vigil.pathForFile(f);
       if (p) { addTarget('path', p); added++; }
     }
-    if (!added) $('runHint').textContent = 'Konnte die Pfade nicht lesen – nutze die Auswahl-Buttons.';
+    if (!added) flash('Konnte die Pfade nicht lesen – nutze die Auswahl-Buttons.');
   });
-  dz.addEventListener('click', () => $('pickFilesBtn').click());
+  dz.addEventListener('click', (e) => { if (!e.target.closest('button')) $('pickFilesBtn').click(); });
   dz.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('pickFilesBtn').click(); } });
   window.addEventListener('dragover', (e) => e.preventDefault());
   window.addEventListener('drop', (e) => e.preventDefault());
-}
-
-// --- Anbieter / Status --------------------------------------------------
-function describeProvider(id) {
-  return {
-    ollama: 'Läuft lokal auf deinem Rechner – kostenlos, offline, deine Daten bleiben bei dir.',
-    anthropic: 'Claude von Anthropic – sehr stark bei Code. Braucht einen API-Schlüssel.',
-    openai: 'ChatGPT-Modelle von OpenAI. Braucht einen API-Schlüssel.',
-    gemini: 'Gemini von Google. Braucht einen API-Schlüssel.',
-    compat: 'Beliebiger OpenAI-kompatibler Dienst (Mistral, DeepSeek, Groq, LM Studio …). Basis-URL in den Einstellungen setzen.',
-  }[id] || '';
-}
-function setStatus(kind, text) {
-  $('statusDot').className = 'dot ' + kind;
-  $('statusText').textContent = text;
 }
 
 // --- Analyse ------------------------------------------------------------
@@ -103,11 +138,13 @@ async function runAudit() {
   state.running = true; updateRunState();
   $('cancelBtn').hidden = false; $('cancelBtn').disabled = false;
   $('progressPanel').hidden = false;
+  $('emptyState').hidden = true;
   $('resultPanel').hidden = true;
   $('log').textContent = '';
   $('costPanel').hidden = true; $('costPanel').innerHTML = '';
   $('barFill').style.width = '0%';
   $('progressTitle').textContent = 'Prüfung läuft …';
+  $('progressPanel').classList.remove('done');
   renderStepper('ingest');
   $('progressPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
@@ -119,7 +156,9 @@ async function runAudit() {
     if (p.cost) updateCost(p.cost, false);
   });
 
-  const res = await window.vigil.runAudit({ targets: state.targets, providerId: $('providerSelect').value });
+  const res = await window.vigil.runAudit({ targets: state.targets, providerId: state.config.selected });
+  // Bestaetigte Hosts hat der Main-Prozess auf die Freigabeliste gesetzt.
+  try { state.config.allowlist = (await window.vigil.getConfig()).allowlist || []; } catch { /* egal */ }
   unsub();
   state.running = false; updateRunState();
   $('cancelBtn').hidden = true;
@@ -133,6 +172,7 @@ async function runAudit() {
   }
   $('barFill').style.width = '100%';
   $('progressTitle').textContent = res.canceled ? 'Abgebrochen – Teilergebnis' : 'Prüfung abgeschlossen';
+  $('progressPanel').classList.add('done');
   renderStepper(res.canceled ? '' : 'done');
   if (res.result) {
     if (res.result.meta && res.result.meta.usage) updateCost(res.result.meta.usage, true);
@@ -204,7 +244,7 @@ function renderVerdict() {
   if (merged) notes.push(`${merged} doppelte ${plural(merged, 'Meldung', 'Meldungen')} aus verschiedenen Prüfungen zusammengeführt.`);
   if (meta.refuted) notes.push(`${meta.refuted} KI-${plural(meta.refuted, 'Befund', 'Befunde')} bei der Gegenprüfung widerlegt und verworfen.`);
   if (meta.redacted) notes.push(`${meta.redacted} ${plural(meta.redacted, 'Secret', 'Secrets')} vor dem Versand an die KI geschwärzt.`);
-  const unverified = state.lastFindings.filter((f) => !f.suppressed && f.evidence === 'unverified').length;
+  const unverified = state.lastFindings.filter((f) => !f.suppressed && f.assurance === 'unverified').length;
   const mergeNote = notes.map((n) => `<div class="merge-note">${esc(n)}</div>`).join('') +
     (unverified ? `<div class="merge-note warn">${unverified} ${plural(unverified, 'Befund ist', 'Befunde sind')} nur von der KI gemeldet und unbestätigt – bitte selbst prüfen.</div>` : '');
 
@@ -243,6 +283,7 @@ function renderResult(result) {
   state.filter = 'all'; state.query = ''; state.onlyNew = false; state.onlyProven = false; state.showSuppressed = false;
   $('findingSearch').value = '';
   $('resultPanel').hidden = false;
+  $('emptyState').hidden = true;
 
   if (result.errors && result.errors.length) {
     $('log').hidden = false; $('logToggle').setAttribute('aria-expanded', 'true');
@@ -285,7 +326,7 @@ const CHEV = '<svg class="chev" viewBox="0 0 24 24" width="18" height="18" aria-
 function findingCard(f) {
   const srcs = findingSources(f);
   const srcNames = srcs.map(sourceLabel).join(', ');
-  const badges = `${f.isNew ? '<span class="badge-new" title="Seit der gespeicherten Baseline neu">neu</span>' : ''}${f.suppressed ? '<span class="badge-supp" title="Dauerhaft ausgeblendet">ausgeblendet</span>' : ''}`;
+  const badges = `${f.isNew && state.lastResult && state.lastResult.hasBaseline ? '<span class="badge-new" title="Seit dem letzten Lauf neu aufgetaucht">neu</span>' : ''}${f.regression ? '<span class="badge-reg" title="War schon als behoben markiert und ist wieder da">wieder da</span>' : ''}${f.status && f.status !== 'OPEN' ? `<span class="badge-status st-${f.status}">${esc(STATUS_LABEL[f.status])}</span>` : ''}`;
   const srcChip = srcs.length > 1
     ? `<span class="src-chip" title="Gefunden von: ${esc(srcNames)}">${esc(srcs.map(sourceLabel).join(' + '))}</span>`
     : `<span>${esc(srcNames)}</span>`;
@@ -294,8 +335,9 @@ function findingCard(f) {
     `<span>${esc(f.category)}</span>`,
     srcChip,
   ].filter(Boolean).join('<span class="f-sep">·</span>') + badges;
-  const ev = EVIDENCE[f.evidence];
-  const evChip = ev ? `<span class="ev-chip ${ev.cls}" title="${esc(ev.help)}">${ev.label}</span>` : '';
+  const ev = EVIDENCE[f.assurance];
+  // Feste Spalten: leere Platzhalter, damit Zeilen ohne Beleg/CVSS nicht verrutschen.
+  const evChip = ev ? `<span class="ev-chip ${ev.cls}" title="${esc(ev.help)}">${ev.label}</span>` : '<span class="col-empty"></span>';
   const ctx = (f.context || []).filter((c) => CONTEXT[c]);
   const ctxRow = ctx.length ? `<div class="ctx-row">${ctx.map((c) => `<span class="ctx-chip ctx-${c}">${CONTEXT[c]}</span>`).join('')}</div>` : '';
   const check = f.validation && f.validation.reason
@@ -305,7 +347,7 @@ function findingCard(f) {
     f.description && `<div class="f-sec${danger ? '' : ' full'}"><h4>Das Problem</h4><p>${esc(f.description)}</p></div>`,
     danger && `<div class="f-sec${f.description ? '' : ' full'}"><h4>Wie gefährlich ist das?</h4><p>${esc(danger)}</p></div>`,
   ].filter(Boolean).join('');
-  const cvss = f.cvss != null ? `<span class="cvss" title="CVSS: standardisierter Schweregrad 0–10"><small>CVSS</small>${esc(Number(f.cvss).toFixed(1))}</span>` : '';
+  const cvss = f.cvss != null ? `<span class="cvss" title="CVSS: standardisierter Schweregrad 0–10"><small>CVSS</small>${esc(Number(f.cvss).toFixed(1))}</span>` : '<span class="col-empty"></span>';
   return `
     <div class="card finding sev-${f.severity}${f.suppressed ? ' is-suppressed' : ''}">
       <button class="card-head" aria-expanded="false">
@@ -314,14 +356,16 @@ function findingCard(f) {
         ${evChip}${cvss}${CHEV}
       </button>
       <div class="card-body"><div class="inner"><div class="pad">
+        ${f.locationDetail ? `<p class="loc-detail"><span>Fundort</span> ${esc(f.locationDetail)}</p>` : ''}
         ${ctxRow}
         ${secs ? `<div class="f-cols">${secs}</div>` : ''}
         ${check}
         ${f.remediation ? `<div class="f-sec fix"><h4>✔ So behebst du es</h4><p>${esc(f.remediation)}</p></div>` : ''}
         ${f.patch ? `<pre>${esc(f.patch)}</pre>` : ''}
+        ${f.evidence ? `<div class="f-sec evidence"><h4>Fundstelle</h4><code>${esc(f.evidence)}</code></div>` : ''}
         <div class="f-foot">
-          <span class="muted">${srcs.length > 1 ? 'Gefunden von' : 'Quelle'}: ${esc(srcNames)}${f.confidence ? ' · Sicherheit: ' + esc(CONF_LABEL[f.confidence] || f.confidence) : ''}</span>
-          <button type="button" class="btn tiny supp-toggle" data-fp="${esc(f.id || '')}">${f.suppressed ? 'Wieder einblenden' : 'Diesen Befund ausblenden'}</button>
+          <span class="muted">${srcs.length > 1 ? 'Gefunden von' : 'Quelle'}: ${esc(srcNames)}${f.confidence ? ' · Sicherheit: ' + esc(CONF_LABEL[f.confidence] || f.confidence) : ''}${f.ruleId ? ' · Regel: ' + esc(f.ruleId) : ''}</span>
+          ${f.id ? statusSelect(f.id, f.status || 'OPEN') : ''}
         </div>
       </div></div></div>
     </div>`;
@@ -333,7 +377,7 @@ function renderFindings() {
   let list = state.filter === 'all' ? state.lastFindings : state.lastFindings.filter((f) => f.severity === state.filter);
   if (!state.showSuppressed) list = list.filter((f) => !f.suppressed);
   if (state.onlyNew) list = list.filter((f) => f.isNew);
-  if (state.onlyProven) list = list.filter((f) => f.evidence !== 'unverified');
+  if (state.onlyProven) list = list.filter((f) => f.assurance !== 'unverified');
   list = list.filter((f) => matchesQuery(f, q));
   if (!list.length) {
     box.innerHTML = state.lastFindings.length
@@ -350,27 +394,39 @@ function renderFindings() {
     const open = h.parentElement.classList.toggle('open');
     h.setAttribute('aria-expanded', open ? 'true' : 'false');
   });
-  box.querySelectorAll('.supp-toggle').forEach((b) => b.onclick = async (e) => {
-    e.stopPropagation();
-    const fp = b.dataset.fp; if (!fp) return;
-    const r = await window.vigil.toggleSuppress(fp);
-    if (r.ok) {
-      state.lastFindings.forEach((f) => { if ((f.id || '') === fp) f.suppressed = r.suppressed; });
-      refreshResultView();
-    }
+  bindStatusSelects(box, (id, status) => {
+    state.lastFindings.forEach((f) => { if (f.id === id) { f.status = status; f.suppressed = HIDDEN_STATUS.has(status); } });
+    refreshResultView();
   });
 }
-// Baseline-Status + Ansichts-Umschalter (nur neue / ausgeblendete zeigen).
+
+// --- Befund-Status (Lebenszyklus) ---------------------------------------
+const STATUS_LABEL = { OPEN: 'Offen', IN_PROGRESS: 'In Arbeit', ACCEPTED_RISK: 'Risiko akzeptiert', FALSE_POSITIVE: 'Fehlalarm', RESOLVED: 'Behoben' };
+const HIDDEN_STATUS = new Set(['FALSE_POSITIVE', 'ACCEPTED_RISK']);
+function statusSelect(id, status) {
+  return `<select class="status-select st-${status}" data-id="${esc(id)}" aria-label="Status des Befunds">${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}"${k === status ? ' selected' : ''}>${v}</option>`).join('')}</select>`;
+}
+function bindStatusSelects(root, onChanged) {
+  root.querySelectorAll('.status-select').forEach((sel) => {
+    sel.onclick = (e) => e.stopPropagation();
+    sel.onchange = async () => {
+      const r = await window.vigil.setFindingStatus(sel.dataset.id, sel.value);
+      if (r.ok) onChanged(sel.dataset.id, r.status);
+      else flash('Status nicht gespeichert: ' + r.error);
+    };
+  });
+}
+
+// Vergleich mit frueheren Laeufen (aus dem Befund-Speicher).
 function updateBaselineStatus() {
   const el = $('baselineStatus'); if (!el) return;
-  const r = state.lastResult;
-  const newCount = state.lastFindings.filter((f) => f.isNew).length;
-  if (r && r.hasBaseline) {
-    const when = r.baselineAt ? ' (von ' + new Date(r.baselineAt).toLocaleString('de-DE') + ')' : '';
-    el.textContent = `Baseline aktiv${when} · ${newCount} neue Befund(e) seit der Baseline.`;
-  } else {
-    el.textContent = 'Keine Baseline gesetzt – „Als Baseline merken" hebt beim nächsten Lauf nur neue Befunde hervor.';
-  }
+  const lc = state.lastResult && state.lastResult.lifecycle;
+  if (!lc) { el.textContent = ''; return; }
+  if (!state.lastResult.hasBaseline) { el.textContent = 'Erster Lauf für dieses Ziel – ab dem nächsten Lauf siehst du hier, was neu ist und was behoben wurde.'; return; }
+  const parts = [`${lc.created} neu`, `${lc.updated} bekannt`];
+  if (lc.reopened) parts.push(`${lc.reopened} wieder aufgetaucht`);
+  if (lc.resolved) parts.push(`${lc.resolved} automatisch als behoben markiert`);
+  el.textContent = 'Im Vergleich zum letzten Lauf: ' + parts.join(' · ') + '.';
 }
 function renderViewToggles() {
   const box = $('viewToggles'); if (!box) return;
@@ -378,10 +434,10 @@ function renderViewToggles() {
   const newCount = state.lastFindings.filter((f) => f.isNew).length;
   const suppCount = state.lastFindings.filter((f) => f.suppressed).length;
   let html = '';
-  if (r && r.hasBaseline) html += `<button class="fbtn toggle${state.onlyNew ? ' active' : ''}" data-t="onlyNew">Nur neue (${newCount})</button>`;
-  const provenCount = state.lastFindings.filter((f) => !f.suppressed && f.evidence && f.evidence !== 'unverified').length;
-  if (state.lastFindings.some((f) => f.evidence === 'unverified') || state.onlyProven) html += `<button class="fbtn toggle${state.onlyProven ? ' active' : ''}" data-t="onlyProven" title="Nur Befunde, die regelbasiert oder per Gegenprüfung bestätigt sind">Nur belegte (${provenCount})</button>`;
-  if (suppCount || state.showSuppressed) html += `<button class="fbtn toggle${state.showSuppressed ? ' active' : ''}" data-t="showSupp">Ausgeblendete zeigen (${suppCount})</button>`;
+  if (r && r.hasBaseline && (newCount || state.onlyNew)) html += `<button class="fbtn toggle${state.onlyNew ? ' active' : ''}" data-t="onlyNew">Nur neue (${newCount})</button>`;
+  const provenCount = state.lastFindings.filter((f) => !f.suppressed && f.assurance && f.assurance !== 'unverified').length;
+  if (state.lastFindings.some((f) => f.assurance === 'unverified') || state.onlyProven) html += `<button class="fbtn toggle${state.onlyProven ? ' active' : ''}" data-t="onlyProven" title="Nur Befunde, die regelbasiert oder per Gegenprüfung bestätigt sind">Nur belegte (${provenCount})</button>`;
+  if (suppCount || state.showSuppressed) html += `<button class="fbtn toggle${state.showSuppressed ? ' active' : ''}" data-t="showSupp">Fehlalarme &amp; akzeptierte zeigen (${suppCount})</button>`;
   box.innerHTML = html;
   box.querySelectorAll('.fbtn').forEach((b) => b.onclick = () => {
     if (b.dataset.t === 'onlyNew') state.onlyNew = !state.onlyNew;
@@ -455,40 +511,17 @@ function collectDisabledRules() {
   state.config.disabledRules = [...$('disabledRules').querySelectorAll('.r-off')].filter((c) => c.checked).map((c) => c.value);
 }
 
-// --- Einstellungen ------------------------------------------------------
-function tempText(v) {
-  if (v <= 0.2) return 'Niedrig – genaue, nachvollziehbare Ergebnisse (empfohlen).';
-  if (v <= 0.5) return 'Mittel – etwas freier formuliert.';
-  return 'Hoch – kreativer, aber weniger zuverlässig. Für Sicherheitsprüfungen nicht ideal.';
-}
-// Modelle automatisch ziehen + sinnvolles Modell vorauswaehlen.
+// --- KI-Auswahl: Lokal (Ollama) oder Cloud ------------------------------
+const CLOUD_IDS = ['anthropic', 'openai', 'gemini', 'compat'];
 const MODEL_CACHE = {};
 const CUSTOM = '__custom__'; // Sentinel fuer „eigenes Modell eingeben"
-// Ist das aktuell gespeicherte Modell NICHT in der geladenen Liste? -> manuelle Eingabe.
-function isCustomModel(p, pc) {
-  const list = MODEL_CACHE[p.id];
-  return !!(pc.model && list && list.length && !list.includes(pc.model));
-}
-// Baut die <option>-Liste fuer das Modell-Dropdown eines Anbieters.
-function modelOptions(p, pc) {
-  const list = MODEL_CACHE[p.id] || [];
-  const picked = pickPreferred(p.id, list, pc.model || '');
-  let opts = '';
-  if (list.length) {
-    opts = list.map((m) => `<option value="${esc(m)}"${m === picked && !isCustomModel(p, pc) ? ' selected' : ''}>${esc(m)}</option>`).join('');
-  } else if (pc.model) {
-    // Noch keine Liste geladen: aktuelles Modell trotzdem zeigen.
-    opts = `<option value="${esc(pc.model)}" selected>${esc(pc.model)}</option>`;
-  } else {
-    opts = `<option value="" disabled selected>— „Modelle laden" klicken —</option>`;
-  }
-  opts += `<option value="${CUSTOM}"${isCustomModel(p, pc) ? ' selected' : ''}>✏️ Eigenes Modell eingeben …</option>`;
-  return opts;
-}
-function providerReady(p) {
-  const pc = state.config.providers[p.id] || {};
-  return p.id === 'ollama' || p.id === 'compat' || p.envKeyPresent || !!pc.apiKey;
-}
+const ai = { mode: 'local', ollama: null, recommended: [], pulling: null, busy: false };
+
+const pcfg = (id) => state.config.providers[id] || (state.config.providers[id] = {});
+const providerMeta = (id) => state.providers.find((p) => p.id === id) || {};
+const saveCfg = () => window.vigil.saveConfig(state.config);
+const fmtSize = (b) => (b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(b / 1e6)) + ' MB').replace('.', ',');
+
 function pickPreferred(id, models, current) {
   if (current && models.includes(current)) return current;
   const pref = {
@@ -501,44 +534,279 @@ function pickPreferred(id, models, current) {
   for (const re of pref) { const m = models.find((x) => re.test(x)); if (m) return m; }
   return models[0] || current || '';
 }
-async function pullModels(id, { silent } = {}) {
-  const pc = state.config.providers[id] || (state.config.providers[id] = {});
-  const keyEl = document.querySelector(`#providerSettings input[data-p="${id}"][data-k="apiKey"]`);
-  const baseEl = document.querySelector(`#providerSettings input[data-p="${id}"][data-k="baseUrl"]`);
-  const apiKey = keyEl ? keyEl.value.trim() : (pc.apiKey || '');
-  const baseUrl = baseEl ? baseEl.value.trim() : (pc.baseUrl || '');
-  const ms = document.querySelector(`[data-ms="${id}"]`);
-  if (ms && !silent) { ms.textContent = 'Lade Modelle …'; ms.className = 'model-status muted small'; }
-  const r = await window.vigil.loadModels({ providerId: id, apiKey, baseUrl });
-  if (!r.ok) {
-    if (ms && !silent) { ms.textContent = r.error + (id === 'anthropic' ? '  (Schlüssel korrekt? Guthaben vorhanden?)' : ''); ms.className = 'model-status err small'; }
-    return [];
+
+function aiReady() {
+  if (!state.config) return { ok: false, why: '' };
+  if (ai.mode === 'local') {
+    const s = ai.ollama;
+    if (!s) return { ok: false, why: 'Prüfe Ollama …' };
+    if (!s.installed) return { ok: false, why: 'Installiere zuerst Ollama (Schritt 2) – oder wähle „Cloud“.' };
+    if (!s.running) return { ok: false, why: 'Starte Ollama in Schritt 2.' };
+    if (!s.models.length) return { ok: false, why: 'Lade in Schritt 2 ein Modell herunter, z. B. Qwen 2.5 Coder 7B.' };
+    return { ok: true, label: pcfg('ollama').model || 'Ollama' };
   }
-  MODEL_CACHE[id] = r.models;
-  const p = state.providers.find((x) => x.id === id);
-  // Dropdown neu aufbauen (alle geladenen Modelle + „eigenes Modell").
-  const sel = document.querySelector(`#providerSettings select[data-p="${id}"][data-k="model"]`);
-  const man = document.querySelector(`#providerSettings input[data-p="${id}"][data-k="modelManual"]`);
-  const custom = isCustomModel(p, pc);
-  if (!custom) {
-    const picked = pickPreferred(id, r.models, pc.model || '');
-    if (picked && picked !== pc.model) { pc.model = picked; window.vigil.saveConfig(state.config); }
-  }
-  if (sel) { sel.innerHTML = modelOptions(p, pc); sel.value = custom ? CUSTOM : (pc.model || ''); }
-  if (man) { man.hidden = !custom; if (custom) man.value = pc.model || ''; }
-  if (ms) {
-    if (r.models.length) { ms.textContent = `${r.models.length} Modelle geladen · ausgewählt: ${pc.model || '—'}`; ms.className = 'model-status ok small'; }
-    else if (id === 'ollama') { ms.textContent = 'Verbindung ok, aber kein Modell installiert. Lade z. B. „ollama pull qwen2.5-coder".'; ms.className = 'model-status err small'; }
-    else { ms.textContent = 'Keine Modelle gefunden – Modellname unten manuell eingeben.'; ms.className = 'model-status err small'; }
-  }
-  return r.models;
-}
-// Beim Start/Anbieterwechsel still sicherstellen, dass ein gueltiges Modell gesetzt ist.
-async function ensureModel(id) {
-  const p = state.providers.find((x) => x.id === id);
-  if (p && providerReady(p)) await pullModels(id, { silent: true });
+  const id = state.config.cloudProvider;
+  if (!cloudHasAccess(id)) return { ok: false, why: id === 'compat' ? 'Trage in den Einstellungen die Server-Adresse des Dienstes ein.' : 'Füge in Schritt 2 deinen API-Schlüssel ein.' };
+  if (!pcfg(id).model) return { ok: false, why: 'Wähle in Schritt 2 ein Modell.' };
+  return { ok: true, label: pcfg(id).model };
 }
 
+function setMode(mode) {
+  ai.mode = mode;
+  state.config.selected = mode === 'local' ? 'ollama' : state.config.cloudProvider;
+  saveCfg();
+  for (const b of [$('modeLocal'), $('modeCloud')]) {
+    const on = b.dataset.mode === mode;
+    b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+  $('localPane').hidden = mode !== 'local';
+  $('cloudPane').hidden = mode !== 'cloud';
+  if (mode === 'local') refreshOllama(); else refreshCloud();
+  updateRunState();
+}
+
+// --- Ollama ---------------------------------------------------------------
+async function refreshOllama() {
+  try { ai.ollama = await window.vigil.ollama.status(); } catch { ai.ollama = { installed: false, running: false, models: [] }; }
+  renderOllama(); updateRunState();
+}
+function setOllamaCard(kind, title, sub, action) {
+  $('ollamaDot').className = 'dot ' + kind;
+  $('ollamaTitle').textContent = title;
+  $('ollamaSub').textContent = sub || '';
+  const b = $('ollamaAction');
+  b.hidden = !action;
+  if (action) { b.textContent = action.label; b.onclick = action.run; b.disabled = false; }
+}
+function renderOllama() {
+  const s = ai.ollama || {};
+  if (!s.installed) setOllamaCard('err', 'Ollama ist noch nicht installiert', 'Ollama führt KI-Modelle direkt auf deinem Rechner aus. Die Installation dauert ein, zwei Minuten.', { label: 'Ollama installieren', run: installOllama });
+  else if (!s.running) setOllamaCard('wait', 'Ollama ist installiert, läuft aber nicht', 'Vigil kann den Dienst für dich starten.', { label: 'Ollama starten', run: startOllama });
+  else setOllamaCard('ok', `Ollama läuft${s.version ? ' · Version ' + s.version : ''}`, s.models.length ? `${s.models.length} ${s.models.length === 1 ? 'Modell' : 'Modelle'} installiert` : 'Noch kein Modell installiert – lade unten eins herunter.', null);
+  $('localModelRow').hidden = !(s.running && s.models.length);
+  $('modelShop').hidden = !s.running;
+  // Mit installiertem Modell ist die Download-Liste Nebensache – eingeklappt, bis man sie oeffnet.
+  const shopOpen = ai.shopOpen ?? !(s.models && s.models.length);
+  $('modelShop').classList.toggle('collapsed', !shopOpen && !ai.pulling);
+  $('shopToggle').setAttribute('aria-expanded', shopOpen ? 'true' : 'false');
+  if (s.running) { renderLocalModels(); renderRecommended(); }
+}
+function renderLocalModels() {
+  const models = ai.ollama.models;
+  const p = pcfg('ollama');
+  const names = models.map((m) => m.name);
+  if (!names.includes(p.model)) { p.model = pickPreferred('ollama', names, ''); saveCfg(); }
+  $('localModel').innerHTML = models.map((m) => `<option value="${esc(m.name)}"${m.name === p.model ? ' selected' : ''}>${esc(m.name)}${m.size ? ' · ' + fmtSize(m.size) : ''}</option>`).join('');
+}
+const fullTag = (n) => (n.includes(':') ? n : n + ':latest');
+const isInstalled = (n) => ai.ollama.models.some((m) => m.name === n || m.name === fullTag(n));
+function renderRecommended() {
+  $('recList').innerHTML = ai.recommended.map((r) => {
+    const have = isInstalled(r.name);
+    const action = have ? '<span class="rec-ok">✓ installiert</span>'
+      : `<button class="btn small rec-pull" data-m="${esc(r.name)}"${ai.pulling ? ' disabled' : ''}>Laden</button>`;
+    return `<div class="rec${have ? ' have' : ''}">
+      <div class="rec-main"><b>${esc(r.label)}</b><span class="muted small">${esc(r.note)}</span></div>
+      <span class="rec-meta">${esc(r.size)} · ${esc(r.ram)}</span>${action}</div>`;
+  }).join('');
+  $('recList').querySelectorAll('.rec-pull').forEach((b) => b.onclick = () => pullModel(b.dataset.m));
+  $('customPullBtn').disabled = !!ai.pulling;
+}
+
+async function installOllama() {
+  ai.busy = true;
+  const btn = $('ollamaAction');
+  btn.disabled = true; btn.textContent = 'Installiere …';
+  $('ollamaSub').textContent = 'Installation über winget (offizielles Paket Ollama.Ollama). Bitte warten …';
+  const log = $('ollamaLog'); log.hidden = false; log.textContent = '';
+  const lines = [];
+  const unsub = window.vigil.ollama.onLog((l) => { lines.push(l); log.textContent = lines.slice(-6).join('\n'); });
+  const r = await window.vigil.ollama.install();
+  unsub(); ai.busy = false;
+  if (r.ok) {
+    log.hidden = true;
+    ai.ollama = r.status; renderOllama(); updateRunState();
+    return;
+  }
+  setOllamaCard('err', 'Installation hat nicht geklappt', r.error, r.fallback
+    ? { label: 'Download-Seite öffnen', run: () => { window.vigil.ollama.openDownload(); $('ollamaSub').textContent = 'Nach der Installation hier einfach weitermachen – Vigil erkennt Ollama automatisch.'; } }
+    : { label: 'Erneut versuchen', run: installOllama });
+}
+async function startOllama() {
+  ai.busy = true;
+  const btn = $('ollamaAction');
+  btn.disabled = true; btn.textContent = 'Starte …';
+  const r = await window.vigil.ollama.start();
+  ai.busy = false;
+  if (r.ok) { ai.ollama = r.status; renderOllama(); updateRunState(); }
+  else setOllamaCard('err', 'Ollama ließ sich nicht starten', r.error, { label: 'Erneut versuchen', run: startOllama });
+}
+
+const PULL_STATUS = { 'pulling manifest': 'Lade Modell-Infos …', 'verifying sha256 digest': 'Prüfe den Download …', 'writing manifest': 'Schließe ab …', 'removing any unused layers': 'Räume auf …', success: 'Fertig.' };
+async function pullModel(name) {
+  name = String(name || '').trim();
+  if (!name || ai.pulling) return;
+  ai.pulling = name; renderRecommended();
+  $('pullBox').hidden = false; $('pullName').textContent = name; $('pullPct').textContent = '';
+  $('pullFill').style.width = '0%'; $('pullText').textContent = 'Starte Download …'; $('pullCancel').hidden = false;
+  const unsub = window.vigil.ollama.onProgress((p) => {
+    if (p.model !== name) return;
+    if (p.percent != null && p.total) {
+      $('pullFill').style.width = p.percent + '%';
+      $('pullPct').textContent = p.percent + ' %';
+      $('pullText').textContent = `${fmtSize(p.completed)} von ${fmtSize(p.total)}`;
+    } else $('pullText').textContent = PULL_STATUS[p.status] || p.status;
+  });
+  const r = await window.vigil.ollama.pull(name);
+  unsub(); ai.pulling = null; $('pullCancel').hidden = true;
+  if (r.ok) {
+    $('pullFill').style.width = '100%'; $('pullPct').textContent = '100 %';
+    $('pullText').textContent = '✓ Installiert und ausgewählt.';
+    pcfg('ollama').model = fullTag(name); saveCfg();
+    $('customPull').value = '';
+    await refreshOllama();
+    setTimeout(() => { if (!ai.pulling) $('pullBox').hidden = true; }, 2500);
+  } else {
+    $('pullText').textContent = '✕ ' + r.error;
+    renderRecommended();
+  }
+}
+
+// --- Cloud ----------------------------------------------------------------
+function cloudHasAccess(id) {
+  const c = pcfg(id);
+  if (id === 'compat') return !!c.baseUrl;
+  return !!(providerMeta(id).envKeyPresent || c.apiKey);
+}
+function setCloudStatus(kind, msg) {
+  $('cloudStatus').textContent = msg;
+  $('cloudStatus').className = 'model-status small ' + (kind === 'ok' ? 'ok' : kind === 'err' ? 'err' : 'muted');
+}
+function buildCloudSelect(id) {
+  const c = pcfg(id);
+  const list = MODEL_CACHE[id] || [];
+  const custom = !!(c.model && list.length && !list.includes(c.model));
+  let opts = list.map((m) => `<option value="${esc(m)}"${m === c.model ? ' selected' : ''}>${esc(m)}</option>`).join('');
+  if (!list.length) opts = c.model ? `<option value="${esc(c.model)}" selected>${esc(c.model)}</option>` : '<option value="" disabled selected>– zuerst Schlüssel eingeben –</option>';
+  opts += `<option value="${CUSTOM}"${custom ? ' selected' : ''}>Anderes Modell eingeben …</option>`;
+  $('cloudModel').innerHTML = opts;
+  $('cloudModelManual').hidden = !custom;
+  if (custom) $('cloudModelManual').value = c.model;
+}
+function refreshCloud() {
+  const id = state.config.cloudProvider;
+  const meta = providerMeta(id), c = pcfg(id);
+  $('cloudProvider').value = id;
+  $('cloudKey').value = c.apiKey || '';
+  $('cloudKey').placeholder = meta.envKeyPresent ? 'aus .env erkannt – hier überschreibbar' : (id === 'compat' ? 'optional – nur falls der Dienst einen verlangt' : 'API-Schlüssel einfügen');
+  $('cloudKeyBadge').hidden = !meta.envKeyPresent;
+  buildCloudSelect(id);
+  if (cloudHasAccess(id)) loadCloudModels(id);
+  else setCloudStatus('muted', id === 'compat' ? 'Für OpenAI-kompatible Dienste die Server-Adresse in den Einstellungen eintragen.' : 'Schlüssel eingeben – die Modelle laden dann automatisch.');
+}
+async function loadCloudModels(id) {
+  const c = pcfg(id);
+  setCloudStatus('muted', 'Lade Modelle …');
+  const r = await window.vigil.loadModels({ providerId: id, apiKey: c.apiKey || '', baseUrl: c.baseUrl || '' });
+  if (id !== state.config.cloudProvider) return; // inzwischen gewechselt
+  if (!r.ok) { buildCloudSelect(id); setCloudStatus('err', '✕ ' + r.error + (id === 'anthropic' ? ' (Schlüssel korrekt? Guthaben vorhanden?)' : '')); updateRunState(); return; }
+  MODEL_CACHE[id] = r.models;
+  if (!c.model || r.models.includes(c.model) || !r.models.length) {
+    const picked = pickPreferred(id, r.models, c.model || '');
+    if (picked !== c.model) { c.model = picked; saveCfg(); }
+  }
+  buildCloudSelect(id);
+  setCloudStatus(r.models.length ? 'ok' : 'err', r.models.length ? `✓ Verbunden · ${r.models.length} Modelle verfügbar` : 'Keine Modelle gefunden – Namen über „Anderes Modell eingeben“ eintragen.');
+  updateRunState();
+}
+
+// --- Uebersicht (Dashboard über alle Läufe) ------------------------------
+const dash = { status: 'OPEN,IN_PROGRESS', severity: '', targetId: '', q: '' };
+const RUN_LABEL = { QUEUED: 'wartet', RUNNING: 'läuft', COMPLETED: 'fertig', FAILED: 'fehlgeschlagen' };
+const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '–');
+
+function showView(v) {
+  $('checkView').hidden = v !== 'check';
+  $('dashView').hidden = v !== 'dash';
+  for (const [id, name] of [['tabCheck', 'check'], ['tabDash', 'dash']]) {
+    $(id).classList.toggle('active', v === name);
+    $(id).setAttribute('aria-selected', v === name ? 'true' : 'false');
+  }
+  if (v === 'dash') loadDashboard();
+}
+
+async function loadDashboard() {
+  const { stats, findings } = await window.vigil.dashboard({ ...dash, limit: 500 });
+  // Kennzahlen: offene + in Arbeit befindliche Befunde nach Schweregrad
+  $('dashStats').innerHTML = SEV_ORDER.map((s) => `<div class="stat c-${SEV_CLS[s]}${s === 'critical' && stats.open[s] ? ' alarm' : ''}"><span class="stat-n">${stats.open[s] || 0}</span><span class="stat-l">${SEV_LABEL[s]}</span></div>`).join('');
+  $('dashSummary').textContent = stats.openTotal
+    ? `${stats.openTotal} ${stats.openTotal === 1 ? 'Befund ist' : 'Befunde sind'} offen über ${stats.targets.length} ${stats.targets.length === 1 ? 'Ziel' : 'Ziele'}. ${stats.byStatus.RESOLVED || 0} behoben, ${(stats.byStatus.FALSE_POSITIVE || 0) + (stats.byStatus.ACCEPTED_RISK || 0)} als Fehlalarm oder akzeptiertes Risiko markiert.`
+    : (stats.targets.length ? 'Keine offenen Befunde – alles im grünen Bereich.' : 'Noch keine Prüfungen gespeichert. Starte unter „Prüfen“ deinen ersten Lauf.');
+  $('dashStatus').querySelectorAll('.fbtn').forEach((b) => b.classList.toggle('active', b.dataset.s === dash.status));
+  renderDashTargets(stats.targets);
+  renderDashRuns(stats.runs);
+  renderDashTable(findings, stats.targets);
+}
+
+function renderDashTargets(targets) {
+  const box = $('dashTargets');
+  if (!targets.length) { box.innerHTML = '<p class="muted small">Noch keine Ziele.</p>'; return; }
+  box.innerHTML = targets.map((t) => {
+    const o = t.open;
+    const pills = SEV_ORDER.filter((s) => o[s]).map((s) => `<span class="mini-pill c-${SEV_CLS[s]}">${o[s]}</span>`).join('') || '<span class="ok-text">✓ nichts offen</span>';
+    return `<div class="tgt-row${dash.targetId === t.id ? ' active' : ''}" data-id="${esc(t.id)}">
+      <span class="t-kind ${t.type}">${KIND_LABEL[t.type] || t.type}</span>
+      <button class="tgt-name" data-filter="${esc(t.id)}" title="${esc(t.identifier)}">${esc(t.name)}</button>
+      ${t.type === 'url' || t.type === 'endpoint' ? `<span class="verified${t.verified ? '' : ' no'}" title="${t.verified ? 'Freigegeben' : 'Nicht freigegeben'}">${t.verified ? 'freigegeben' : 'nicht freigegeben'}</span>` : ''}
+      <span class="tgt-pills">${pills}</span>
+      <span class="muted small tgt-when">${fmtDate(t.lastScanAt)}</span>
+      <button class="btn tiny rescan" data-id="${esc(t.id)}">Erneut prüfen</button>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.tgt-name').forEach((b) => b.onclick = () => { dash.targetId = dash.targetId === b.dataset.filter ? '' : b.dataset.filter; loadDashboard(); });
+  box.querySelectorAll('.rescan').forEach((b) => b.onclick = () => {
+    const t = targets.find((x) => x.id === b.dataset.id);
+    if (!t) return;
+    state.targets = [{ type: t.type, value: t.identifier, authorized: t.verified }];
+    renderTargets();
+    showView('check');
+    if ($('runBtn').disabled) { flash($('runHint').textContent || 'Ziel übernommen – wähle eine KI und starte.'); return; }
+    runAudit();
+  });
+}
+
+function renderDashRuns(runs) {
+  $('dashRuns').innerHTML = runs.length ? runs.slice(0, 8).map((r) => `<div class="run-row-item">
+    <span class="run-st st-${r.status}">${RUN_LABEL[r.status] || r.status}</span>
+    <span class="run-tgt" title="${esc(r.targets.map((t) => t.value).join(', '))}">${esc(r.targets.map((t) => t.value).join(', ') || '–')}</span>
+    <span class="muted small">${r.summary ? `${r.summary.total ?? 0} Befunde · ${r.summary.created || 0} neu · ${r.summary.resolved || 0} behoben` : (r.errorLog ? esc(r.errorLog) : '')}</span>
+    <span class="muted small">${r.origin === 'api' ? 'API · ' : ''}${fmtDate(r.finishedAt || r.startedAt || r.createdAt)}</span>
+  </div>`).join('') : '<p class="muted small">Noch keine Läufe.</p>';
+}
+
+function renderDashTable(findings, targets) {
+  const tgt = targets.find((t) => t.id === dash.targetId);
+  $('dashTargetFilter').hidden = !tgt;
+  if (tgt) $('dashTargetName').textContent = tgt.name;
+  const box = $('dashTable');
+  if (!findings.length) { box.innerHTML = '<div class="empty"><b>Keine Befunde</b>In dieser Ansicht gibt es nichts – Filter anpassen.</div>'; return; }
+  box.innerHTML = `<table class="ftable"><thead><tr><th>Schwere</th><th>Befund</th><th>Ziel</th><th>Zuletzt gesehen</th><th>Status</th></tr></thead><tbody>${findings.map((f) => `
+    <tr class="sev-${f.severity}">
+      <td><span class="sev-tag">${SEV_LABEL[f.severity]}</span></td>
+      <td class="ft-main"><b title="${esc(f.title)}">${esc(cleanTitle(f.title))}</b><span class="f-loc" title="${esc(f.location)}">${esc(f.location)}</span>${f.statusNote ? `<span class="muted small">${esc(f.statusNote)}</span>` : ''}</td>
+      <td class="ft-tgt" title="${esc(f.targetName)}">${esc(f.targetName)}</td>
+      <td class="muted small ft-when" title="Zuerst gesehen: ${esc(fmtDate(f.firstSeenAt))}">${fmtDate(f.lastSeenAt)}</td>
+      <td>${statusSelect(f.id, f.status)}</td>
+    </tr>`).join('')}</tbody></table>`;
+  bindStatusSelects(box, () => loadDashboard());
+}
+
+// --- Einstellungen ------------------------------------------------------
+function tempText(v) {
+  if (v <= 0.2) return 'Niedrig – genaue, nachvollziehbare Ergebnisse (empfohlen).';
+  if (v <= 0.5) return 'Mittel – etwas freier formuliert.';
+  return 'Hoch – kreativer, aber weniger zuverlässig. Für Sicherheitsprüfungen nicht ideal.';
+}
 function renderSettings() {
   const t = state.config.temperature ?? 0.1;
   $('tempRange').value = t; $('tempVal').textContent = t; $('tempDesc').textContent = tempText(t);
@@ -547,14 +815,16 @@ function renderSettings() {
   $('activeChk').checked = !!state.config.activeScan;
   $('validateChk').checked = state.config.aiValidation !== false;
   $('redactChk').checked = state.config.redactSecrets !== false;
+  $('allowlistInput').value = (state.config.allowlist || []).join('\n');
+  $('apiChk').checked = !!state.config.apiEnabled;
+  $('apiPort').value = state.config.apiPort || 7811;
+  refreshApiInfo();
 
-  // Proxy / VPN
   $('proxyInput').value = state.config.proxyUrl || '';
   $('proxyTestStatus').textContent = '';
-  $('proxyInput').onchange = () => { state.config.proxyUrl = $('proxyInput').value.trim(); window.vigil.saveConfig(state.config); };
   $('proxyTestBtn').onclick = async () => {
     const st = $('proxyTestStatus'); const url = $('proxyInput').value.trim();
-    state.config.proxyUrl = url; window.vigil.saveConfig(state.config);
+    state.config.proxyUrl = url; saveCfg();
     st.textContent = 'Teste Verbindung …'; st.className = 'muted small';
     const r = await window.vigil.testProxy(url);
     if (r.ok) { st.textContent = (r.usingProxy ? '✔ Proxy aktiv. ' : 'Direktverbindung (kein Proxy gesetzt). ') + 'Nach außen sichtbare IP: ' + r.ip; st.className = 'model-status ok small'; }
@@ -564,54 +834,11 @@ function renderSettings() {
   renderCustomRules();
   renderDisabledRules();
 
-  $('providerSettings').innerHTML = state.providers.map((p) => {
-    const pc = state.config.providers[p.id] || {};
-    const envBadge = p.envKeyPresent ? '<span class="env-badge" title="Ein Schlüssel wurde in der .env gefunden">.env erkannt</span>' : '';
-    const keyRow = p.id === 'ollama' ? '' : `
-      <label>Schlüssel</label>
-      <input type="password" data-p="${p.id}" data-k="apiKey" placeholder="${p.envKeyPresent ? '(aus .env – hier überschreibbar)' : 'API-Schlüssel'}" value="${esc(pc.apiKey || '')}" />`;
-    return `
-    <div class="prov-block">
-      <h4>${esc(p.label)} ${envBadge}</h4>
-      <div class="grid">
-        <label>Modell</label>
-        <div class="model-row">
-          <select class="model-select" data-p="${p.id}" data-k="model">${modelOptions(p, pc)}</select>
-          <button type="button" class="btn small load-models" data-p="${p.id}">Modelle laden</button>
-        </div>
-        <input type="text" class="model-manual" data-p="${p.id}" data-k="modelManual" placeholder="z. B. ${esc(p.defaultModel || 'modell-name')}" value="${esc(isCustomModel(p, pc) ? pc.model : '')}" ${isCustomModel(p, pc) ? '' : 'hidden'} />
-        <div class="model-status muted small" data-ms="${p.id}">Tipp: „Modelle laden" holt die verfügbaren Namen direkt vom Anbieter.</div>
-        <label>Basis-URL</label>
-        <input type="text" data-p="${p.id}" data-k="baseUrl" placeholder="${esc(p.defaultBaseUrl || 'https://…')}" value="${esc(pc.baseUrl || '')}" />
-        ${keyRow}
-      </div>
-    </div>`;
-  }).join('');
-
-  // „Modelle laden"-Buttons
-  $('providerSettings').querySelectorAll('.load-models').forEach((btn) => btn.onclick = () => pullModels(btn.dataset.p));
-  // Modell-Dropdown: bei „eigenes Modell" das Textfeld zeigen, sonst Auswahl speichern.
-  $('providerSettings').querySelectorAll('select[data-k="model"]').forEach((sel) => sel.onchange = () => {
-    const id = sel.dataset.p;
-    const pc = state.config.providers[id] || (state.config.providers[id] = {});
-    const man = document.querySelector(`#providerSettings input[data-p="${id}"][data-k="modelManual"]`);
-    if (sel.value === CUSTOM) { if (man) { man.hidden = false; man.focus(); } }
-    else {
-      if (man) man.hidden = true;
-      pc.model = sel.value; window.vigil.saveConfig(state.config);
-      const ms = document.querySelector(`[data-ms="${id}"]`);
-      if (ms) { ms.textContent = 'Ausgewählt: ' + (pc.model || '—'); ms.className = 'model-status ok small'; }
-    }
-  });
-  // Bei Key-/URL-Eingabe automatisch neu laden
-  $('providerSettings').querySelectorAll('input[data-k="apiKey"], input[data-k="baseUrl"]').forEach((inp) =>
-    inp.addEventListener('change', () => pullModels(inp.dataset.p)));
-  // Automatisch fuer alle bereiten Anbieter ziehen
-  state.providers.forEach((p) => {
-    const ms = document.querySelector(`[data-ms="${p.id}"]`);
-    if (providerReady(p)) pullModels(p.id);
-    else if (ms) ms.textContent = p.id === 'ollama' ? 'Ollama starten – dann lädt die Liste automatisch.' : 'Schlüssel eingeben – die Liste lädt dann automatisch.';
-  });
+  // Nur Server-Adressen – Schluessel und Modelle werden direkt auf dem Hauptschirm gewaehlt.
+  $('providerSettings').innerHTML = state.providers.map((p) => `
+    <label class="url-row"><span>${esc(p.label)}</span>
+      <input type="text" data-p="${p.id}" data-k="baseUrl" placeholder="${esc(p.defaultBaseUrl || 'https://…/v1')}" value="${esc(pcfg(p.id).baseUrl || '')}" />
+    </label>`).join('');
 }
 function collectSettings() {
   state.config.temperature = parseFloat($('tempRange').value) || 0;
@@ -620,172 +847,113 @@ function collectSettings() {
   state.config.activeScan = $('activeChk').checked;
   state.config.aiValidation = $('validateChk').checked;
   state.config.redactSecrets = $('redactChk').checked;
+  state.config.allowlist = $('allowlistInput').value.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+  state.config.apiEnabled = $('apiChk').checked;
+  state.config.apiPort = Math.min(65535, Math.max(1024, parseInt($('apiPort').value, 10) || 7811));
   state.config.proxyUrl = $('proxyInput').value.trim();
-  // Modell je Anbieter: aus Dropdown bzw. aus dem manuellen Feld, wenn „eigenes Modell" gewählt ist.
-  $('providerSettings').querySelectorAll('select[data-k="model"]').forEach((sel) => {
-    const id = sel.dataset.p;
-    state.config.providers[id] = state.config.providers[id] || {};
-    const man = document.querySelector(`#providerSettings input[data-p="${id}"][data-k="modelManual"]`);
-    const model = sel.value === CUSTOM ? (man ? man.value.trim() : '') : sel.value;
-    if (model) state.config.providers[id].model = model;
-  });
-  // Schlüssel + Basis-URL (das manuelle Modell-Feld wird oben separat behandelt).
-  $('providerSettings').querySelectorAll('input[data-p]').forEach((inp) => {
-    const id = inp.dataset.p, k = inp.dataset.k;
-    if (k === 'modelManual') return;
-    state.config.providers[id] = state.config.providers[id] || {};
-    state.config.providers[id][k] = inp.value.trim();
-  });
+  $('providerSettings').querySelectorAll('input[data-k="baseUrl"]').forEach((inp) => { pcfg(inp.dataset.p).baseUrl = inp.value.trim(); });
   collectCustomRules();
   collectDisabledRules();
-  state.config.selected = $('providerSelect').value;
+}
+async function refreshApiInfo() {
+  const info = await window.vigil.apiInfo();
+  $('apiToken').value = info.token || '';
+  $('apiStatus').textContent = info.running ? `✓ Läuft auf http://127.0.0.1:${info.port}` : (info.enabled ? 'Aktiviert, aber nicht gestartet – ist der Port belegt?' : 'Aus.');
+  $('apiStatus').className = 'small ' + (info.running ? 'model-status ok' : 'muted');
+  $('apiExample').textContent = `curl -H "Authorization: Bearer <Token>" http://127.0.0.1:${info.port || 7811}/api/findings?status=OPEN`;
 }
 function openSettings() { renderSettings(); $('settingsOverlay').hidden = false; }
 function closeSettings() { $('settingsOverlay').hidden = true; }
-
-// --- Modell & Schlüssel direkt auf dem Hauptschirm ----------------------
-function setMainModelStatus(kind, msg) {
-  const st = $('mainModelStatus'); if (!st) return;
-  st.textContent = msg;
-  st.className = 'model-status small ' + (kind === 'ok' ? 'ok' : kind === 'err' ? 'err' : 'muted');
-}
-function buildMainModelSelect(p, pc) {
-  const sel = $('mainModelSelect'), man = $('mainModelManual');
-  if (!sel) return;
-  const custom = isCustomModel(p, pc);
-  sel.innerHTML = modelOptions(p, pc);
-  sel.value = custom ? CUSTOM : (pc.model || '');
-  if (man) { man.hidden = !custom; if (custom) man.value = pc.model || ''; }
-}
-async function mainLoad(id) {
-  const p = state.providers.find((x) => x.id === id);
-  const pc = state.config.providers[id] || (state.config.providers[id] = {});
-  const apiKey = id !== 'ollama' ? ($('mainKeyInput').value.trim() || pc.apiKey || '') : (pc.apiKey || '');
-  setMainModelStatus('muted', 'Lade Modelle …');
-  const r = await window.vigil.loadModels({ providerId: id, apiKey, baseUrl: pc.baseUrl || '' });
-  if (!r.ok) {
-    buildMainModelSelect(p, pc);
-    setMainModelStatus('err', '✕ ' + r.error + (id === 'anthropic' ? '  (Schlüssel korrekt? Guthaben vorhanden?)' : ''));
-    return;
-  }
-  MODEL_CACHE[id] = r.models;
-  if (!isCustomModel(p, pc)) {
-    const picked = pickPreferred(id, r.models, pc.model || '');
-    if (picked && picked !== pc.model) { pc.model = picked; window.vigil.saveConfig(state.config); }
-  }
-  buildMainModelSelect(p, pc);
-  if (r.models.length) setMainModelStatus('ok', `✔ ${r.models.length} Modelle geladen · ausgewählt: ${pc.model || '—'}`);
-  else if (id === 'ollama') setMainModelStatus('err', 'Verbunden, aber kein Modell installiert. Hol dir z. B. „ollama pull qwen2.5-coder".');
-  else setMainModelStatus('err', 'Keine Modelle gefunden – unten manuell eintragen.');
-}
-function refreshMainProvider() {
-  const id = $('providerSelect').value;
-  const p = state.providers.find((x) => x.id === id);
-  const pc = state.config.providers[id] || (state.config.providers[id] = {});
-  const needsKey = !!(p && p.needsKey && id !== 'ollama');
-  $('mainKeyRow').hidden = !needsKey;
-  if (needsKey) {
-    $('mainKeyInput').value = pc.apiKey || '';
-    $('mainKeyInput').placeholder = p.envKeyPresent ? '(aus .env erkannt – hier überschreiben)' : 'API-Schlüssel hier einfügen';
-    const badge = $('mainKeyBadge');
-    if (p.envKeyPresent) { badge.hidden = false; badge.textContent = '.env erkannt'; } else { badge.hidden = true; }
-  }
-  buildMainModelSelect(p, pc);
-  if (providerReady(p)) mainLoad(id);
-  else setMainModelStatus('muted', id === 'ollama' ? 'Ollama starten, dann „Modelle laden" klicken.' : 'Schlüssel eingeben – dann lädt die Liste automatisch.');
-}
 
 // --- Init ---------------------------------------------------------------
 async function init() {
   state.providers = await window.vigil.getProviders();
   state.config = await window.vigil.getConfig();
+  state.config.providers = state.config.providers || {};
+  try { ai.recommended = await window.vigil.ollama.recommended(); } catch { ai.recommended = []; }
 
-  const sel = $('providerSelect');
-  sel.innerHTML = state.providers.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join('');
-  sel.value = state.config.selected || 'ollama';
-  const refreshDesc = () => { $('providerDesc').textContent = describeProvider(sel.value); setStatus('', 'noch nicht getestet'); };
-  sel.onchange = () => { state.config.selected = sel.value; window.vigil.saveConfig(state.config); refreshDesc(); refreshMainProvider(); };
-  refreshDesc();
+  const sel = state.config.selected || 'ollama';
+  if (!CLOUD_IDS.includes(state.config.cloudProvider)) state.config.cloudProvider = CLOUD_IDS.includes(sel) ? sel : 'anthropic';
 
-  // Modell + Schlüssel direkt auf dem Hauptschirm (ohne Umweg über die Einstellungen).
-  $('mainLoadBtn').onclick = () => mainLoad(sel.value);
-  $('mainKeyToggle').onclick = () => {
-    const i = $('mainKeyInput');
-    i.type = i.type === 'password' ? 'text' : 'password';
-    $('mainKeyToggle').textContent = i.type === 'password' ? 'anzeigen' : 'verbergen';
-  };
-  $('mainKeyInput').onchange = () => {
-    const id = sel.value; const pc = state.config.providers[id] || (state.config.providers[id] = {});
-    pc.apiKey = $('mainKeyInput').value.trim(); window.vigil.saveConfig(state.config); mainLoad(id);
-  };
-  $('mainModelSelect').onchange = () => {
-    const id = sel.value; const pc = state.config.providers[id] || (state.config.providers[id] = {});
-    const man = $('mainModelManual');
-    if ($('mainModelSelect').value === CUSTOM) { man.hidden = false; man.focus(); }
-    else { man.hidden = true; pc.model = $('mainModelSelect').value; window.vigil.saveConfig(state.config); setMainModelStatus('ok', 'Ausgewählt: ' + (pc.model || '—')); }
-  };
-  $('mainModelManual').onchange = () => {
-    const id = sel.value; const pc = state.config.providers[id] || (state.config.providers[id] = {});
-    const v = $('mainModelManual').value.trim(); if (v) { pc.model = v; window.vigil.saveConfig(state.config); setMainModelStatus('ok', 'Ausgewählt: ' + v); }
-  };
-  refreshMainProvider(); // beim Start Modell/Schlüssel-Zeile passend fuellen
-
+  // Schritt 1: Ziele
   setupDropzone();
-
-  $('pickFilesBtn').onclick = async () => { (await window.vigil.pickFiles()).forEach((p) => addTarget('path', p)); };
-  $('pickFolderBtn').onclick = async () => { (await window.vigil.pickFolder()).forEach((p) => addTarget('path', p)); };
-
-  $('advToggle').onclick = () => {
-    const panel = $('advPanel'); const open = panel.hidden;
-    panel.hidden = !open;
-    $('advToggle').setAttribute('aria-expanded', open ? 'true' : 'false');
-    $('advToggle').textContent = (open ? '▾' : '▸') + ' Webseite oder Server prüfen (für Fortgeschrittene)';
-  };
-  $('addUrlBtn').onclick = () => { addTarget('url', $('urlInput').value.trim()); $('urlInput').value = ''; };
-  $('addIpBtn').onclick = () => {
-    const v = $('ipInput').value.trim(); if (!v) return;
-    if (!$('authChk').checked) { $('runHint').textContent = 'Bitte zuerst bestätigen, dass du das Ziel prüfen darfst.'; return; }
-    addTarget('endpoint', v, true); $('ipInput').value = ''; $('authChk').checked = false;
-  };
+  $('pickFilesBtn').onclick = async (e) => { e.stopPropagation(); (await window.vigil.pickFiles()).forEach((p) => addTarget('path', p)); };
+  $('pickFolderBtn').onclick = async (e) => { e.stopPropagation(); (await window.vigil.pickFolder()).forEach((p) => addTarget('path', p)); };
+  $('targetInput').addEventListener('input', onTargetInput);
+  $('targetInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTypedTarget(); });
+  $('addTargetBtn').onclick = addTypedTarget;
   $('clearBtn').onclick = () => { state.targets = []; renderTargets(); };
+
+  // Schritt 2: KI
+  $('modeLocal').onclick = () => setMode('local');
+  $('modeCloud').onclick = () => setMode('cloud');
+  $('localModel').onchange = () => { pcfg('ollama').model = $('localModel').value; saveCfg(); updateRunState(); };
+  $('customPullBtn').onclick = () => pullModel($('customPull').value);
+  $('customPull').addEventListener('keydown', (e) => { if (e.key === 'Enter') pullModel($('customPull').value); });
+  $('pullCancel').onclick = () => window.vigil.ollama.cancelPull();
+  $('shopToggle').onclick = () => { ai.shopOpen = $('modelShop').classList.contains('collapsed'); renderOllama(); };
+
+  $('cloudProvider').innerHTML = CLOUD_IDS.map((id) => `<option value="${id}">${esc(providerMeta(id).label || id)}</option>`).join('');
+  $('cloudProvider').onchange = () => { state.config.cloudProvider = $('cloudProvider').value; state.config.selected = state.config.cloudProvider; saveCfg(); refreshCloud(); updateRunState(); };
+  $('cloudKey').onchange = () => { const id = state.config.cloudProvider; pcfg(id).apiKey = $('cloudKey').value.trim(); saveCfg(); refreshCloud(); updateRunState(); };
+  $('cloudKeyToggle').onclick = () => {
+    const i = $('cloudKey'); i.type = i.type === 'password' ? 'text' : 'password';
+    $('cloudKeyToggle').textContent = i.type === 'password' ? 'anzeigen' : 'verbergen';
+  };
+  $('cloudLoadBtn').onclick = () => { const id = state.config.cloudProvider; if (cloudHasAccess(id)) loadCloudModels(id); else refreshCloud(); };
+  $('cloudModel').onchange = () => {
+    const id = state.config.cloudProvider;
+    if ($('cloudModel').value === CUSTOM) { $('cloudModelManual').hidden = false; $('cloudModelManual').focus(); return; }
+    $('cloudModelManual').hidden = true;
+    pcfg(id).model = $('cloudModel').value; saveCfg(); updateRunState();
+  };
+  $('cloudModelManual').onchange = () => { const v = $('cloudModelManual').value.trim(); if (v) { pcfg(state.config.cloudProvider).model = v; saveCfg(); updateRunState(); } };
+
+  setMode(sel === 'ollama' ? 'local' : 'cloud');
+  // Ollama nachtraeglich erkennen (z. B. von Hand gestartet oder installiert).
+  setInterval(() => { if (ai.mode === 'local' && !ai.busy && !ai.pulling && !(ai.ollama && ai.ollama.running)) refreshOllama(); }, 4000);
+
+  // Schritt 3 + Ergebnis
   $('runBtn').onclick = runAudit;
   $('findingSearch').addEventListener('input', () => { state.query = $('findingSearch').value; renderFindings(); });
   $('cancelBtn').onclick = async () => { $('cancelBtn').disabled = true; $('progressTitle').textContent = 'Wird abgebrochen …'; await window.vigil.cancelAudit(); };
-
   $('logToggle').onclick = () => {
     const log = $('log'); log.hidden = !log.hidden;
     $('logToggle').setAttribute('aria-expanded', log.hidden ? 'false' : 'true');
     $('logToggle').textContent = (log.hidden ? '▸' : '▾') + ' Technische Details';
   };
-
-  $('exportHtmlBtn').onclick = async () => { const r = await window.vigil.saveReport('html'); flash(r.ok ? 'Gespeichert: ' + r.path : (r.canceled ? '' : 'Fehler: ' + r.error)); };
-  $('exportMdBtn').onclick = async () => { const r = await window.vigil.saveReport('md'); flash(r.ok ? 'Gespeichert: ' + r.path : (r.canceled ? '' : 'Fehler: ' + r.error)); };
-  $('exportSarifBtn').onclick = async () => { const r = await window.vigil.saveReport('sarif'); flash(r.ok ? 'Gespeichert: ' + r.path : (r.canceled ? '' : 'Fehler: ' + r.error)); };
-  $('baselineBtn').onclick = async () => {
-    const r = await window.vigil.saveBaseline();
-    if (r.ok) {
-      if (state.lastResult) { state.lastResult.hasBaseline = true; state.lastResult.baselineAt = r.at; }
-      state.lastFindings.forEach((f) => { f.isNew = false; });
-      state.onlyNew = false;
-      refreshResultView();
-      flash(`Baseline gesetzt (${r.count} Befund(e) als bekannt gemerkt).`);
-    } else flash('Fehler: ' + (r.error || 'unbekannt'));
+  const exportAs = (fmt) => async () => {
+    if (fmt === 'pdf') flash('Erzeuge PDF …');
+    const r = await window.vigil.saveReport(fmt);
+    flash(r.ok ? 'Gespeichert: ' + r.path : (r.canceled ? '' : 'Fehler: ' + r.error));
+  };
+  $('exportHtmlBtn').onclick = exportAs('html');
+  $('exportMdBtn').onclick = exportAs('md');
+  $('exportSarifBtn').onclick = exportAs('sarif');
+  $('exportPdfBtn').onclick = exportAs('pdf');
+  // Ansichten: Pruefen | Uebersicht
+  $('tabCheck').onclick = () => showView('check');
+  $('tabDash').onclick = () => showView('dash');
+  $('dashStatus').querySelectorAll('.fbtn').forEach((b) => b.onclick = () => { dash.status = b.dataset.s; loadDashboard(); });
+  $('dashSeverity').onchange = () => { dash.severity = $('dashSeverity').value; loadDashboard(); };
+  let dashTimer = null;
+  $('dashSearch').addEventListener('input', () => { clearTimeout(dashTimer); dashTimer = setTimeout(() => { dash.q = $('dashSearch').value; loadDashboard(); }, 200); });
+  $('dashTargetClear').onclick = () => { dash.targetId = ''; loadDashboard(); };
+  $('apiRegen').onclick = async () => { await window.vigil.regenerateApiToken(); refreshApiInfo(); };
+  $('apiCopy').onclick = async () => { try { await navigator.clipboard.writeText($('apiToken').value); $('apiStatus').textContent = 'Token kopiert.'; } catch { $('apiToken').select(); } };
+  $('apiTokenToggle').onclick = () => { const i = $('apiToken'); i.type = i.type === 'password' ? 'text' : 'password'; };
+  $('clearStoreBtn').onclick = async () => {
+    if (!confirm('Alle gespeicherten Befunde, Status und Läufe löschen? Das lässt sich nicht rückgängig machen.')) return;
+    await window.vigil.clearStore();
+    $('clearStoreStatus').textContent = 'Befund-Speicher geleert.';
   };
 
-  $('pingBtn').onclick = async () => {
-    setStatus('wait', 'teste …');
-    const r = await window.vigil.pingProvider(sel.value);
-    if (r.ok) setStatus('ok', 'Verbindung ok');
-    else setStatus('err', 'Fehler: ' + r.error);
-  };
-
-  $('exportPdfBtn').onclick = async () => { flash('Erzeuge PDF …'); const r = await window.vigil.saveReport('pdf'); flash(r.ok ? 'Gespeichert: ' + r.path : (r.canceled ? '' : 'Fehler: ' + r.error)); };
+  // Verlauf + Einstellungen
   $('historyBtn').onclick = openHistory;
   $('historyClose').onclick = () => { $('historyOverlay').hidden = true; };
   $('historyOverlay').addEventListener('click', (e) => { if (e.target === $('historyOverlay')) $('historyOverlay').hidden = true; });
   $('historyClearBtn').onclick = async () => { await window.vigil.historyClear(); renderHistory([]); $('historyStatus').textContent = 'Verlauf geleert.'; setTimeout(() => { $('historyStatus').textContent = ''; }, 1200); };
   $('addRuleBtn').onclick = () => { collectCustomRules(); state.config.customRules.push({ name: '', regex: '', severity: 'medium' }); renderCustomRules(); };
-
   $('settingsBtn').onclick = openSettings;
   $('settingsClose').onclick = closeSettings;
   $('settingsOverlay').addEventListener('click', (e) => { if (e.target === $('settingsOverlay')) closeSettings(); });
@@ -797,8 +965,9 @@ async function init() {
   $('tempRange').addEventListener('input', () => { $('tempVal').textContent = $('tempRange').value; $('tempDesc').textContent = tempText(parseFloat($('tempRange').value)); });
   $('settingsSave').onclick = async () => {
     collectSettings();
-    const r = await window.vigil.saveConfig(state.config);
-    $('settingsStatus').textContent = r.ok ? 'Gespeichert.' : 'Fehler beim Speichern.';
+    const r = await saveCfg();
+    $('settingsStatus').textContent = r && r.ok ? 'Gespeichert.' : 'Fehler beim Speichern.';
+    if (ai.mode === 'cloud') refreshCloud(); else refreshOllama();
     setTimeout(() => { $('settingsStatus').textContent = ''; closeSettings(); }, 600);
   };
 
