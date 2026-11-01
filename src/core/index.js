@@ -8,8 +8,9 @@ const { lookupCves } = require('./cve');
 const { scanWeb } = require('./webscan');
 const { runNmap, runNuclei, runGitleaks, runTrivyFs, runSemgrep, runCheckov, runRetire, runHadolint, runOsvScanner, runGrype, runTrufflehog, runBandit } = require('./tools');
 const { analyze } = require('./analyze');
+const { enrich } = require('./harness');
 const report = require('./report');
-const { fingerprint, atOrAbove } = require('./schema');
+const { fingerprint, atOrAbove, dedupeFindings, sortFindings, summarize } = require('./schema');
 const { PROVIDERS, callProvider, pingProvider, fetchModels } = require('./providers');
 
 // targets: [{type:'path'|'url'|'endpoint', value, authorized?}]
@@ -78,9 +79,10 @@ async function runAudit(targets, config, onProgress = () => {}) {
   const staticFindings = [...pre.findings, ...cveFindings, ...webFindings, ...(ing.findings || [])];
 
   if (!ing.units.length) {
+    const findings = sortFindings(enrich(dedupeFindings(staticFindings)));
     const empty = {
-      findings: require('./schema').sortFindings(staticFindings),
-      summary: require('./schema').summarize(staticFindings),
+      findings,
+      summary: summarize(findings),
       errors: [...(webTargets.length ? [] : ['Kein lesbares Pruefmaterial gefunden.']), ...webNotes, ...cveNotes, ...ing.notes],
       meta: { provider: config.provider, model: config.model, at: new Date().toISOString(), units: 0, batches: 0 },
     };

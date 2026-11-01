@@ -20,10 +20,11 @@ const PHASES = [
   { key: 'webscan', label: 'Server-Checks' },
   { key: 'active', label: 'Aktiv-Scan' },
   { key: 'analyze', label: 'KI-Analyse' },
+  { key: 'validate', label: 'Gegenprüfung' },
   { key: 'done', label: 'Fertig' },
 ];
 
-const state = { targets: [], providers: [], config: null, lastFindings: [], lastResult: null, filter: 'all', onlyNew: false, showSuppressed: false, running: false };
+const state = { targets: [], providers: [], config: null, lastFindings: [], lastResult: null, filter: 'all', query: '', onlyNew: false, onlyProven: false, showSuppressed: false, running: false };
 let RULE_NAMES = null; // Namen der eingebauten Regeln (lazy via IPC)
 
 // --- Ziele --------------------------------------------------------------
@@ -165,73 +166,185 @@ function updateCost(cost, done) {
     `${cost.priced ? '' : ' · Modell/Anbieter nicht in der Preisliste'}</div>`;
 }
 
-function renderVerdict(summary) {
-  const c = summary.counts;
-  let kind = 'ok', head = 'Keine Probleme gefunden.', sub = 'Vigil hat nichts Auffälliges entdeckt.';
-  if (summary.total > 0) {
-    sub = 'Klick ein Problem an, um Details und die Lösung zu sehen.';
-    if (c.critical) { kind = 'crit'; head = `${c.critical} kritische und ${c.high || 0} hohe Probleme gefunden.`; }
-    else if (c.high) { kind = 'high'; head = `${c.high} hohe Probleme gefunden.`; }
-    else if (c.medium) { kind = 'med'; head = `${c.medium} Problem(e) mittleren Risikos gefunden.`; }
-    else { kind = 'low'; head = `${summary.total} kleinere Hinweise gefunden.`; }
+// Sicherheitsnote A–F aus den (nicht ausgeblendeten) Befunden.
+const SEV_WEIGHT = { critical: 30, high: 14, medium: 5, low: 1.5, info: 0 };
+function riskScore(counts) {
+  const penalty = SEV_ORDER.reduce((sum, s) => sum + (counts[s] || 0) * SEV_WEIGHT[s], 0);
+  const score = Math.max(0, Math.round(100 - penalty));
+  const grade = score >= 92 ? 'A' : score >= 78 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : score >= 20 ? 'E' : 'F';
+  return { score, grade };
+}
+function visibleCounts() {
+  const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  state.lastFindings.forEach((f) => { if (!f.suppressed) counts[f.severity]++; });
+  return counts;
+}
+const plural = (n, one, many) => (n === 1 ? one : many);
+
+function renderVerdict() {
+  const c = visibleCounts();
+  const total = SEV_ORDER.reduce((n, s) => n + c[s], 0);
+  let kind = 'ok', head = 'Keine Probleme gefunden.', sub = 'Vigil hat nichts Auffälliges entdeckt – gute Arbeit.';
+  if (total > 0) {
+    sub = 'Klick auf eine Stufe, um die Liste zu filtern, oder auf einen Befund für Details und Lösung.';
+    if (c.critical) { kind = 'crit'; head = `${c.critical} kritische${c.high ? ` und ${c.high} hohe` : ''} ${plural(c.critical + c.high, 'Lücke', 'Lücken')} – bitte zuerst beheben.`; }
+    else if (c.high) { kind = 'high'; head = `${c.high} ${plural(c.high, 'Problem', 'Probleme')} mit hohem Risiko gefunden.`; }
+    else if (c.medium) { kind = 'med'; head = `${c.medium} ${plural(c.medium, 'Problem', 'Probleme')} mittleren Risikos gefunden.`; }
+    else { kind = 'low'; head = `Nur ${total} ${plural(total, 'kleiner Hinweis', 'kleinere Hinweise')} – insgesamt solide.`; }
   }
-  $('verdict').className = 'verdict v-' + kind;
-  $('verdict').innerHTML = `<div class="v-head">${esc(head)}</div><div class="v-sub">${esc(sub)}</div>`;
+  const { score, grade } = riskScore(c);
+  const bar = total
+    ? SEV_ORDER.filter((s) => c[s]).map((s) => `<span style="flex-grow:${c[s]};background:var(--${SEV_CLS[s]})" title="${SEV_LABEL[s]}: ${c[s]}"></span>`).join('')
+    : '<span style="flex-grow:1;background:var(--low)"></span>';
+  const stats = SEV_ORDER.map((s) => `<button type="button" class="stat c-${SEV_CLS[s]}${state.filter === s ? ' active' : ''}" data-f="${s}" title="${esc(SEV_HELP[s])}"${c[s] ? '' : ' disabled'}>
+      <span class="stat-n">${c[s]}</span><span class="stat-l">${SEV_LABEL[s]}</span></button>`).join('');
+  const merged = state.lastFindings.reduce((n, f) => n + Math.max(0, (f.mergedCount || 1) - 1), 0);
+  const meta = (state.lastResult && state.lastResult.meta) || {};
+  const notes = [];
+  if (merged) notes.push(`${merged} doppelte ${plural(merged, 'Meldung', 'Meldungen')} aus verschiedenen Prüfungen zusammengeführt.`);
+  if (meta.refuted) notes.push(`${meta.refuted} KI-${plural(meta.refuted, 'Befund', 'Befunde')} bei der Gegenprüfung widerlegt und verworfen.`);
+  if (meta.redacted) notes.push(`${meta.redacted} ${plural(meta.redacted, 'Secret', 'Secrets')} vor dem Versand an die KI geschwärzt.`);
+  const unverified = state.lastFindings.filter((f) => !f.suppressed && f.evidence === 'unverified').length;
+  const mergeNote = notes.map((n) => `<div class="merge-note">${esc(n)}</div>`).join('') +
+    (unverified ? `<div class="merge-note warn">${unverified} ${plural(unverified, 'Befund ist', 'Befunde sind')} nur von der KI gemeldet und unbestätigt – bitte selbst prüfen.</div>` : '');
+
+  const v = $('verdict');
+  v.className = 'verdict v-' + kind;
+  v.innerHTML = `
+    <div class="score" style="--p:${score}" role="img" aria-label="Sicherheitsnote ${grade}, ${score} von 100">
+      <div class="score-inner"><span class="score-grade">${grade}</span><span class="score-label">${score} / 100</span></div>
+    </div>
+    <div class="v-main">
+      <div class="v-head">${esc(head)}</div>
+      <div class="v-sub">${esc(sub)}</div>
+      <div class="sev-bar" aria-hidden="true">${bar}</div>
+      <div class="stats">${stats}</div>
+      ${mergeNote}
+    </div>`;
+  v.querySelectorAll('.stat').forEach((b) => b.onclick = () => setFilter(state.filter === b.dataset.f ? 'all' : b.dataset.f));
+}
+
+function setFilter(f) {
+  state.filter = f;
+  renderVerdict(); renderFilters(); renderFindings();
+}
+function renderFilters() {
+  const c = visibleCounts();
+  const total = SEV_ORDER.reduce((n, s) => n + c[s], 0);
+  const btn = (f, label, n, dot) => `<button class="fbtn${state.filter === f ? ' active' : ''}" data-f="${f}" role="tab" aria-selected="${state.filter === f}">${dot ? `<span class="fdot" style="--c:var(--${dot})"></span>` : ''}${label}<span class="fcount">${n}</span></button>`;
+  const box = $('filters');
+  box.innerHTML = btn('all', 'Alle', total) + SEV_ORDER.filter((s) => c[s]).map((s) => btn(s, SEV_LABEL[s], c[s], SEV_CLS[s])).join('');
+  box.querySelectorAll('.fbtn').forEach((b) => b.onclick = () => setFilter(b.dataset.f));
 }
 
 function renderResult(result) {
   state.lastFindings = result.findings || [];
   state.lastResult = result;
-  state.filter = 'all'; state.onlyNew = false; state.showSuppressed = false;
+  state.filter = 'all'; state.query = ''; state.onlyNew = false; state.onlyProven = false; state.showSuppressed = false;
+  $('findingSearch').value = '';
   $('resultPanel').hidden = false;
-  renderVerdict(result.summary);
-
-  const c = result.summary.counts;
-  $('legend').innerHTML = SEV_ORDER.map((s) => `<span class="pill ${SEV_CLS[s]}" title="${esc(SEV_HELP[s])}">${SEV_LABEL[s]}: ${c[s] || 0}</span>`).join('');
-
-  const filters = $('filters');
-  filters.innerHTML = `<button class="fbtn active" data-f="all">Alle (${result.summary.total})</button>` +
-    SEV_ORDER.filter((s) => c[s]).map((s) => `<button class="fbtn" data-f="${s}">${SEV_LABEL[s]} (${c[s]})</button>`).join('');
-  filters.querySelectorAll('.fbtn').forEach((b) => b.onclick = () => {
-    filters.querySelectorAll('.fbtn').forEach((x) => x.classList.remove('active'));
-    b.classList.add('active'); state.filter = b.dataset.f; renderFindings();
-  });
 
   if (result.errors && result.errors.length) {
     $('log').hidden = false; $('logToggle').setAttribute('aria-expanded', 'true');
     $('log').textContent += '\nHinweise:\n' + result.errors.map((e) => '  - ' + e).join('\n') + '\n';
   }
-  updateBaselineStatus();
-  renderViewToggles();
-  renderFindings();
+  refreshResultView();
+}
+function refreshResultView() {
+  renderVerdict(); renderFilters(); updateBaselineStatus(); renderViewToggles(); renderFindings();
+}
+
+// Werkzeug-Praefix ("gitleaks: …") aus dem Titel nehmen – die Quelle steht daneben.
+const TOOL_PREFIX = /^(gitleaks|trufflehog|trivy|grype|semgrep|bandit|checkov|retire\.js|hadolint|osv-scanner|nuclei|binary)\s*:\s*/i;
+function cleanTitle(t) {
+  const s = String(t || '').replace(TOOL_PREFIX, '').trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function findingSources(f) { return f.sources && f.sources.length ? f.sources : [f.source]; }
+function matchesQuery(f, q) {
+  if (!q) return true;
+  const hay = [f.title, f.location, f.category, f.description, ...findingSources(f).map(sourceLabel)].join(' ').toLowerCase();
+  return q.split(/\s+/).every((w) => hay.includes(w));
+}
+const CONF_LABEL = { high: 'hoch', medium: 'mittel', low: 'niedrig' };
+// Beleg-Stufen: KI-Funde zaehlen erst, wenn sie deterministisch oder per Gegenpruefung bestaetigt sind.
+const EVIDENCE = {
+  'confirmed-multi': { label: 'Mehrfach bestätigt', cls: 'ev-strong', help: 'Von mehreren unabhängigen Prüfungen gefunden.' },
+  deterministic: { label: 'Regelbasiert belegt', cls: 'ev-strong', help: 'Von einer deterministischen Prüfung (Muster, Datenbank, Tool) gefunden – nicht nur von der KI.' },
+  'ai-verified': { label: 'KI-gegengeprüft', cls: 'ev-ok', help: 'Nur die KI hat es gemeldet, aber die Gegenprüfung am Code-Ausschnitt hat es bestätigt.' },
+  unverified: { label: 'Unbestätigt', cls: 'ev-weak', help: 'Nur von der KI gemeldet und nicht bestätigt – bitte selbst prüfen, kann ein Fehlalarm sein.' },
+};
+const CONTEXT = {
+  'internet-exposed': 'aus dem Internet erreichbar',
+  'request-handler': 'in einem Request-Handler',
+  'sensitive-data': 'berührt sensible Daten',
+  'supply-chain': 'Lieferkette (Abhängigkeit)',
+};
+const CHEV = '<svg class="chev" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function findingCard(f) {
+  const srcs = findingSources(f);
+  const srcNames = srcs.map(sourceLabel).join(', ');
+  const badges = `${f.isNew ? '<span class="badge-new" title="Seit der gespeicherten Baseline neu">neu</span>' : ''}${f.suppressed ? '<span class="badge-supp" title="Dauerhaft ausgeblendet">ausgeblendet</span>' : ''}`;
+  const srcChip = srcs.length > 1
+    ? `<span class="src-chip" title="Gefunden von: ${esc(srcNames)}">${esc(srcs.map(sourceLabel).join(' + '))}</span>`
+    : `<span>${esc(srcNames)}</span>`;
+  const sub = [
+    f.location ? `<span class="f-loc" title="${esc(f.location)}">${esc(f.location)}</span>` : '',
+    `<span>${esc(f.category)}</span>`,
+    srcChip,
+  ].filter(Boolean).join('<span class="f-sep">·</span>') + badges;
+  const ev = EVIDENCE[f.evidence];
+  const evChip = ev ? `<span class="ev-chip ${ev.cls}" title="${esc(ev.help)}">${ev.label}</span>` : '';
+  const ctx = (f.context || []).filter((c) => CONTEXT[c]);
+  const ctxRow = ctx.length ? `<div class="ctx-row">${ctx.map((c) => `<span class="ctx-chip ctx-${c}">${CONTEXT[c]}</span>`).join('')}</div>` : '';
+  const check = f.validation && f.validation.reason
+    ? `<div class="f-sec check-sec"><h4>Gegenprüfung: ${f.validation.verdict === 'confirmed' ? 'bestätigt' : 'nicht eindeutig'}</h4><p>${esc(f.validation.reason)}</p></div>` : '';
+  const danger = [f.impact, f.reachability].filter(Boolean).join(' ');
+  const secs = [
+    f.description && `<div class="f-sec${danger ? '' : ' full'}"><h4>Das Problem</h4><p>${esc(f.description)}</p></div>`,
+    danger && `<div class="f-sec${f.description ? '' : ' full'}"><h4>Wie gefährlich ist das?</h4><p>${esc(danger)}</p></div>`,
+  ].filter(Boolean).join('');
+  const cvss = f.cvss != null ? `<span class="cvss" title="CVSS: standardisierter Schweregrad 0–10"><small>CVSS</small>${esc(Number(f.cvss).toFixed(1))}</span>` : '';
+  return `
+    <div class="card finding sev-${f.severity}${f.suppressed ? ' is-suppressed' : ''}">
+      <button class="card-head" aria-expanded="false">
+        <span class="sev-tag" title="${esc(SEV_HELP[f.severity])}">${SEV_LABEL[f.severity]}</span>
+        <span class="f-main"><span class="f-title">${esc(cleanTitle(f.title))}</span><span class="f-sub">${sub}</span></span>
+        ${evChip}${cvss}${CHEV}
+      </button>
+      <div class="card-body"><div class="inner"><div class="pad">
+        ${ctxRow}
+        ${secs ? `<div class="f-cols">${secs}</div>` : ''}
+        ${check}
+        ${f.remediation ? `<div class="f-sec fix"><h4>✔ So behebst du es</h4><p>${esc(f.remediation)}</p></div>` : ''}
+        ${f.patch ? `<pre>${esc(f.patch)}</pre>` : ''}
+        <div class="f-foot">
+          <span class="muted">${srcs.length > 1 ? 'Gefunden von' : 'Quelle'}: ${esc(srcNames)}${f.confidence ? ' · Sicherheit: ' + esc(CONF_LABEL[f.confidence] || f.confidence) : ''}</span>
+          <button type="button" class="btn tiny supp-toggle" data-fp="${esc(f.id || '')}">${f.suppressed ? 'Wieder einblenden' : 'Diesen Befund ausblenden'}</button>
+        </div>
+      </div></div></div>
+    </div>`;
 }
 
 function renderFindings() {
   const box = $('findings');
+  const q = state.query.trim().toLowerCase();
   let list = state.filter === 'all' ? state.lastFindings : state.lastFindings.filter((f) => f.severity === state.filter);
   if (!state.showSuppressed) list = list.filter((f) => !f.suppressed);
   if (state.onlyNew) list = list.filter((f) => f.isNew);
-  if (!list.length) { box.innerHTML = '<p class="muted">Keine Einträge in dieser Ansicht.</p>'; return; }
-  box.innerHTML = list.map((f) => {
-    const danger = [f.impact, f.reachability].filter(Boolean).join(' ');
-    const badges = `${f.isNew ? '<span class="badge-new" title="Seit der gespeicherten Baseline neu">neu</span>' : ''}${f.suppressed ? '<span class="badge-supp" title="Dauerhaft ausgeblendet">ausgeblendet</span>' : ''}`;
-    return `
-    <div class="card finding sev-${f.severity}${f.suppressed ? ' is-suppressed' : ''}">
-      <button class="card-head" aria-expanded="false">
-        <span class="sev-tag" title="${esc(SEV_HELP[f.severity])}">${SEV_LABEL[f.severity]}</span>
-        <span class="f-title">${esc(f.title)}</span>${badges}
-        <span class="cvss" title="CVSS: standardisierter Schweregrad 0–10">${f.cvss != null ? 'CVSS ' + f.cvss : ''}</span>
-        <span class="chev">▸</span>
-      </button>
-      <div class="card-body">
-        <div class="f-meta">${esc(f.category)}${f.location ? ` · <code>${esc(f.location)}</code>` : ''} · Quelle: ${esc(sourceLabel(f.source))}</div>
-        ${f.description ? `<div class="f-sec"><h4>Das Problem</h4><p>${esc(f.description)}</p></div>` : ''}
-        ${danger ? `<div class="f-sec"><h4>Wie gefährlich ist das?</h4><p>${esc(danger)}</p></div>` : ''}
-        ${f.remediation ? `<div class="f-sec fix"><h4>✔ So behebst du es</h4><p>${esc(f.remediation)}</p></div>` : ''}
-        ${f.patch ? `<pre>${esc(f.patch)}</pre>` : ''}
-        <div class="f-actions"><button type="button" class="btn tiny supp-toggle" data-fp="${esc(f.id || '')}">${f.suppressed ? 'Wieder einblenden' : 'Diesen Befund ausblenden'}</button></div>
-      </div>
-    </div>`;
+  if (state.onlyProven) list = list.filter((f) => f.evidence !== 'unverified');
+  list = list.filter((f) => matchesQuery(f, q));
+  if (!list.length) {
+    box.innerHTML = state.lastFindings.length
+      ? '<div class="empty"><b>Keine Treffer</b>Für diese Ansicht gibt es keine Befunde – Filter oder Suche anpassen.</div>'
+      : '<div class="empty"><b>Alles sauber</b>Vigil hat in diesem Lauf nichts gefunden.</div>';
+    return;
+  }
+  box.innerHTML = SEV_ORDER.map((s) => {
+    const items = list.filter((f) => f.severity === s);
+    if (!items.length) return '';
+    return `<div class="group-head sev-${s}">${SEV_LABEL[s]} <span class="gcount">${items.length}</span></div>` + items.map(findingCard).join('');
   }).join('');
   box.querySelectorAll('.card-head').forEach((h) => h.onclick = () => {
     const open = h.parentElement.classList.toggle('open');
@@ -243,7 +356,7 @@ function renderFindings() {
     const r = await window.vigil.toggleSuppress(fp);
     if (r.ok) {
       state.lastFindings.forEach((f) => { if ((f.id || '') === fp) f.suppressed = r.suppressed; });
-      updateBaselineStatus(); renderViewToggles(); renderFindings();
+      refreshResultView();
     }
   });
 }
@@ -266,10 +379,13 @@ function renderViewToggles() {
   const suppCount = state.lastFindings.filter((f) => f.suppressed).length;
   let html = '';
   if (r && r.hasBaseline) html += `<button class="fbtn toggle${state.onlyNew ? ' active' : ''}" data-t="onlyNew">Nur neue (${newCount})</button>`;
+  const provenCount = state.lastFindings.filter((f) => !f.suppressed && f.evidence && f.evidence !== 'unverified').length;
+  if (state.lastFindings.some((f) => f.evidence === 'unverified') || state.onlyProven) html += `<button class="fbtn toggle${state.onlyProven ? ' active' : ''}" data-t="onlyProven" title="Nur Befunde, die regelbasiert oder per Gegenprüfung bestätigt sind">Nur belegte (${provenCount})</button>`;
   if (suppCount || state.showSuppressed) html += `<button class="fbtn toggle${state.showSuppressed ? ' active' : ''}" data-t="showSupp">Ausgeblendete zeigen (${suppCount})</button>`;
   box.innerHTML = html;
   box.querySelectorAll('.fbtn').forEach((b) => b.onclick = () => {
     if (b.dataset.t === 'onlyNew') state.onlyNew = !state.onlyNew;
+    else if (b.dataset.t === 'onlyProven') state.onlyProven = !state.onlyProven;
     else state.showSuppressed = !state.showSuppressed;
     renderViewToggles(); renderFindings();
   });
@@ -429,6 +545,8 @@ function renderSettings() {
   $('cveChk').checked = state.config.cveLookup !== false;
   $('depthSelect').value = state.config.analysisDepth === 'standard' ? 'standard' : 'thorough';
   $('activeChk').checked = !!state.config.activeScan;
+  $('validateChk').checked = state.config.aiValidation !== false;
+  $('redactChk').checked = state.config.redactSecrets !== false;
 
   // Proxy / VPN
   $('proxyInput').value = state.config.proxyUrl || '';
@@ -500,6 +618,8 @@ function collectSettings() {
   state.config.cveLookup = $('cveChk').checked;
   state.config.analysisDepth = $('depthSelect').value;
   state.config.activeScan = $('activeChk').checked;
+  state.config.aiValidation = $('validateChk').checked;
+  state.config.redactSecrets = $('redactChk').checked;
   state.config.proxyUrl = $('proxyInput').value.trim();
   // Modell je Anbieter: aus Dropdown bzw. aus dem manuellen Feld, wenn „eigenes Modell" gewählt ist.
   $('providerSettings').querySelectorAll('select[data-k="model"]').forEach((sel) => {
@@ -523,6 +643,58 @@ function collectSettings() {
 function openSettings() { renderSettings(); $('settingsOverlay').hidden = false; }
 function closeSettings() { $('settingsOverlay').hidden = true; }
 
+// --- Modell & Schlüssel direkt auf dem Hauptschirm ----------------------
+function setMainModelStatus(kind, msg) {
+  const st = $('mainModelStatus'); if (!st) return;
+  st.textContent = msg;
+  st.className = 'model-status small ' + (kind === 'ok' ? 'ok' : kind === 'err' ? 'err' : 'muted');
+}
+function buildMainModelSelect(p, pc) {
+  const sel = $('mainModelSelect'), man = $('mainModelManual');
+  if (!sel) return;
+  const custom = isCustomModel(p, pc);
+  sel.innerHTML = modelOptions(p, pc);
+  sel.value = custom ? CUSTOM : (pc.model || '');
+  if (man) { man.hidden = !custom; if (custom) man.value = pc.model || ''; }
+}
+async function mainLoad(id) {
+  const p = state.providers.find((x) => x.id === id);
+  const pc = state.config.providers[id] || (state.config.providers[id] = {});
+  const apiKey = id !== 'ollama' ? ($('mainKeyInput').value.trim() || pc.apiKey || '') : (pc.apiKey || '');
+  setMainModelStatus('muted', 'Lade Modelle …');
+  const r = await window.vigil.loadModels({ providerId: id, apiKey, baseUrl: pc.baseUrl || '' });
+  if (!r.ok) {
+    buildMainModelSelect(p, pc);
+    setMainModelStatus('err', '✕ ' + r.error + (id === 'anthropic' ? '  (Schlüssel korrekt? Guthaben vorhanden?)' : ''));
+    return;
+  }
+  MODEL_CACHE[id] = r.models;
+  if (!isCustomModel(p, pc)) {
+    const picked = pickPreferred(id, r.models, pc.model || '');
+    if (picked && picked !== pc.model) { pc.model = picked; window.vigil.saveConfig(state.config); }
+  }
+  buildMainModelSelect(p, pc);
+  if (r.models.length) setMainModelStatus('ok', `✔ ${r.models.length} Modelle geladen · ausgewählt: ${pc.model || '—'}`);
+  else if (id === 'ollama') setMainModelStatus('err', 'Verbunden, aber kein Modell installiert. Hol dir z. B. „ollama pull qwen2.5-coder".');
+  else setMainModelStatus('err', 'Keine Modelle gefunden – unten manuell eintragen.');
+}
+function refreshMainProvider() {
+  const id = $('providerSelect').value;
+  const p = state.providers.find((x) => x.id === id);
+  const pc = state.config.providers[id] || (state.config.providers[id] = {});
+  const needsKey = !!(p && p.needsKey && id !== 'ollama');
+  $('mainKeyRow').hidden = !needsKey;
+  if (needsKey) {
+    $('mainKeyInput').value = pc.apiKey || '';
+    $('mainKeyInput').placeholder = p.envKeyPresent ? '(aus .env erkannt – hier überschreiben)' : 'API-Schlüssel hier einfügen';
+    const badge = $('mainKeyBadge');
+    if (p.envKeyPresent) { badge.hidden = false; badge.textContent = '.env erkannt'; } else { badge.hidden = true; }
+  }
+  buildMainModelSelect(p, pc);
+  if (providerReady(p)) mainLoad(id);
+  else setMainModelStatus('muted', id === 'ollama' ? 'Ollama starten, dann „Modelle laden" klicken.' : 'Schlüssel eingeben – dann lädt die Liste automatisch.');
+}
+
 // --- Init ---------------------------------------------------------------
 async function init() {
   state.providers = await window.vigil.getProviders();
@@ -532,9 +704,31 @@ async function init() {
   sel.innerHTML = state.providers.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join('');
   sel.value = state.config.selected || 'ollama';
   const refreshDesc = () => { $('providerDesc').textContent = describeProvider(sel.value); setStatus('', 'noch nicht getestet'); };
-  sel.onchange = () => { state.config.selected = sel.value; window.vigil.saveConfig(state.config); refreshDesc(); ensureModel(sel.value); };
+  sel.onchange = () => { state.config.selected = sel.value; window.vigil.saveConfig(state.config); refreshDesc(); refreshMainProvider(); };
   refreshDesc();
-  ensureModel(sel.value); // beim Start still ein gueltiges Modell sicherstellen
+
+  // Modell + Schlüssel direkt auf dem Hauptschirm (ohne Umweg über die Einstellungen).
+  $('mainLoadBtn').onclick = () => mainLoad(sel.value);
+  $('mainKeyToggle').onclick = () => {
+    const i = $('mainKeyInput');
+    i.type = i.type === 'password' ? 'text' : 'password';
+    $('mainKeyToggle').textContent = i.type === 'password' ? 'anzeigen' : 'verbergen';
+  };
+  $('mainKeyInput').onchange = () => {
+    const id = sel.value; const pc = state.config.providers[id] || (state.config.providers[id] = {});
+    pc.apiKey = $('mainKeyInput').value.trim(); window.vigil.saveConfig(state.config); mainLoad(id);
+  };
+  $('mainModelSelect').onchange = () => {
+    const id = sel.value; const pc = state.config.providers[id] || (state.config.providers[id] = {});
+    const man = $('mainModelManual');
+    if ($('mainModelSelect').value === CUSTOM) { man.hidden = false; man.focus(); }
+    else { man.hidden = true; pc.model = $('mainModelSelect').value; window.vigil.saveConfig(state.config); setMainModelStatus('ok', 'Ausgewählt: ' + (pc.model || '—')); }
+  };
+  $('mainModelManual').onchange = () => {
+    const id = sel.value; const pc = state.config.providers[id] || (state.config.providers[id] = {});
+    const v = $('mainModelManual').value.trim(); if (v) { pc.model = v; window.vigil.saveConfig(state.config); setMainModelStatus('ok', 'Ausgewählt: ' + v); }
+  };
+  refreshMainProvider(); // beim Start Modell/Schlüssel-Zeile passend fuellen
 
   setupDropzone();
 
@@ -555,6 +749,7 @@ async function init() {
   };
   $('clearBtn').onclick = () => { state.targets = []; renderTargets(); };
   $('runBtn').onclick = runAudit;
+  $('findingSearch').addEventListener('input', () => { state.query = $('findingSearch').value; renderFindings(); });
   $('cancelBtn').onclick = async () => { $('cancelBtn').disabled = true; $('progressTitle').textContent = 'Wird abgebrochen …'; await window.vigil.cancelAudit(); };
 
   $('logToggle').onclick = () => {
@@ -571,7 +766,8 @@ async function init() {
     if (r.ok) {
       if (state.lastResult) { state.lastResult.hasBaseline = true; state.lastResult.baselineAt = r.at; }
       state.lastFindings.forEach((f) => { f.isNew = false; });
-      updateBaselineStatus(); renderViewToggles(); renderFindings();
+      state.onlyNew = false;
+      refreshResultView();
       flash(`Baseline gesetzt (${r.count} Befund(e) als bekannt gemerkt).`);
     } else flash('Fehler: ' + (r.error || 'unbekannt'));
   };

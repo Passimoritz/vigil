@@ -69,6 +69,100 @@ function fingerprint(f) {
   return crypto.createHash('sha1').update(basis).digest('hex').slice(0, 16);
 }
 
+// --- Duplikate zusammenfuehren -------------------------------------------
+// Dieselbe Luecke wird oft mehrfach gemeldet: Vorpruefung + gitleaks + trufflehog
+// fuer ein Secret, OSV + trivy + grype fuer eine CVE, oder die KI in mehreren
+// Durchgaengen mit leicht anderem Titel/Zeile. Hier wird das quellenuebergreifend
+// zu einem Befund verdichtet; die Quellen bleiben in `sources` erhalten.
+
+const VULN_ID_RE = /\b(CVE-\d{4}-\d{4,}|GHSA(?:-[0-9a-z]{4}){3}|PYSEC-\d{4}-\d+|GO-\d{4}-\d+|RUSTSEC-\d{4}-\d+)\b/gi;
+const TOOL_PREFIX_RE = /^(gitleaks|trufflehog|trivy|grype|semgrep|bandit|checkov|retire\.js|hadolint|osv-scanner|nuclei|binary)\s*:\s*/i;
+const STOP = new Set(['der', 'die', 'das', 'und', 'oder', 'mit', 'ohne', 'von', 'fuer', 'im', 'auf', 'ein', 'eine', 'einer', 'des', 'the', 'and', 'for', 'with', 'via', 'moegliches', 'moeglicher', 'potential', 'potentielle', 'potenzielle']);
+const CONF_RANK = { high: 0, medium: 1, low: 2 };
+
+function vulnIds(f) {
+  // Titel + Wirkungstext: OSV/osv-scanner/grype nennen dort auch die Aliase (GHSA <-> CVE).
+  const ids = (String(f.title || '') + ' ' + String(f.impact || '')).match(VULN_ID_RE) || [];
+  return [...new Set(ids.map((s) => s.toUpperCase()))];
+}
+
+// "C:\proj\src\app.js line 12" / "./src/app.js:12-14" -> { file: 'src/app.js', line: 12 }
+function splitLoc(loc) {
+  let s = String(loc || '').trim().toLowerCase().replace(/\\/g, '/').replace(/^\.\//, '').replace(/:\?$/, '');
+  let line = null;
+  const m = s.match(/^(.*?)(?::l?|#l|\s+\(?(?:line|zeile|l\.)\s*)(\d+)(?:\s*[-–:,]\s*\d+)?\)?\s*$/);
+  if (m && m[1]) { s = m[1]; line = Number(m[2]); }
+  // Nur die letzten zwei Segmente vergleichen: Tools melden absolute, die Vorpruefung relative Pfade.
+  const file = s.split('/').filter(Boolean).slice(-2).join('/');
+  return { file, line };
+}
+
+function titleTokens(t) {
+  return new Set(String(t || '').toLowerCase().replace(TOOL_PREFIX_RE, '')
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !STOP.has(w)));
+}
+function similarity(a, b) {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const w of a) if (b.has(w)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+function isDuplicate(a, b) {
+  if (a.ids.length && b.ids.length && a.f.category === b.f.category) return a.ids.some((id) => b.ids.includes(id));
+  if (a.loc.file !== b.loc.file) return false;
+  const sameCat = a.f.category === b.f.category;
+  const sim = similarity(a.tokens, b.tokens);
+  if (!a.loc.file) return sameCat && sim >= 0.8;
+  if (a.loc.line != null && b.loc.line != null) {
+    if (a.loc.line === b.loc.line) return sameCat || sim >= 0.35;
+    return sameCat && sim >= 0.6 && Math.abs(a.loc.line - b.loc.line) <= 3;
+  }
+  return sameCat && sim >= 0.5;
+}
+
+function longest(vals) { return vals.reduce((best, v) => (String(v || '').length > String(best || '').length ? v : best), ''); }
+
+function mergeGroup(group) {
+  const ranked = [...group].sort((a, b) =>
+    (SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]) ||
+    ((CONF_RANK[a.confidence] ?? 1) - (CONF_RANK[b.confidence] ?? 1)) ||
+    ((b.cvss || 0) - (a.cvss || 0)));
+  const primary = ranked[0];
+  if (group.length === 1) return { ...primary, sources: [primary.source] };
+  const cvssVals = group.map((f) => f.cvss).filter((v) => v != null);
+  // Lesbarer Titel: eigene Pruefungen/KI statt Tool-Regel-IDs ("gitleaks: aws-access-token").
+  const readable = ranked.find((f) => !TOOL_PREFIX_RE.test(f.title || '')) || primary;
+  // Ort: mit Zeilennummer bevorzugt, dann der kuerzeste (relativer statt absoluter Pfad).
+  const withLine = group.filter((f) => splitLoc(f.location).line != null);
+  const locPool = (withLine.length ? withLine : group).map((f) => f.location).filter(Boolean);
+  return {
+    ...primary,
+    title: readable.title,
+    cvss: cvssVals.length ? Math.max(...cvssVals) : null,
+    location: locPool.length ? locPool.reduce((a, b) => (b.length < a.length ? b : a)) : primary.location,
+    description: longest(group.map((f) => f.description)),
+    reachability: longest(group.map((f) => f.reachability)),
+    impact: longest(group.map((f) => f.impact)),
+    remediation: longest(group.map((f) => f.remediation)),
+    patch: longest(group.map((f) => f.patch)),
+    sources: [...new Set(group.map((f) => f.source))],
+    mergedCount: group.length,
+  };
+}
+
+function dedupeFindings(findings) {
+  const groups = []; // [{ items, keys }]
+  for (const f of findings) {
+    const k = { f, ids: vulnIds(f), loc: splitLoc(f.location), tokens: titleTokens(f.title) };
+    const g = groups.find((grp) => grp.keys.some((x) => isDuplicate(x, k)));
+    if (g) { g.items.push(f); g.keys.push(k); }
+    else groups.push({ items: [f], keys: [k] });
+  }
+  return groups.map((g) => mergeGroup(g.items));
+}
+
 function sortFindings(findings) {
   return [...findings].sort((a, b) => {
     const s = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
@@ -101,6 +195,8 @@ module.exports = {
   clampScore,
   normalizeFinding,
   fingerprint,
+  dedupeFindings,
+  splitLoc,
   sortFindings,
   summarize,
   atOrAbove,

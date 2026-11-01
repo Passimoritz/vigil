@@ -3,8 +3,9 @@
 // Orchestrierung: Units + Fakten -> KI-Prompts -> geparste, normalisierte Befunde.
 
 const { callProvider } = require('./providers');
-const { normalizeFinding, sortFindings, summarize } = require('./schema');
+const { normalizeFinding, sortFindings, summarize, dedupeFindings } = require('./schema');
 const { estimateCost, approxTokens } = require('./cost');
+const { redactSecrets, shouldRedact, validateFindings, enrich } = require('./harness');
 
 const SYSTEM_PROMPT = `Du bist ein erfahrener, defensiver Security-Code-Auditor. Der Nutzer prueft ausschliesslich eigene oder ausdruecklich freigegebene Artefakte. Dein Ziel: Schwachstellen FINDEN, einordnen und BEHEBEN helfen.
 
@@ -19,6 +20,7 @@ Arbeitsweise:
 - Pruefe zusaetzlich die ueblichen Klassen: Injection (SQL/NoSQL/Command/LDAP/Template), XSS, SSRF, Path Traversal, unsichere Deserialisierung, Krypto-Fehler (schwache Verfahren, feste Schluessel/IV, schlechte Zufallsquelle), Secrets im Code, unsichere Konfiguration, Information Disclosure (Fehler/Stacktraces/Debug), unsicheres Logging.
 - Bewerte Schweregrad und (falls moeglich) CVSS (0-10). Erklaere Erreichbarkeit KONZEPTIONELL (welcher Eingang, welche Voraussetzungen, wie realistisch), damit priorisiert werden kann - gib KEINE einsatzfertigen Angriffs-Payloads und keine Schritt-fuer-Schritt-Anleitungen gegen fremde Systeme.
 - Schwerpunkt auf konkrete Behebung (remediation) und, wo moeglich, einen konkreten Patch.
+- Formuliere jeden Befund als pruefbare Hypothese: nenne in der description konkret die Quelle (woher kommen die Daten) und die Senke (wo werden sie gefaehrlich), damit ein zweiter Pruefer ihn am Code-Ausschnitt bestaetigen oder widerlegen kann.
 - Qualitaet vor Menge: Melde echte, plausible Befunde mit konkretem Bezug (Datei:Zeile, betroffene Funktion/Variable). Bei Unsicherheit niedrigere confidence und benenne, was noch zu pruefen ist. Keine erfundenen Zeilennummern, keine generischen "koennte unsicher sein"-Floskeln. Die mitgelieferten statischen Fakten sind nur HINWEISE - verlass dich nicht darauf und wiederhole nicht bloss Offensichtliches, sondern ergaenze echten Kontext/Erreichbarkeit oder finde, was dort fehlt.
 
 Antworte AUSSCHLIESSLICH mit gueltigem JSON in genau dieser Form:
@@ -104,19 +106,6 @@ const FOCI = [
   { key: 'config', label: 'Konfiguration & Abhaengigkeiten', hint: 'unsichere Konfiguration/Defaults, fehlende Sicherheits-Header, Information Disclosure/Logging, veraltete/anfaellige Abhaengigkeiten, Infrastruktur (Docker/K8s/CI).' },
 ];
 
-const SEV_RANK = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-// Mehrfachbefunde (ueber Durchgaenge) am gleichen Ort zusammenfuehren.
-function dedupeFindings(list) {
-  const seen = new Map();
-  for (const f of list) {
-    const key = (f.location || '').toLowerCase().trim() + '|' + (f.title || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 50);
-    const prev = seen.get(key);
-    if (!prev) seen.set(key, f);
-    else if (SEV_RANK[f.severity] < SEV_RANK[prev.severity]) seen.set(key, f);
-  }
-  return [...seen.values()];
-}
-
 // Haupteinstieg.
 // opts: { units, facts, prescanFindings, config, onProgress, charBudget }
 async function analyze(opts) {
@@ -146,6 +135,8 @@ async function analyze(opts) {
 
   onProgress({ phase: 'analyze', message: `KI-Analyse (${depth === 'thorough' ? 'gruendlich, ' + passes.length + ' Durchgaenge' : 'standard'}) in ${batches.length} Block/Bloecken`, total, done, cost: estCost });
 
+  const redact = shouldRedact(config);
+  let redactedCount = 0;
   let aborted = false;
   for (let i = 0; i < batches.length && !aborted; i++) {
     for (const pass of passes) {
@@ -158,8 +149,11 @@ async function analyze(opts) {
         factBlock +
         `## Zu pruefende Artefakte (Block ${i + 1}/${batches.length}):\n` +
         batches[i].join('\n');
+      // Externe Anbieter bekommen Secrets nur geschwaerzt zu sehen.
+      let prompt = user;
+      if (redact) { const r = redactSecrets(user); prompt = r.text; if (pass === passes[0]) redactedCount += r.count; }
       try {
-        const { text, usage } = await callProvider(config, { system: SYSTEM_PROMPT, user });
+        const { text, usage } = await callProvider(config, { system: SYSTEM_PROMPT, user: prompt });
         if (usage) { usedIn += usage.inputTokens || 0; usedOut += usage.outputTokens || 0; }
         const raw = parseFindings(text);
         for (const r of raw) aiFindings.push(normalizeFinding(r, 'ai'));
@@ -175,12 +169,24 @@ async function analyze(opts) {
   }
   if (aborted) errors.push('KI-Analyse abgebrochen - Teilergebnis angezeigt.');
 
-  const all = sortFindings([...prescanFindings, ...dedupeFindings(aiFindings)]);
+  if (redactedCount) errors.push(`Datenschutz: ${redactedCount} Secret(s) vor dem Versand an den externen KI-Anbieter geschwaerzt.`);
+
+  // Zweite Stufe: reine KI-Befunde am Code-Ausschnitt gegenpruefen; widerlegte fallen heraus.
+  let merged = dedupeFindings([...prescanFindings, ...aiFindings]);
+  let refuted = [];
+  if (!aborted) {
+    const v = await validateFindings({ findings: merged, units, config, onProgress });
+    merged = v.findings; refuted = v.refuted;
+    usedIn += v.usage.inputTokens; usedOut += v.usage.outputTokens;
+    errors.push(...v.errors);
+    if (refuted.length) errors.push(`Gegenpruefung: ${refuted.length} KI-Befund(e) widerlegt und verworfen – ${refuted.slice(0, 5).map((f) => f.title).join('; ')}${refuted.length > 5 ? ' …' : ''}`);
+  }
+  const all = sortFindings(enrich(merged, units));
   return {
     findings: all,
     summary: summarize(all),
     errors,
-    meta: { batches: batches.length, passes: passes.length, depth, units: units.length, provider: config.provider, model: config.model, at: new Date().toISOString(), usage: costOf(usedIn, usedOut, false) },
+    meta: { batches: batches.length, passes: passes.length, depth, units: units.length, provider: config.provider, model: config.model, at: new Date().toISOString(), usage: costOf(usedIn, usedOut, false), redacted: redactedCount, refuted: refuted.length },
   };
 }
 

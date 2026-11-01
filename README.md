@@ -47,6 +47,17 @@ node src/cli.js --provider anthropic --model claude-sonnet-4-5 --url https://mei
 
 ## Architektur
 
+Vigil verlässt sich nicht auf reine KI-Einschätzung, sondern arbeitet zweistufig:
+
+1. **Deterministische Basis** – Secret-/Muster-Regeln, Schwachstellen-DB (OSV), optional semgrep, bandit, gitleaks, trivy u. a.
+2. **KI-Analyse** – fokussierte Durchgänge, die Datenflüsse von der Quelle zur Senke verfolgen und jeden Befund als prüfbare Hypothese formulieren.
+3. **Gegenprüfung** – ein zweiter KI-Schritt versucht, jeden *nur* von der KI gemeldeten Befund am konkreten Code-Ausschnitt zu widerlegen. Widerlegte Funde werden verworfen, unklare als „unbestätigt“ markiert.
+4. **Zusammenführen & Kontext** – Duplikate über alle Quellen werden vereint; jeder Befund bekommt einen Beleg-Status (mehrfach bestätigt / regelbasiert / KI-gegengeprüft / unbestätigt) und Kontext (Request-Handler, Internet-erreichbar, sensible Daten, Lieferkette).
+
+Datenschutz: Bei externen KI-Anbietern werden erkannte Secrets vor dem Versand geschwärzt (abschaltbar, CLI `--no-redact`). Mit Ollama verlässt nichts den Rechner. Die Gegenprüfung lässt sich mit `--no-validate` abschalten.
+
+Vigil schlägt Patches vor, wendet sie aber nie selbst an – jede Änderung bleibt deine Entscheidung.
+
 ```
 electron/           GUI-Prozess (Fenster, IPC, Datei-Dialoge)
   main.js
@@ -57,6 +68,7 @@ src/
     prescan.js      Secrets, Dependencies, riskante Muster (ohne KI)
     providers.js    Ollama / Anthropic / OpenAI / Gemini / OpenAI-kompatibel
     analyze.js      Prompt-Bau, Batching, JSON-Befunde
+    harness.js      Schwärzen, Code-Slices, Gegenprüfung, Beleg-Status & Kontext
     report.js       HTML- und Markdown-Report
     schema.js       Befund-Format + CVSS/Severity
     index.js        Pipeline-Fassade (runAudit)

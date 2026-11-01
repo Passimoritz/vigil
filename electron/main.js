@@ -100,7 +100,7 @@ function defaultConfig() {
   for (const [id, p] of Object.entries(PROVIDERS)) {
     providers[id] = { model: p.defaultModel, apiKey: '', baseUrl: p.defaultBaseUrl };
   }
-  return { selected: 'ollama', temperature: 0.1, maxTokens: 8192, cveLookup: true, analysisDepth: 'thorough', activeScan: false, proxyUrl: '', customRules: [], disabledRules: [], providers };
+  return { selected: 'ollama', temperature: 0.1, maxTokens: 8192, cveLookup: true, analysisDepth: 'thorough', aiValidation: true, redactSecrets: true, activeScan: false, proxyUrl: '', customRules: [], disabledRules: [], providers };
 }
 
 function loadConfig() {
@@ -134,6 +134,8 @@ function effectiveConfig(cfg, providerId) {
     cveLookup: cfg.cveLookup !== false,
     analysisDepth: cfg.analysisDepth === 'standard' ? 'standard' : 'thorough',
     activeScan: !!cfg.activeScan,
+    aiValidation: cfg.aiValidation !== false,
+    redactSecrets: cfg.redactSecrets !== false,
     customRules: Array.isArray(cfg.customRules) ? cfg.customRules : [],
     disabledRules: Array.isArray(cfg.disabledRules) ? cfg.disabledRules : [],
   };

@@ -11,7 +11,7 @@ const path = require('path');
 const { runAudit, report, atOrAbove } = require('./core');
 
 function parseArgs(argv) {
-  const opts = { targets: [], provider: 'ollama', model: '', out: '', baseUrl: '', authorize: false, cveLookup: true, deep: false, failOn: '', format: '' };
+  const opts = { targets: [], provider: 'ollama', model: '', out: '', baseUrl: '', authorize: false, cveLookup: true, deep: false, validate: true, redact: true, failOn: '', format: '' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--provider') opts.provider = argv[++i];
@@ -23,6 +23,8 @@ function parseArgs(argv) {
     else if (a === '--authorize') opts.authorize = true;
     else if (a === '--no-cve') opts.cveLookup = false;
     else if (a === '--deep') opts.deep = true;
+    else if (a === '--no-validate') opts.validate = false;
+    else if (a === '--no-redact') opts.redact = false;
     else if (a === '--fail-on') opts.failOn = argv[++i];
     else if (a === '--format') opts.format = argv[++i];
     else opts.targets.push({ type: 'path', value: path.resolve(a) });
@@ -54,6 +56,8 @@ function keyFor(provider) {
     maxTokens: 4096,
     cveLookup: o.cveLookup,
     analysisDepth: o.deep ? 'thorough' : 'standard',
+    aiValidation: o.validate,
+    redactSecrets: o.redact,
   };
 
   const { result } = await runAudit(o.targets, config, (p) => {

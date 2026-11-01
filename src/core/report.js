@@ -4,6 +4,17 @@
 
 const SEV_LABEL = { critical: 'Kritisch', high: 'Hoch', medium: 'Mittel', low: 'Niedrig', info: 'Info' };
 const SEV_COLOR = { critical: '#b3123c', high: '#d9480f', medium: '#c48a00', low: '#2b7a3b', info: '#555' };
+const EVIDENCE_LABEL = { 'confirmed-multi': 'mehrfach bestaetigt', deterministic: 'regelbasiert belegt', 'ai-verified': 'KI-gegengeprueft', unverified: 'unbestaetigt (nur KI)' };
+const CONTEXT_LABEL = { 'internet-exposed': 'aus dem Internet erreichbar', 'request-handler': 'in einem Request-Handler', 'sensitive-data': 'beruehrt sensible Daten', 'supply-chain': 'Lieferkette' };
+
+// "Beleg: … · Kontext: …" fuer einen Befund (leer, wenn nichts bekannt).
+function evidenceLine(f) {
+  const parts = [];
+  if (f.evidence) parts.push('Beleg: ' + (EVIDENCE_LABEL[f.evidence] || f.evidence));
+  const ctx = (f.context || []).map((c) => CONTEXT_LABEL[c]).filter(Boolean);
+  if (ctx.length) parts.push('Kontext: ' + ctx.join(', '));
+  return parts.join(' · ');
+}
 
 function esc(s) {
   return String(s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -27,8 +38,9 @@ function toMarkdown(result, title = 'Vigil Sicherheits-Audit') {
   L.push('## Befunde', '');
   findings.forEach((f, i) => {
     L.push(`### ${i + 1}. [${SEV_LABEL[f.severity]}] ${f.title}`, '');
-    L.push(`- **CVSS:** ${f.cvss ?? '—'} · **Kategorie:** ${f.category} · **Confidence:** ${f.confidence} · **Quelle:** ${f.source}`);
+    L.push(`- **CVSS:** ${f.cvss ?? '—'} · **Kategorie:** ${f.category} · **Confidence:** ${f.confidence} · **Quelle:** ${(f.sources || [f.source]).join(", ")}`);
     if (f.location) L.push(`- **Ort:** \`${f.location}\``);
+    if (evidenceLine(f)) L.push(`- ${evidenceLine(f)}`);
     L.push('');
     if (f.description) L.push(`**Beschreibung:** ${f.description}`, '');
     if (f.reachability) L.push(`**Erreichbarkeit/Risiko:** ${f.reachability}`, '');
@@ -53,7 +65,7 @@ function toHtml(result, title = 'Vigil Sicherheits-Audit') {
         <span class="num">#${i + 1}</span>
         <h3>${esc(f.title)}</h3>
       </div>
-      <div class="meta">CVSS ${f.cvss ?? '—'} · ${esc(f.category)} · Confidence: ${esc(f.confidence)} · Quelle: ${esc(f.source)}${f.location ? ` · <code>${esc(f.location)}</code>` : ''}</div>
+      <div class="meta">CVSS ${f.cvss ?? '—'} · ${esc(f.category)} · Confidence: ${esc(f.confidence)} · Quelle: ${esc((f.sources || [f.source]).join(", "))}${f.location ? ` · <code>${esc(f.location)}</code>` : ''}${evidenceLine(f) ? ' · ' + esc(evidenceLine(f)) : ''}</div>
       ${f.description ? `<p><b>Beschreibung:</b> ${esc(f.description)}</p>` : ''}
       ${f.reachability ? `<p><b>Erreichbarkeit/Risiko:</b> ${esc(f.reachability)}</p>` : ''}
       ${f.impact ? `<p><b>Auswirkung:</b> ${esc(f.impact)}</p>` : ''}
@@ -136,7 +148,8 @@ function toSarif(result, toolVersion = '0.1.0') {
       message: { text: `${f.title}${extra.length ? '\n' + extra.join('\n') : ''}` },
       properties: {
         severity: f.severity, cvss: f.cvss, confidence: f.confidence,
-        source: f.source, category: f.category,
+        source: f.source, sources: f.sources || [f.source], category: f.category,
+        evidence: f.evidence, context: f.context,
       },
     };
     const { uri, line } = splitLocation(f.location);

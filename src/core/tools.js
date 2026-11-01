@@ -428,12 +428,13 @@ function parseGrype(data, sourcePath) {
     const a = m.artifact || {};
     const loc = (Array.isArray(a.locations) && a.locations[0] && a.locations[0].path) || sourcePath || '?';
     const fixed = (v.fix && Array.isArray(v.fix.versions) && v.fix.versions.length) ? v.fix.versions.join(', ') : '';
+    const related = (m.relatedVulnerabilities || []).map((r) => r && r.id).filter((id) => id && id !== v.id);
     findings.push(normalizeFinding({
       title: `grype: ${a.name || '?'}@${a.version || '?'} (${v.id || '?'})`,
       severity: mapSev(v.severity), category: 'Dependencies', location: loc,
       description: `${v.description || v.id || 'Bekannte Schwachstelle'}`.slice(0, 400),
       reachability: 'In einem installierten Paket/einer Abhaengigkeit gefunden.',
-      impact: `Bekannte Schwachstelle ${v.id || ''}${a.type ? ' (' + a.type + ')' : ''}.`,
+      impact: `Bekannte Schwachstelle ${v.id || ''}${related.length ? ' / ' + related.join(', ') : ''}${a.type ? ' (' + a.type + ')' : ''}.`,
       remediation: fixed ? `Auf eine gepatchte Version aktualisieren (behoben in: ${fixed}).` : 'Auf eine gepatchte Version aktualisieren bzw. dem Advisory folgen.',
       confidence: 'high',
     }, 'grype'));

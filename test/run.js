@@ -8,7 +8,7 @@ const { cvssFromVector } = require('../src/core/cve');
 const { parseOsv, parseGrype, parseTrufflehog, parseBandit } = require('../src/core/tools');
 const { estimateCost, isLocalProvider } = require('../src/core/cost');
 const { toSarif } = require('../src/core/report');
-const { fingerprint, atOrAbove } = require('../src/core/schema');
+const { fingerprint, atOrAbove, dedupeFindings } = require('../src/core/schema');
 const { makeMatcher } = require('../src/core/ignore');
 const { analyzeBinary, detectType } = require('../src/core/binaryaudit');
 
@@ -262,6 +262,30 @@ const fpC = fingerprint({ category: 'Secrets', location: 'b.js:9', title: 'X' })
 check('fingerprint: stabil', fpA === fpB);
 check('fingerprint: ortsabhängig', fpA !== fpC);
 
+console.log('Duplikate zusammenfuehren:');
+{
+  const F = (o) => ({ severity: 'medium', category: 'Other', confidence: 'medium', cvss: null, description: '', reachability: '', impact: '', remediation: '', patch: '', ...o });
+  const d = dedupeFindings([
+    F({ title: 'Moegliches Secret im Klartext: AWS Access Key ID', category: 'Secrets', severity: 'high', location: 'src/app.js:2', source: 'prescan' }),
+    F({ title: 'gitleaks: aws-access-token', category: 'Secrets', severity: 'high', location: 'C:\\proj\\src\\app.js:2', source: 'gitleaks', remediation: 'Schluessel rotieren und aus dem Code entfernen.' }),
+    F({ title: 'Verwundbare Abhaengigkeit: lodash 4.17.15 (CVE-2020-8203)', category: 'Dependencies', location: 'npm: lodash@4.17.15', source: 'osv', cvss: 7.4 }),
+    F({ title: 'trivy: lodash@4.17.15 (CVE-2020-8203)', category: 'Dependencies', severity: 'high', location: 'package-lock.json', source: 'trivy' }),
+    F({ title: 'SQL-Injection in getUser', category: 'Injection', severity: 'critical', location: 'db.js:40', source: 'ai' }),
+    F({ title: 'SQL Injection in getUser()', category: 'Injection', severity: 'high', location: 'db.js line 41', source: 'ai', patch: 'db.query("... WHERE id = ?", [id])' }),
+    F({ title: 'Command Injection ueber exec', category: 'Injection', severity: 'high', location: 'db.js:90', source: 'ai' }),
+    F({ title: 'Hartkodiertes Passwort', category: 'Secrets', location: 'db.js:40', source: 'ai' }),
+  ]);
+  check('dedupe: 8 -> 5 Befunde', d.length === 5);
+  const sec = d.find((f) => f.category === 'Secrets' && f.sources.includes('gitleaks'));
+  check('dedupe: Secret aus prescan+gitleaks vereint', sec && sec.sources.length === 2 && /rotieren/.test(sec.remediation));
+  const dep = d.find((f) => f.category === 'Dependencies');
+  check('dedupe: CVE ueber Tools vereint, hoechster Grad + CVSS', dep && dep.severity === 'high' && dep.cvss === 7.4);
+  const sql = d.find((f) => /SQL/.test(f.title));
+  check('dedupe: KI-Doppel (Zeile +-1) vereint, kritisch bleibt', sql && sql.severity === 'critical' && !!sql.patch);
+  check('dedupe: andere Kategorie gleiche Zeile bleibt getrennt', d.some((f) => f.title === 'Hartkodiertes Passwort'));
+  check('dedupe: Einzelbefund behaelt sources', d.every((f) => Array.isArray(f.sources) && f.sources.length >= 1));
+}
+
 console.log('.vigilignore (Matcher):');
 const m = makeMatcher(['*.log', 'node_modules/', '**/*.min.js', '# kommentar', 'secrets.txt']);
 check('ignore: *.log trifft Basenamen', m('src/app.log', 'app.log') === true);
@@ -293,5 +317,48 @@ check('atOrAbove critical = 1', atOrAbove(cc, 'critical') === 1);
 check('atOrAbove info = alle (11)', atOrAbove(cc, 'info') === 11);
 check('atOrAbove unbekannt = 0', atOrAbove(cc, 'quatsch') === 0);
 
-console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
-process.exit(fail ? 1 : 0);
+console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
+(async () => {
+  const providers = require('../src/core/providers');
+  const { redactSecrets, shouldRedact, extractSlice, validateFindings, enrich } = require('../src/core/harness');
+
+  const red = redactSecrets('const k = "AKIAIOSFODNN7EXAMPLE"; const ok = 1;');
+  check('redact: AWS-Key geschwaerzt', red.count === 1 && !red.text.includes('IOSFODNN7EXAMPLE') && red.text.includes('const ok = 1'));
+  check('redact: nur bei externem Anbieter', shouldRedact({ provider: 'anthropic' }) && !shouldRedact({ provider: 'ollama' }));
+  check('redact: abschaltbar', !shouldRedact({ provider: 'openai', redactSecrets: false }));
+
+  const code = Array.from({ length: 80 }, (_, i) => `line ${i + 1}`).join('\n');
+  const hUnits = [{ label: 'src/routes/orders.js', content: code.replace('line 40', 'app.get("/o/:id", (req, res) => db.query("SELECT " + req.params.id))') }];
+  const sl = extractSlice(hUnits, 'C:\\proj\\src\\routes\\orders.js:40', 5);
+  check('slice: richtige Datei + Fenster', sl && sl.from === 35 && sl.to === 45 && /40 >/.test(sl.text));
+
+  const F = (o) => ({ severity: 'high', category: 'Injection', confidence: 'medium', cvss: null, description: 'd', reachability: '', impact: '', remediation: '', patch: '', source: 'ai', sources: ['ai'], ...o });
+  const fs3 = [
+    F({ title: 'SQLi', location: 'src/routes/orders.js:40' }),
+    F({ title: 'Erfunden', location: 'src/routes/orders.js:70' }),
+    F({ title: 'Unklar', location: 'src/routes/orders.js:10' }),
+    F({ title: 'Secret', category: 'Secrets', location: 'src/routes/orders.js:1', source: 'prescan', sources: ['prescan', 'ai'] }),
+  ];
+  let sent = '';
+  const orig = providers.callProvider;
+  providers.callProvider = async (_cfg, { user }) => {
+    sent = user;
+    return { text: JSON.stringify({ verdicts: [{ id: 0, verdict: 'confirmed', reason: 'Konkatenation belegt' }, { id: 1, verdict: 'refuted', reason: 'Stelle existiert nicht' }, { id: 2, verdict: 'uncertain', reason: '?' }] }), usage: { inputTokens: 10, outputTokens: 5 } };
+  };
+  const v = await validateFindings({ findings: fs3, units: hUnits, config: { provider: 'ollama' } });
+  providers.callProvider = orig;
+  check('validate: widerlegter Befund faellt raus', v.refuted.length === 1 && !v.findings.some((f) => f.title === 'Erfunden'));
+  check('validate: unsicher -> confidence low', v.findings.find((f) => f.title === 'Unklar').confidence === 'low');
+  check('validate: deterministische Befunde nicht gegengeprueft', !/Secret/.test(sent) && v.findings.some((f) => f.title === 'Secret'));
+  check('validate: Code-Slice im Prompt', /SELECT/.test(sent));
+
+  const en = enrich(v.findings, hUnits);
+  const byT = (t) => en.find((f) => f.title === t);
+  check('evidence: KI bestaetigt -> ai-verified', byT('SQLi').evidence === 'ai-verified');
+  check('evidence: unsicher -> unverified', byT('Unklar').evidence === 'unverified');
+  check('evidence: prescan+ai -> confirmed-multi', byT('Secret').evidence === 'confirmed-multi');
+  check('context: Route -> request-handler', byT('SQLi').context.includes('request-handler'));
+
+  console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
+  process.exit(fail ? 1 : 0);
+})();
