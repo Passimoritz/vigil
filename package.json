@@ -1,8 +1,8 @@
 {
   "name": "vigil",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "KI-gestuetztes, defensives Sicherheits-Audit fuer eigene Dateien, Ordner, Archive, Binaries und erreichbare Endpunkte.",
+  "description": "Vigil – defensives Sicherheits-Audit für eigene Projekte, Webseiten, Server und Container.",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
@@ -36,19 +36,42 @@
       "package.json",
       "!test/**",
       "!tools/**",
-      "!dist/**"
+      "!dist/**",
+      "!build/**"
     ],
     "win": {
       "target": "nsis",
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.ico",
+      "legalTrademarks": "Vigil",
+      "publisherName": "Passimoritz"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Vigil"
-    }
+      "shortcutName": "Vigil",
+      "uninstallDisplayName": "Vigil ${version}",
+      "runAfterFinish": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "license": "build/license.txt",
+      "language": "1031",
+      "installerLanguages": [
+        "de_DE"
+      ],
+      "displayLanguageSelector": false,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Vigil-Setup-${version}.${ext}",
+      "menuCategory": false
+    },
+    "copyright": "Copyright © 2026 Passimoritz"
+  },
+  "author": {
+    "name": "Passimoritz",
+    "email": "passimoritz@gmail.com"
   }
 }

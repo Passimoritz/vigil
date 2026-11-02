@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('vigil', {
   loadModels: (payload) => ipcRenderer.invoke('provider:models', payload),
   runAudit: (payload) => ipcRenderer.invoke('audit:run', payload),
   cancelAudit: () => ipcRenderer.invoke('audit:cancel'),
+  estimateAudit: (payload) => ipcRenderer.invoke('audit:estimate', payload),
   saveReport: (format) => ipcRenderer.invoke('report:save', { format }),
 
   // Befund-Lebenszyklus & Uebersicht
@@ -44,6 +45,7 @@ contextBridge.exposeInMainWorld('vigil', {
 
   ollama: {
     status: () => ipcRenderer.invoke('ollama:status'),
+    detectLocal: () => ipcRenderer.invoke('localai:detect'),
     recommended: () => ipcRenderer.invoke('ollama:recommended'),
     start: () => ipcRenderer.invoke('ollama:start'),
     install: () => ipcRenderer.invoke('ollama:install'),

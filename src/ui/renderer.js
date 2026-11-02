@@ -103,7 +103,9 @@ function updateRunState() {
   if (state.running) return;
   if (!state.targets.length) $('runHint').textContent = 'Füge oben zuerst etwas zur Prüfliste hinzu.';
   else if (!ready.ok) $('runHint').textContent = ready.why;
-  else $('runHint').textContent = `Bereit – ${state.targets.length} ${state.targets.length === 1 ? 'Ziel' : 'Ziele'} mit ${ready.label}. Je nach Umfang dauert das ein paar Minuten.`;
+  else $('runHint').textContent = `Bereit – ${state.targets.length} ${state.targets.length === 1 ? 'Ziel' : 'Ziele'} mit ${ready.label}.`;
+  scheduleEstimate(ready.ok && needsAi());
+  updateStatusBar();
 }
 
 // --- Drag & Drop --------------------------------------------------------
@@ -133,8 +135,58 @@ function renderStepper(activeKey) {
     return `<span class="pstep ${cls}">${esc(p.label)}</span>`;
   }).join('<span class="psep">›</span>');
 }
+// --- Kosten-/Token-Vorschau vor dem Start -----------------------------------
+const fmtDur = (s) => (s < 90 ? `≈ ${Math.max(1, Math.round(s / 10) * 10)} Sek.` : s < 3600 ? `≈ ${Math.round(s / 60)} Min.` : `≈ ${(s / 3600).toFixed(1).replace('.', ',')} Std.`);
+const fmtK = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2).replace('.', ',') + ' Mio.' : n >= 1000 ? Math.round(n / 1000).toLocaleString('de-DE') + ' Tsd.' : String(n));
+let estTimer = null;
+let estSeq = 0;
+function scheduleEstimate(show) {
+  clearTimeout(estTimer);
+  if (!show) { $('estimateCard').hidden = true; state.estimate = null; return; }
+  estTimer = setTimeout(refreshEstimate, 350);
+}
+async function refreshEstimate() {
+  const seq = ++estSeq;
+  const card = $('estimateCard');
+  card.hidden = false;
+  card.classList.add('loading');
+  card.innerHTML = '<div class="est-head"><span>Vorschau dieses Laufs</span><span class="muted small">rechne …</span></div>';
+  let r;
+  try { r = await window.vigil.estimateAudit({ targets: state.targets, providerId: state.config.selected }); } catch (e) { r = { ok: false, error: e.message }; }
+  if (seq !== estSeq) return; // inzwischen geaendert
+  card.classList.remove('loading');
+  if (!r || !r.ok) { card.innerHTML = `<div class="est-head"><span>Vorschau</span></div><p class="muted small">Keine Schätzung möglich${r && r.error ? ': ' + esc(r.error) : ''}.</p>`; return; }
+  const c = r.current, o = r.other;
+  state.estimate = c;
+  const total = c.inputTokens + c.outputTokens;
+  const price = c.local ? '<b class="est-price free">Kostenlos</b><span class="muted small">läuft lokal auf deinem Rechner</span>'
+    : c.priced ? `<b class="est-price">≈ ${esc(fmtUsd(c.usd))}</b><span class="muted small">${esc(r.model || '')}</span>`
+      : `<b class="est-price">${fmtK(total)} Tokens</b><span class="muted small">kein Preis für „${esc(r.model || '?')}“ hinterlegt</span>`;
+  const modeName = (d) => (d === 'thorough' ? 'Gründlich' : 'Schnell');
+  const otherPrice = o.local ? fmtDur(o.seconds) : o.priced ? `≈ ${fmtUsd(o.usd)} · ${fmtDur(o.seconds)}` : `${fmtK(o.inputTokens + o.outputTokens)} Tokens`;
+  const warn = !c.local && c.priced && c.usd > (state.config.costWarnUsd ?? 2);
+  card.innerHTML = `
+    <div class="est-head"><span>Vorschau dieses Laufs</span><span class="est-mode">${modeName(c.depth)}</span></div>
+    <div class="est-main">${price}</div>
+    <div class="est-grid">
+      <div><span class="est-n">${fmtK(total)}</span><span class="est-l">Tokens</span></div>
+      <div><span class="est-n">${c.calls}</span><span class="est-l">KI-Aufrufe</span></div>
+      <div><span class="est-n">${c.files}</span><span class="est-l">Dateien</span></div>
+      <div><span class="est-n">${fmtDur(c.seconds).replace('≈ ', '')}</span><span class="est-l">Dauer</span></div>
+    </div>
+    <div class="est-split muted small">${fmtK(c.inputTokens)} Eingang · ${fmtK(c.outputTokens)} Ausgang${c.truncated ? ' · große Projekte werden gekürzt' : ''}</div>
+    ${warn ? `<div class="est-warn">Über deiner Kostengrenze von ${fmtUsd(state.config.costWarnUsd ?? 2)} – Vigil fragt vor dem Start nach.</div>` : ''}
+    <button type="button" class="est-switch" id="estSwitch">${modeName(o.depth)}-Modus: ${esc(otherPrice)} – umstellen</button>`;
+  $('estSwitch').onclick = () => { state.config.analysisDepth = o.depth; saveCfg(); refreshEstimate(); toast(`${modeName(o.depth)}-Modus aktiv`, 'ok'); };
+}
+
 async function runAudit() {
   if (state.running || !state.targets.length) return;
+  // Kostenbremse: teure Cloud-Laeufe vorher bestaetigen lassen
+  const est = state.estimate;
+  if (needsAi() && est && !est.local && est.priced && est.usd > (state.config.costWarnUsd ?? 2)
+    && !confirm(`Dieser Lauf kostet voraussichtlich ${fmtUsd(est.usd)} (${fmtK(est.inputTokens + est.outputTokens)} Tokens, ${est.calls} KI-Aufrufe).\n\nTrotzdem starten?`)) return;
+  state.runStartedAt = Date.now();
   state.running = true; updateRunState();
   $('cancelBtn').hidden = false; $('cancelBtn').disabled = false;
   $('progressPanel').hidden = false;
@@ -203,7 +255,8 @@ function updateCost(cost, done) {
     `<div class="cost-row"><span class="cost-badge" aria-hidden="true">$</span>` +
     `<span class="cost-label">${esc(label)}</span>${usd}</div>` +
     `<div class="cost-tok small muted">${esc(totalT)} Tokens · ${esc(inT)} Eingang · ${esc(outT)} Ausgang` +
-    `${cost.priced ? '' : ' · Modell/Anbieter nicht in der Preisliste'}</div>`;
+    `${cost.priced ? '' : ' · Modell/Anbieter nicht in der Preisliste'}` +
+    `${done && state.estimate && state.estimate.priced && !cost.estimate ? ` · Vorschau war ≈ ${esc(fmtUsd(state.estimate.usd))}` : ''}</div>`;
 }
 
 // Sicherheitsnote A–F aus den (nicht ausgeblendeten) Befunden.
@@ -566,7 +619,7 @@ function collectDisabledRules() {
 const CLOUD_IDS = ['anthropic', 'openai', 'gemini', 'compat'];
 const MODEL_CACHE = {};
 const CUSTOM = '__custom__'; // Sentinel fuer „eigenes Modell eingeben"
-const ai = { mode: 'local', ollama: null, recommended: [], pulling: null, busy: false };
+const ai = { mode: 'local', ollama: null, recommended: [], pulling: null, busy: false, localList: [] };
 
 const pcfg = (id) => state.config.providers[id] || (state.config.providers[id] = {});
 const providerMeta = (id) => state.providers.find((p) => p.id === id) || {};
@@ -588,6 +641,12 @@ function pickPreferred(id, models, current) {
 
 function aiReady() {
   if (!state.config) return { ok: false, why: '' };
+  if (ai.mode === 'local' && localSourceId() !== 'ollama') {
+    const src = ai.localList.find((x) => x.id === localSourceId());
+    if (!src) return { ok: false, why: 'Die gewählte lokale KI antwortet gerade nicht – starte sie oder wähle eine andere.' };
+    if (!pcfg('compat').model) return { ok: false, why: `Wähle ein Modell von ${src.name}.` };
+    return { ok: true, label: `${pcfg('compat').model} (${src.name})` };
+  }
   if (ai.mode === 'local') {
     const s = ai.ollama;
     if (!s) return { ok: false, why: 'Prüfe Ollama …' };
@@ -602,9 +661,52 @@ function aiReady() {
   return { ok: true, label: pcfg(id).model };
 }
 
+// --- Lokale KI-Quelle: Ollama oder ein bereits laufender OpenAI-kompatibler Server -------
+const localSourceId = () => state.config.localSource || 'ollama';
+async function scanLocal(manual) {
+  if (manual) $('localSources').classList.add('scanning');
+  try { ai.localList = await window.vigil.ollama.detectLocal(); } catch { ai.localList = []; }
+  $('localSources').classList.remove('scanning');
+  renderLocalSources();
+  if (manual) toast(ai.localList.length ? `${ai.localList.length} lokale KI gefunden` : 'Keine laufende lokale KI gefunden', ai.localList.length ? 'ok' : 'info');
+  updateRunState();
+}
+function renderLocalSources() {
+  const sel = localSourceId();
+  const list = [...ai.localList];
+  if (!list.some((x) => x.id === 'ollama')) list.unshift({ id: 'ollama', name: 'Ollama', port: 11434, kind: 'ollama', models: null });
+  $('localSources').innerHTML = list.map((s) => {
+    const state2 = s.models == null ? 'nicht aktiv' : s.models.length ? `${s.models.length} ${s.models.length === 1 ? 'Modell' : 'Modelle'}` : 'läuft, kein Modell';
+    return `<button type="button" class="ls-card${s.id === sel ? ' active' : ''}" role="radio" aria-checked="${s.id === sel}" data-id="${esc(s.id)}">
+      <span class="dot ${s.models == null ? '' : s.models.length ? 'ok' : 'wait'}"></span>
+      <span class="ls-main"><b>${esc(s.name)}</b><span class="muted small">Port ${s.port} · ${state2}</span></span></button>`;
+  }).join('');
+  $('localSources').querySelectorAll('.ls-card').forEach((b) => b.onclick = () => selectLocalSource(b.dataset.id));
+  const other = sel !== 'ollama' ? ai.localList.find((x) => x.id === sel) : null;
+  $('ollamaBlock').hidden = sel !== 'ollama';
+  $('localOtherRow').hidden = sel === 'ollama';
+  if (sel !== 'ollama') {
+    const models = (other && other.models) || [];
+    const c = pcfg('compat');
+    if (other) c.baseUrl = other.baseUrl;
+    if (!models.includes(c.model)) c.model = models[0] || '';
+    $('localOtherModel').innerHTML = models.length ? models.map((m) => `<option value="${esc(m)}"${m === c.model ? ' selected' : ''}>${esc(m)}</option>`).join('') : '<option value="" disabled selected>– kein Modell geladen –</option>';
+    $('localOtherHint').textContent = other ? `${other.name} unter ${other.baseUrl} – läuft lokal, kostenlos, deine Daten bleiben auf dem PC.` : 'Diese KI antwortet gerade nicht.';
+    saveCfg();
+  }
+}
+function selectLocalSource(id) {
+  state.config.localSource = id;
+  state.config.selected = id === 'ollama' ? 'ollama' : 'compat';
+  saveCfg();
+  renderLocalSources();
+  if (id === 'ollama') refreshOllama();
+  updateRunState();
+}
+
 function setMode(mode) {
   ai.mode = mode;
-  state.config.selected = mode === 'local' ? 'ollama' : state.config.cloudProvider;
+  state.config.selected = mode === 'local' ? (localSourceId() === 'ollama' ? 'ollama' : 'compat') : state.config.cloudProvider;
   saveCfg();
   for (const b of [$('modeLocal'), $('modeCloud')]) {
     const on = b.dataset.mode === mode;
@@ -612,7 +714,7 @@ function setMode(mode) {
   }
   $('localPane').hidden = mode !== 'local';
   $('cloudPane').hidden = mode !== 'cloud';
-  if (mode === 'local') refreshOllama(); else refreshCloud();
+  if (mode === 'local') { scanLocal(); refreshOllama(); } else refreshCloud();
   updateRunState();
 }
 
@@ -909,6 +1011,7 @@ function renderSettings() {
   $('validateChk').checked = state.config.aiValidation !== false;
   $('redactChk').checked = state.config.redactSecrets !== false;
   $('domChk').checked = state.config.domAudit !== false;
+  $('costWarnInput').value = state.config.costWarnUsd ?? 2;
   window.vigil.intelStatus().then((it) => { $('intelSettings').textContent = it.updatedAt ? `Stand ${fmtDate(it.updatedAt)} · ${it.kev} aktiv ausgenutzte CVEs · ${it.epss} EPSS-Werte` : 'Noch nicht geladen – wird automatisch täglich aktualisiert.'; }).catch(() => {});
   window.vigil.apiMatrixGet().then((list) => {
     const m = list[0] || {};
@@ -949,6 +1052,7 @@ function collectSettings() {
   state.config.aiValidation = $('validateChk').checked;
   state.config.redactSecrets = $('redactChk').checked;
   state.config.domAudit = $('domChk').checked;
+  state.config.costWarnUsd = Math.max(0, parseFloat($('costWarnInput').value) || 0);
   // API-Rechtematrix separat speichern – Tokens gehen verschluesselt in den Main-Prozess
   if ($('amHost').value.trim() || $('amEndpoints').value.trim()) {
     window.vigil.apiMatrixSave([{ host: $('amHost').value, resourceIdA: $('amResource').value, endpoints: $('amEndpoints').value, tokenA: $('amTokenA').value, tokenB: $('amTokenB').value }]);
@@ -1015,9 +1119,13 @@ async function init() {
   };
   $('cloudModelManual').onchange = () => { const v = $('cloudModelManual').value.trim(); if (v) { pcfg(state.config.cloudProvider).model = v; saveCfg(); updateRunState(); } };
 
-  setMode(sel === 'ollama' ? 'local' : 'cloud');
+  const localOther = sel === 'compat' && state.config.localSource && state.config.localSource !== 'ollama';
+  setMode(sel === 'ollama' || localOther ? 'local' : 'cloud');
   // Ollama nachtraeglich erkennen (z. B. von Hand gestartet oder installiert).
-  setInterval(() => { if (ai.mode === 'local' && !ai.busy && !ai.pulling && !(ai.ollama && ai.ollama.running)) refreshOllama(); }, 4000);
+  // Nur nachsehen (nie starten), ob Ollama inzwischen laeuft – alle 6 s, solange "Lokal · Ollama" gewaehlt ist.
+  setInterval(() => { if (ai.mode === 'local' && localSourceId() === 'ollama' && !ai.busy && !ai.pulling && !(ai.ollama && ai.ollama.running)) refreshOllama(); }, 6000);
+  $('localScan').onclick = () => scanLocal(true);
+  $('localOtherModel').onchange = () => { pcfg('compat').model = $('localOtherModel').value; saveCfg(); updateRunState(); };
 
   // Schritt 3 + Ergebnis
   $('runBtn').onclick = runAudit;
@@ -1089,11 +1197,50 @@ async function init() {
     const r = await saveCfg();
     $('settingsStatus').textContent = r && r.ok ? 'Gespeichert.' : 'Fehler beim Speichern.';
     if (ai.mode === 'cloud') refreshCloud(); else refreshOllama();
+    updateRunState();
     setTimeout(() => { $('settingsStatus').textContent = ''; closeSettings(); }, 600);
   };
 
   renderTargets();
 }
-function flash(msg) { $('runHint').textContent = msg; }
+// Meldungen als Toast (oben rechts) – nichts geht mehr in einer Statuszeile unter.
+function toast(msg, kind = 'info') {
+  if (!msg) return;
+  const box = $('toasts');
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.setAttribute('role', kind === 'err' ? 'alert' : 'status');
+  el.textContent = msg;
+  box.appendChild(el);
+  setTimeout(() => el.classList.add('out'), 3800);
+  setTimeout(() => el.remove(), 4300);
+}
+function flash(msg) {
+  if (!msg) return;
+  toast(msg, /^Fehler|nicht|✕/.test(msg) ? 'err' : /^Gespeichert|✓/.test(msg) ? 'ok' : 'info');
+}
+
+// Statusleiste: KI, Ziele, Threat-Intel, Version
+async function updateStatusBar() {
+  const sb = $('statusBar'); if (!sb || !state.config) return;
+  const ai = state.config.selected === 'ollama' ? `Lokal · ${pcfg('ollama').model || 'kein Modell'}` : `${providerMeta(state.config.selected).label || state.config.selected} · ${pcfg(state.config.selected).model || '–'}`;
+  $('sbAi').textContent = ai;
+  $('sbTargets').textContent = `${state.targets.length} ${state.targets.length === 1 ? 'Ziel' : 'Ziele'}`;
+  $('sbMode').textContent = state.config.analysisDepth === 'standard' ? 'Schnell' : 'Gründlich';
+  if (!updateStatusBar.intelLoaded) {
+    updateStatusBar.intelLoaded = true;
+    try { const it = await window.vigil.intelStatus(); $('sbIntel').textContent = it.updatedAt ? `Threat-Intel ${fmtDate(it.updatedAt)}` : 'Threat-Intel lädt …'; } catch { $('sbIntel').textContent = ''; }
+  }
+}
+
+// Tastenkuerzel
+document.addEventListener('keydown', (e) => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key === 'Enter') { e.preventDefault(); if (!$('runBtn').disabled) runAudit(); }
+  else if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); const s = $('dashView').hidden ? $('findingSearch') : $('dashSearch'); if (s && s.offsetParent) s.focus(); }
+  else if (mod && e.key === ',') { e.preventDefault(); openSettings(); }
+  else if (mod && e.key === '1') { e.preventDefault(); showView('check'); }
+  else if (mod && e.key === '2') { e.preventDefault(); showView('dash'); }
+});
 
 init();

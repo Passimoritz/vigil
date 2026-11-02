@@ -190,4 +190,23 @@ async function analyze(opts) {
   };
 }
 
-module.exports = { analyze, parseFindings, SYSTEM_PROMPT };
+// Vorab-Schaetzung ohne KI-Aufruf: gleiche Blockbildung wie analyze(), daraus Tokens, Kosten, Dauer.
+function estimateRun({ units = [], facts = '', config = {}, charBudget }) {
+  const depth = config.analysisDepth === 'thorough' ? 'thorough' : 'standard';
+  const passes = depth === 'thorough' ? FOCI.length : 1;
+  const batches = batchUnits(units, charBudget || DEFAULT_CHAR_BUDGET);
+  const factLen = facts ? Math.min(8000, facts.length) + 60 : 0;
+  let chars = 0;
+  for (const b of batches) chars += SYSTEM_PROMPT.length + factLen + 400 + b.join('\n').length;
+  const calls = batches.length * passes;
+  let inputTokens = approxTokens(chars) * passes;
+  let outputTokens = 700 * calls;
+  // Gegenpruefung: grob ein Zusatzaufruf je ~6 KI-Befunde, typischerweise 10–15 % mehr
+  if (config.aiValidation !== false && calls) { inputTokens = Math.round(inputTokens * 1.12); outputTokens = Math.round(outputTokens * 1.15); }
+  const c = estimateCost({ provider: config.provider, model: config.model, baseUrl: config.baseUrl, inputTokens, outputTokens });
+  // Dauer: lokal ~35 s je Aufruf (Mittelklasse-GPU/CPU), Cloud ~10 s
+  const perCall = c.local ? 35 : 10;
+  return { units: units.length, batches: batches.length, passes, calls, inputTokens: c.inputTokens, outputTokens: c.outputTokens, usd: c.usd, priced: c.priced, local: c.local, seconds: calls * perCall, depth };
+}
+
+module.exports = { analyze, parseFindings, estimateRun, SYSTEM_PROMPT };

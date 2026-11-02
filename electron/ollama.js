@@ -64,22 +64,37 @@ async function status(base) {
   }
 }
 
-// Dienst im Hintergrund starten und warten, bis er antwortet.
-async function start(base) {
-  const bin = findBinary();
-  if (!bin) return { ok: false, error: 'Ollama ist nicht installiert.' };
-  try {
-    const child = spawn(bin, ['serve'], { detached: true, stdio: 'ignore', windowsHide: true });
-    child.on('error', () => {});
-    child.unref();
-  } catch (e) { return { ok: false, error: e.message }; }
+// Nur den unsichtbaren Hintergrunddienst "ollama serve" starten – nie die Desktop-App, und
+// hoechstens einen Prozess. Kein "detached": unter Windows oeffnet das trotz windowsHide
+// fuer jeden Start ein eigenes Konsolenfenster. Der Dienst endet mit Vigil.
+let serveChild = null;
+let starting = null;
+async function waitRunning(base) {
   for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 500));
     const s = await status(base);
     if (s.running) return { ok: true, status: s };
   }
-  return { ok: false, error: 'Ollama wurde gestartet, antwortet aber nicht. Starte die Ollama-App einmal von Hand.' };
+  return { ok: false, error: 'Der Ollama-Dienst antwortet nicht. Läuft schon ein anderes Programm auf Port 11434?' };
 }
+async function start(base) {
+  const pre = await status(base);
+  if (pre.running) return { ok: true, status: pre };   // laeuft schon (z. B. eigener Dienst) – nichts starten
+  if (starting) return starting;                         // paralleler Aufruf: auf denselben Start warten
+  const bin = findBinary();
+  if (!bin) return { ok: false, error: 'Ollama ist nicht installiert.' };
+  starting = (async () => {
+    if (!serveChild || serveChild.exitCode !== null) {
+      try {
+        serveChild = spawn(bin, ['serve'], { stdio: 'ignore', windowsHide: true, env: { ...process.env, OLLAMA_HOST: '127.0.0.1:11434' } });
+        serveChild.on('error', () => {});
+      } catch (e) { return { ok: false, error: e.message }; }
+    }
+    return waitRunning(base);
+  })();
+  try { return await starting; } finally { starting = null; }
+}
+function stop() { try { if (serveChild && serveChild.exitCode === null) serveChild.kill(); } catch { /* egal */ } }
 
 function hasWinget() {
   return new Promise((resolve) => {
@@ -89,7 +104,15 @@ function hasWinget() {
 }
 
 // Installation ueber winget (offizielles Paket Ollama.Ollama). onLine bekommt Ausgabezeilen.
+// Laeuft die Ollama-Desktop-App (Tray)? Der Installer startet sie sonst ungefragt.
+function desktopAppRunning() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(false);
+    execFile('tasklist', ['/FI', 'IMAGENAME eq ollama app.exe', '/NH'], { windowsHide: true, timeout: 8000 }, (err, out) => resolve(!err && /ollama app.exe/i.test(out || '')));
+  });
+}
 async function install(onLine = () => {}) {
+  const appWasRunning = await desktopAppRunning();
   if (!(await hasWinget())) return { ok: false, fallback: DOWNLOAD_URL, error: 'winget ist nicht verfügbar – bitte Ollama von der offiziellen Seite installieren.' };
   return new Promise((resolve) => {
     const args = ['install', '--id', 'Ollama.Ollama', '-e', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'];
@@ -100,7 +123,11 @@ async function install(onLine = () => {}) {
     child.on('error', (e) => resolve({ ok: false, fallback: DOWNLOAD_URL, error: e.message }));
     child.on('close', (code) => {
       // Ollama liegt danach unter %LOCALAPPDATA%; der PATH dieses Prozesses kennt es evtl. noch nicht.
-      if (code === 0 || findBinary()) resolve({ ok: true });
+      if (code === 0 || findBinary()) {
+        // Vom Installer gestartete Desktop-App wieder schliessen – Vigil nutzt nur den Hintergrunddienst.
+        if (!appWasRunning && process.platform === 'win32') execFile('taskkill', ['/IM', 'ollama app.exe', '/F'], { windowsHide: true }, () => resolve({ ok: true }));
+        else resolve({ ok: true });
+      }
       else resolve({ ok: false, fallback: DOWNLOAD_URL, error: `Installation fehlgeschlagen (winget-Code ${code}).` });
     });
   });
@@ -144,4 +171,4 @@ async function remove(base, model) {
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
-module.exports = { RECOMMENDED, DOWNLOAD_URL, status, start, install, pull, remove, findBinary };
+module.exports = { RECOMMENDED, DOWNLOAD_URL, status, start, stop, install, pull, remove, findBinary };

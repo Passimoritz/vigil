@@ -82,6 +82,16 @@
 
       <!-- Lokal -->
       <div id="localPane" class="pane">
+        <div class="local-sources">
+          <div class="ls-head"><b>Lokale KI auf diesem PC</b><button id="localScan" type="button" class="btn ghost tiny">Erneut suchen</button></div>
+          <div id="localSources" class="ls-list" role="radiogroup" aria-label="Lokale KI auswählen"></div>
+        </div>
+        <div id="localOtherRow" class="field" hidden>
+          <label for="localOtherModel">Modell</label>
+          <select id="localOtherModel"></select>
+          <p id="localOtherHint" class="muted small"></p>
+        </div>
+        <div id="ollamaBlock">
         <div id="ollamaStatus" class="status-card">
           <span class="dot" id="ollamaDot"></span>
           <div class="status-text"><b id="ollamaTitle">Prüfe Ollama …</b><span id="ollamaSub" class="muted small"></span></div>
@@ -109,6 +119,7 @@
         </div>
       </div>
 
+      </div>
       <!-- Cloud -->
       <div id="cloudPane" class="pane" hidden>
         <div class="field">
@@ -143,6 +154,8 @@
       </button>
       <button id="cancelBtn" class="btn big" hidden>Abbrechen</button>
       <p class="muted small" id="runHint" aria-live="polite"></p>
+      <div id="estimateCard" class="estimate" hidden aria-live="polite"></div>
+      <p class="kbd-hint muted small"><kbd>Strg</kbd> + <kbd>Enter</kbd> startet · <kbd>Strg</kbd> + <kbd>K</kbd> sucht · <kbd>Strg</kbd> + <kbd>,</kbd> Einstellungen</p>
     </section>
 
     </aside>
@@ -279,6 +292,16 @@
    </div>
   </main>
 
+  <footer id="statusBar" class="statusbar" aria-label="Status">
+    <span class="sb-item"><span class="dot ok"></span><span id="sbAi">–</span></span>
+    <span class="sb-item" id="sbTargets"></span>
+    <span class="sb-item" id="sbMode"></span>
+    <span class="sb-spacer"></span>
+    <span class="sb-item" id="sbIntel"></span>
+    <span class="sb-item muted">Vigil <span id="sbVersion">0.2.0</span></span>
+  </footer>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
   <!-- Einstellungen -->
   <div id="historyOverlay" class="overlay" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
@@ -322,6 +345,8 @@
             <option value="thorough">Gründlich – 5 fokussierte Durchgänge (empfohlen)</option>
             <option value="standard">Schnell – 1 Durchgang</option>
           </select>
+          <label class="cost-limit">Nachfragen, wenn ein Cloud-Lauf mehr kostet als
+            <input id="costWarnInput" type="number" min="0" step="0.5" /> $</label>
         </div>
         <div class="set-block">
           <h3>Belastbarkeit &amp; Datenschutz <span class="infotip" tabindex="0" role="note" data-tip="Zwei-Stufen-Prinzip: Deterministische Prüfungen (Muster, Schwachstellen-DB, externe Tools) bilden die Basis. Jeden Befund, den nur die KI gemeldet hat, versucht ein zweiter KI-Schritt am konkreten Code-Ausschnitt zu widerlegen – widerlegte Funde werden verworfen, unsichere als ‚unbestätigt' markiert.">i</span></h3>

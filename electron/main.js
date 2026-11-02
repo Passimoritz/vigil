@@ -8,7 +8,7 @@ const crypto = require('crypto');
 // .env aus dem Projektordner laden (Schluessel-Fallback).
 try { require('dotenv').config({ path: path.join(__dirname, '..', '.env') }); } catch { /* optional */ }
 
-const { runAudit, report, ruleNames, PROVIDERS, pingProvider, fetchModels } = require('../src/core');
+const { runAudit, estimateAudit, report, ruleNames, PROVIDERS, pingProvider, fetchModels } = require('../src/core');
 const { enforceScope, normalizeAllowlist } = require('../src/core/scope');
 const { check, ScanRequestSchema, StatusUpdateSchema } = require('../src/core/validation');
 const { createOrchestrator } = require('./orchestrator');
@@ -206,7 +206,17 @@ async function applyApi(cfg) {
   return { ...r, running: r.ok };
 }
 
+// Nur eine Instanz: ein zweiter Start holt das vorhandene Fenster nach vorn.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.quit();
+app.on('second-instance', () => {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.focus();
+});
+
 app.whenReady().then(() => {
+  if (!gotLock) return;
   const cfg = loadConfig();
   applyProxySafe(cfg);
   orchestrator = createOrchestrator({
@@ -226,6 +236,7 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('will-quit', () => { ollama.stop(); }); // nur den von Vigil gestarteten Dienst beenden
 
 // --- IPC ----------------------------------------------------------------
 ipcMain.handle('meta:providers', () => {
@@ -300,6 +311,19 @@ ipcMain.handle('audit:run', async (e, payload) => {
 
 ipcMain.handle('audit:cancel', () => ({ ok: orchestrator.cancel() }));
 
+// Kosten-/Token-Vorschau: aktueller Modus + Vergleich mit dem jeweils anderen Modus.
+ipcMain.handle('audit:estimate', async (_e, payload) => {
+  const v = check(ScanRequestSchema, payload);
+  if (!v.ok) return { ok: false, error: v.error };
+  const cfg = loadConfig();
+  const eff = effectiveConfig(cfg, v.data.providerId || cfg.selected);
+  try {
+    const current = await estimateAudit(v.data.targets, eff);
+    const other = await estimateAudit(v.data.targets, { ...eff, analysisDepth: eff.analysisDepth === 'thorough' ? 'standard' : 'thorough' });
+    return { ok: true, current, other, model: eff.model, provider: eff.provider };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 // --- Befund-Lebenszyklus & Uebersicht ------------------------------------
 ipcMain.handle('finding:setStatus', (_e, id, body) => {
   const v = check(StatusUpdateSchema, body);
@@ -360,6 +384,7 @@ ipcMain.handle('api:regenerateToken', () => { const c = loadConfig(); c.apiToken
 const ollamaBase = () => effectiveConfig(loadConfig(), 'ollama').baseUrl;
 let pullAbort = null;
 ipcMain.handle('ollama:status', () => ollama.status(ollamaBase()));
+ipcMain.handle('localai:detect', () => require('./localai').detectLocalAi());
 ipcMain.handle('ollama:recommended', () => ollama.RECOMMENDED);
 ipcMain.handle('ollama:start', () => ollama.start(ollamaBase()));
 ipcMain.handle('ollama:install', async (e) => {

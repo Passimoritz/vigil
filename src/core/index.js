@@ -172,4 +172,12 @@ async function runAudit(targets, config, onProgress = () => {}) {
   return { result, ingest: ing, prescan: pre };
 }
 
-module.exports = { runAudit, report, fingerprint, atOrAbove, ruleNames, PROVIDERS, callProvider, pingProvider, fetchModels };
+// Kosten-/Token-Vorschau vor dem Start: liest die Dateien ein (ohne Netz/KI) und rechnet hoch.
+async function estimateAudit(targets, config) {
+  const { estimateRun } = require('./analyze');
+  const ing = await ingestTargets(targets.filter((t) => t.type === 'path'), () => {});
+  const pre = prescan(ing.units, { customSecrets: config.customRules, disabledRules: config.disabledRules });
+  return { ...estimateRun({ units: ing.units, facts: pre.facts, config }), files: ing.units.length, truncated: ing.notes.some((n) => /Limit|uebersprungen|Uebersprungen/i.test(n)) };
+}
+
+module.exports = { runAudit, estimateAudit, report, fingerprint, atOrAbove, ruleNames, PROVIDERS, callProvider, pingProvider, fetchModels };

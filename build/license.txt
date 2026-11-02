@@ -1,0 +1,18 @@
+﻿Vigil – Lizenz (MIT)
+
+Copyright (c) 2026 Passimoritz
+
+Hiermit wird jeder Person, die eine Kopie dieser Software und der zugehörigen
+Dokumentation erhält, kostenlos die Erlaubnis erteilt, die Software ohne
+Einschränkung zu nutzen, zu kopieren, zu verändern, zusammenzuführen, zu
+veröffentlichen, zu verbreiten, zu unterlizenzieren und/oder zu verkaufen,
+unter der Bedingung, dass der obige Urheberrechtshinweis und dieser
+Erlaubnishinweis in allen Kopien oder wesentlichen Teilen enthalten sind.
+
+DIE SOFTWARE WIRD OHNE JEDE AUSDRÜCKLICHE ODER STILLSCHWEIGENDE GEWÄHRLEISTUNG
+BEREITGESTELLT. IN KEINEM FALL HAFTEN DIE AUTOREN FÜR ANSPRÜCHE, SCHÄDEN ODER
+SONSTIGE VERPFLICHTUNGEN AUS DER NUTZUNG DER SOFTWARE.
+
+Wichtiger Hinweis zur Nutzung:
+Vigil ist ein defensives Prüfwerkzeug. Prüfe ausschließlich eigene Systeme oder
+solche, für die du eine ausdrückliche Erlaubnis hast.
