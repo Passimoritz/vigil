@@ -196,6 +196,9 @@ function applyRun(store, run) {
     resolvedNow.push({ id: rec.id, title: rec.title, location: rec.location, severity: rec.severity });
   }
   const toxic = annotated.filter((f) => f.toxic && !HIDDEN.has(f.status)).length;
+  // Verlauf ueber die Zeit: Stand nach jedem Lauf (fuer Grafiken in der Uebersicht)
+  const s = stats(store);
+  store.trend = [...(store.trend || []), { at: now, open: s.openTotal, critical: s.open.critical, high: s.open.high, posture: s.posture, created: counters.created, resolved: counters.resolved }].slice(-200);
   return { findings: annotated, counters: { ...counters, toxic }, resolved: resolvedNow, targetIds: runTargets.map((t) => t.id) };
 }
 
@@ -292,7 +295,13 @@ function stats(store) {
   const penalty = open.critical * 12 + open.high * 6 + open.medium * 2 + open.low * 0.5 + toxic.length * 15 + kev * 8;
   const posture = Math.max(0, Math.round(100 - penalty));
   const newSinceBaseline = active.filter((f) => !f.isBaselineLegacy).length;
-  return { open, openTotal: Object.values(open).reduce((a, b) => a + b, 0), byStatus, targets, runs: store.runs.slice(0, 20), toxic, kev, posture, newSinceBaseline, sbomTargets: Object.keys(store.sboms || {}).length };
+  // Behebungszeit: Durchschnitt (Tage) von "zuerst gesehen" bis "behoben"
+  const resolved = Object.values(store.findings).filter((f) => f.status === 'RESOLVED' && f.resolvedAt && f.firstSeenAt);
+  const days = resolved.map((f) => (Date.parse(f.resolvedAt) - Date.parse(f.firstSeenAt)) / 864e5).filter((d) => d >= 0);
+  const mttrDays = days.length ? Math.round((days.reduce((a, b) => a + b, 0) / days.length) * 10) / 10 : null;
+  const since = Date.now() - 30 * 864e5;
+  const last30 = { resolved: resolved.filter((f) => Date.parse(f.resolvedAt) >= since).length, created: Object.values(store.findings).filter((f) => Date.parse(f.firstSeenAt) >= since).length };
+  return { trend: (store.trend || []).slice(-60), mttrDays, last30, open, openTotal: Object.values(open).reduce((a, b) => a + b, 0), byStatus, targets, runs: store.runs.slice(0, 20), toxic, kev, posture, newSinceBaseline, sbomTargets: Object.keys(store.sboms || {}).length };
 }
 
 // --- Laeufe -------------------------------------------------------------------

@@ -808,6 +808,30 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('datenfluss: Platzhalter im SQL → keine Meldung', safe.length === 0);
   }
 
+  // --- Einordnung (CWE/OWASP), Normen-Nachweise, Kurzbericht ---
+  {
+    const { applyTaxonomy, complianceReport } = require('../src/core/taxonomy');
+    const rep = require('../src/core/report');
+    const fs0 = [
+      { ruleId: 'php-sql-concat', category: 'Injection', severity: 'critical', title: 'Eingabe landet direkt im SQL-Befehl (PHP)', location: 'a.php:1', impact: 'Datenbank auslesbar.', steps: ['Prepared Statements verwenden.'] },
+      { ruleId: 'CVE-2022-23529', category: 'Dependencies', severity: 'high', title: 'Verwundbare Abhaengigkeit: jsonwebtoken', location: 'npm' },
+      { ruleId: 'missing-hsts', category: 'Transport', severity: 'low', title: 'HSTS fehlt', location: 'https://x' },
+    ];
+    const t = applyTaxonomy(fs0);
+    check('einordnung: SQL → CWE-89 / OWASP A03, Paket → A06, HSTS → A02', t[0].cwe === 'CWE-89' && t[0].owasp === 'A03' && t[1].owasp === 'A06' && t[2].owasp === 'A02');
+    const comp = complianceReport(t);
+    const iso = comp.find((c) => c.key === 'iso27001');
+    check('normen: ISO A.8.28 dringend, A.8.8 offen, Lizenz-Kontrolle grün', iso.controls.find((c) => c.id === 'A.8.28').status === 'fail' && iso.controls.find((c) => c.id === 'A.8.8').status === 'fail' && iso.controls.find((c) => c.id === 'A.5.32').status === 'ok');
+    check('normen: vier Kataloge (ISO 27001, BSI, NIS2, DSGVO)', comp.map((c) => c.key).join() === 'iso27001,bsi,nis2,dsgvo');
+    const html = rep.toHtml({ findings: t, summary: { total: 3, counts: { critical: 1, high: 1, medium: 0, low: 1, info: 0 } }, meta: {}, errors: [] });
+    check('bericht: CWE, OWASP und Normen-Kapitel enthalten', /CWE-89/.test(html) && /A03:2021/.test(html) && /Nachweise für Normen/.test(html));
+    const ex = rep.toExecutive({ findings: t, meta: { at: '2026-11-02T10:00:00Z' } }, { company: 'Muster GmbH', logoDataUrl: 'data:image/png;base64,AAAA', trend: [{ open: 9 }, { open: 5 }, { open: 3 }] });
+    check('kurzbericht: Firma, Logo, Note, Risiken, Schritte, Verlauf', /Muster GmbH/.test(ex) && /<img src="data:image\/png/.test(ex) && /Sicherheitswert/.test(ex) && /Prepared Statements/.test(ex) && /<polyline/.test(ex));
+    check('kurzbericht: fremdes Logo-Format wird nicht eingebettet', !/<img/.test(rep.toExecutive({ findings: [] }, { logoDataUrl: 'javascript:alert(1)' })));
+    const sarif = JSON.parse(rep.toSarif({ findings: t }));
+    check('sarif: CWE- und OWASP-Tags', sarif.runs[0].results[0].properties.tags.includes('CWE-89') && sarif.runs[0].results[0].properties.tags.includes('OWASP-A03'));
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

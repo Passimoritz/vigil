@@ -81,8 +81,16 @@ function recordHistory(result, targets) {
 }
 
 // Report als PDF schreiben: HTML-Report in einem unsichtbaren Fenster drucken.
-async function saveReportPdf(outPath) {
-  const html = report.toHtml(lastResult);
+// Kurzbericht fuer die Geschaeftsfuehrung: Logo/Firma aus den Einstellungen, Verlauf aus den Laeufen
+function executiveHtml() {
+  const c = loadConfig();
+  const st = orchestrator.stats();
+  const trend = st.trend || [];
+  return report.toExecutive(lastResult, { logoDataUrl: c.reportLogo || '', company: c.reportCompany || '', posture: st.posture, trend });
+}
+
+async function saveReportPdf(outPath, kind) {
+  const html = kind === 'exec' ? executiveHtml() : report.toHtml(lastResult);
   const tmp = path.join(app.getPath('temp'), `vigil-report-${Date.now()}.html`);
   fs.writeFileSync(tmp, html, 'utf8');
   const w = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } });
@@ -462,18 +470,19 @@ ipcMain.handle('meta:rules', () => ruleNames());
 
 ipcMain.handle('report:save', async (_e, { format }) => {
   if (!lastResult) return { ok: false, error: 'Noch kein Ergebnis vorhanden.' };
-  const ext = format === 'md' ? 'md' : format === 'sarif' ? 'sarif' : format === 'pdf' ? 'pdf' : format === 'json' ? 'json' : 'html';
+  const exec = format === 'exec' || format === 'execpdf';
+  const ext = format === 'md' ? 'md' : format === 'sarif' ? 'sarif' : format === 'pdf' || format === 'execpdf' ? 'pdf' : format === 'json' ? 'json' : 'html';
   const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
   const r = await dialog.showSaveDialog(win, {
-    defaultPath: path.join(app.getPath('documents'), `vigil-report-${stamp}.${ext}`),
+    defaultPath: path.join(app.getPath('documents'), `vigil-${exec ? 'kurzbericht' : 'report'}-${stamp}.${ext}`),
     filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
   });
   if (r.canceled) return { ok: false, canceled: true };
   if (ext === 'pdf') {
-    try { await saveReportPdf(r.filePath); return { ok: true, path: r.filePath }; }
+    try { await saveReportPdf(r.filePath, exec ? 'exec' : 'full'); return { ok: true, path: r.filePath }; }
     catch (err) { return { ok: false, error: err.message }; }
   }
-  const content = ext === 'md' ? report.toMarkdown(lastResult)
+  const content = exec ? executiveHtml() : ext === 'md' ? report.toMarkdown(lastResult)
     : ext === 'sarif' ? report.toSarif(lastResult) : ext === 'json' ? report.toJson(lastResult, orchestrator.stats()) : report.toHtml(lastResult);
   try { fs.writeFileSync(r.filePath, content, 'utf8'); return { ok: true, path: r.filePath }; }
   catch (err) { return { ok: false, error: err.message }; }

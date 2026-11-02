@@ -621,6 +621,9 @@ function findingRow(f, key) {
 }
 
 // Volle Detailansicht eines Befunds (rechts).
+const OWASP_LABEL = { A01: 'Fehlerhafte Zugriffskontrolle', A02: 'Kryptografische Fehler', A03: 'Injection', A04: 'Unsicheres Design', A05: 'Fehlkonfiguration', A06: 'Veraltete und verwundbare Komponenten', A07: 'Fehler bei Anmeldung', A08: 'Fehlende Integrität von Software und Daten', A09: 'Unzureichendes Protokollieren', A10: 'Server-Side Request Forgery' };
+const REACH_LABEL = { used: 'Paket wird genutzt', 'function-used': 'betroffene Funktion wird aufgerufen', 'function-unused': 'betroffene Funktion ungenutzt', unused: 'Paket ungenutzt', transitive: 'nur indirekt enthalten' };
+const REACH_HELP = { 'function-used': 'Die Lücke ist sehr wahrscheinlich erreichbar.', 'function-unused': 'Risiko deutlich geringer – trotzdem aktualisieren.', unused: 'Am einfachsten: Paket entfernen.', transitive: 'Kommt über ein anderes Paket mit.' };
 function findingDetail(f) {
   const srcs = findingSources(f);
   const srcNames = srcs.map(sourceLabel).join(', ');
@@ -635,6 +638,10 @@ function findingDetail(f) {
     f.isNew && state.lastResult && state.lastResult.hasBaseline ? '<span class="chip badge-new">neu</span>' : '',
     f.regression ? '<span class="chip badge-reg" title="War als behoben markiert und ist wieder da">wieder da</span>' : '',
     `<span class="chip">${esc(CATEGORY_LABEL[f.category] || f.category)}</span>`,
+    f.owasp ? `<span class="chip" title="${esc(OWASP_LABEL[f.owasp] || f.owasp)} – Einordnung nach OWASP Top 10">OWASP ${esc(f.owasp)}</span>` : '',
+    f.cwe ? `<span class="chip" title="Schwachstellen-Typ nach der CWE-Liste">${esc(f.cwe)}</span>` : '',
+    f.reach ? `<span class="chip reach-${esc(f.reach)}" title="${esc(REACH_HELP[f.reach] || '')}">${esc(REACH_LABEL[f.reach] || f.reach)}</span>` : '',
+    f.consensus === 'both' ? '<span class="chip ev-multi" title="Beide KI-Modelle haben diesen Befund unabhängig gefunden">von 2 Modellen bestätigt</span>' : '',
   ].filter(Boolean).join('');
   const ctx = (f.context || []).filter((c) => CONTEXT[c]);
   const danger = [f.impact, f.reachability].filter(Boolean).join(' ');
@@ -1206,6 +1213,7 @@ async function loadDashboard() {
   $('dashToggles').querySelectorAll('.fbtn').forEach((b) => b.classList.toggle('active', !!dash[b.dataset.t]));
   renderDashTargets(stats.targets);
   renderDashRuns(stats.runs);
+  renderDashTrend(stats);
   renderDashTable(findings, stats.targets);
 }
 
@@ -1263,6 +1271,34 @@ function renderDashTargets(targets) {
     if ($('runBtn').disabled) { flash($('runHint').textContent || 'Ziel übernommen – wähle eine KI und starte.'); return; }
     runAudit();
   });
+}
+
+// Entwicklung ueber die Zeit: Sicherheitswert und offene Befunde je Lauf, dazu Behebungszeit
+function renderDashTrend(stats) {
+  const tr = stats.trend || [];
+  const k = stats.last30 || { created: 0, resolved: 0 };
+  $('dashTrendKpis').innerHTML = `
+    <div><span class="kpi-n">${stats.mttrDays != null ? String(stats.mttrDays).replace('.', ',') : '–'}</span><span class="kpi-l">Tage bis zur Behebung (Ø)</span></div>
+    <div><span class="kpi-n">${k.resolved}</span><span class="kpi-l">behoben (30 Tage)</span></div>
+    <div><span class="kpi-n">${k.created}</span><span class="kpi-l">neu gefunden (30 Tage)</span></div>
+    <div><span class="kpi-n">${tr.length >= 2 ? (tr[tr.length - 1].posture - tr[0].posture >= 0 ? '+' : '') + (tr[tr.length - 1].posture - tr[0].posture) : '–'}</span><span class="kpi-l">Sicherheitswert seit erstem Lauf</span></div>`;
+  const box = $('dashTrend');
+  if (tr.length < 2) { box.innerHTML = '<p class="muted small">Die Grafik erscheint ab dem zweiten Lauf.</p>'; $('dashTrendNote').textContent = ''; return; }
+  $('dashTrendNote').textContent = `letzte ${tr.length} Läufe`;
+  const W = 640, H = 150, P = 26;
+  const maxOpen = Math.max(1, ...tr.map((t) => t.open));
+  const x = (i) => P + (i / (tr.length - 1)) * (W - 2 * P);
+  const yP = (v) => H - P - (v / 100) * (H - 2 * P);
+  const yO = (v) => H - P - (v / maxOpen) * (H - 2 * P);
+  const line = (fn, key) => tr.map((t, i) => `${x(i).toFixed(1)},${fn(t[key]).toFixed(1)}`).join(' ');
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Sicherheitswert und offene Befunde im Verlauf">
+    ${[0, 50, 100].map((v) => `<line x1="${P}" x2="${W - P}" y1="${yP(v)}" y2="${yP(v)}" class="tr-grid"/><text x="4" y="${yP(v) + 4}" class="tr-ax">${v}</text>`).join('')}
+    <polyline points="${line(yO, 'open')}" class="tr-open"/>
+    <polyline points="${line(yP, 'posture')}" class="tr-post"/>
+    ${tr.map((t, i) => `<circle cx="${x(i).toFixed(1)}" cy="${yP(t.posture).toFixed(1)}" r="3" class="tr-dot"><title>${esc(fmtDate(t.at))}: Sicherheitswert ${t.posture}, ${t.open} offen (${t.created} neu, ${t.resolved} behoben)</title></circle>`).join('')}
+    <text x="${P}" y="${H - 6}" class="tr-ax">${esc(fmtDate(tr[0].at))}</text><text x="${W - P}" y="${H - 6}" class="tr-ax" text-anchor="end">${esc(fmtDate(tr[tr.length - 1].at))}</text>
+  </svg>
+  <div class="tr-legend"><span><i class="lg-post"></i>Sicherheitswert (0–100)</span><span><i class="lg-open"></i>offene Befunde (max. ${maxOpen})</span></div>`;
 }
 
 function renderDashRuns(runs) {
@@ -1333,6 +1369,11 @@ function closeDashDetail() {
 }
 
 // --- Einstellungen ------------------------------------------------------
+function renderReportLogo() {
+  const has = /^data:image\//.test(state.config.reportLogo || '');
+  $('reportLogoPreview').hidden = !has; $('reportLogoClear').hidden = !has;
+  if (has) $('reportLogoPreview').src = state.config.reportLogo;
+}
 function tempText(v) {
   if (v <= 0.2) return 'Niedrig – genaue, nachvollziehbare Ergebnisse (empfohlen).';
   if (v <= 0.5) return 'Mittel – etwas freier formuliert.';
@@ -1353,6 +1394,8 @@ function renderSettings() {
   $('redactChk').checked = state.config.redactSecrets !== false;
   $('domChk').checked = state.config.domAudit !== false;
   $('costWarnInput').value = state.config.costWarnUsd ?? 2;
+  $('reportCompanyInput').value = state.config.reportCompany || '';
+  renderReportLogo();
   renderPresets();
   window.vigil.intelStatus().then((it) => { $('intelSettings').textContent = it.updatedAt ? `Stand ${fmtDate(it.updatedAt)} · ${it.kev} aktiv ausgenutzte CVEs · ${it.epss} EPSS-Werte` : 'Noch nicht geladen – wird automatisch täglich aktualisiert.'; }).catch(() => {});
   window.vigil.apiMatrixGet().then((list) => {
@@ -1574,6 +1617,17 @@ async function init() {
     }, 180);
   });
   $('exportJsonBtn').onclick = exportAs('json');
+  $('exportExecBtn').onclick = exportAs('execpdf');
+  $('reportCompanyInput').addEventListener('change', () => { state.config.reportCompany = $('reportCompanyInput').value.trim(); saveCfg(); });
+  $('reportLogoFile').addEventListener('change', () => {
+    const file = $('reportLogoFile').files[0];
+    if (!file) return;
+    if (file.size > 300 * 1024) { toast('Logo zu groß – höchstens 300 KB', 'err'); return; }
+    const rd = new FileReader();
+    rd.onload = () => { state.config.reportLogo = String(rd.result); saveCfg(); renderReportLogo(); toast('Logo gespeichert', 'ok'); };
+    rd.readAsDataURL(file);
+  });
+  $('reportLogoClear').onclick = () => { state.config.reportLogo = ''; saveCfg(); renderReportLogo(); };
   $('intelSyncBtn').onclick = async () => { $('intelSettings').textContent = 'Lade CISA KEV und EPSS …'; const r = await window.vigil.syncIntel(); $('intelSettings').textContent = r.ok ? (r.notes || []).join(' · ') || 'Aktuell.' : 'Fehler: ' + r.error; };
   $('apiRegen').onclick = async () => { await window.vigil.regenerateApiToken(); refreshApiInfo(); };
   $('apiCopy').onclick = async () => { try { await navigator.clipboard.writeText($('apiToken').value); $('apiStatus').textContent = 'Token kopiert.'; } catch { $('apiToken').select(); } };

@@ -275,6 +275,7 @@
             Exportieren
           </button>
           <div id="exportMenu" class="menu" role="menu" hidden>
+            <button id="exportExecBtn" role="menuitem"><b>Kurzbericht (PDF)</b><span>eine Seite für die Geschäftsführung</span></button>
             <button id="exportPdfBtn" role="menuitem"><b>PDF</b><span>zum Teilen und Archivieren</span></button>
             <button id="exportHtmlBtn" role="menuitem"><b>HTML</b><span>interaktiver Bericht</span></button>
             <button id="exportMdBtn" role="menuitem"><b>Markdown</b><span>für Tickets und Wikis</span></button>
@@ -385,6 +386,11 @@
       <section class="card">
         <header class="card-bar"><h2>Ziele</h2></header>
         <div id="dashTargets" class="tgt-list"></div>
+      </section>
+      <section class="card" id="dashTrendCard">
+        <header class="card-bar"><h2>Entwicklung</h2><span class="muted small" id="dashTrendNote"></span></header>
+        <div class="trend-kpis" id="dashTrendKpis"></div>
+        <div id="dashTrend" class="trend-chart"></div>
       </section>
       <section class="card">
         <header class="card-bar"><h2>Letzte Läufe</h2></header>
@@ -640,6 +646,19 @@
           </div>
           <p id="apiStatus" class="hint"></p>
           <pre id="apiExample" class="log mini"></pre>
+        </section>
+
+        <section class="card set-block" id="set-report">
+          <h2>Kurzbericht für die Geschäftsführung</h2>
+          <p class="hint">Eine Seite in Klartext: Lage, wichtigste Risiken, nächste Schritte und Normen auf einen Blick. Firmenname und Logo erscheinen im Kopf.</p>
+          <div class="set-row">
+            <div class="set-label"><b>Firmenname</b><span>Erscheint oben im Bericht.</span></div>
+            <input id="reportCompanyInput" type="text" class="set-input" placeholder="z. B. Muster GmbH" />
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Logo</b><span id="reportLogoInfo">PNG, JPG, SVG oder WebP, höchstens 300 KB.</span></div>
+            <span class="set-ctrl"><img id="reportLogoPreview" class="logo-preview" alt="" hidden /><button id="reportLogoClear" type="button" class="btn tiny ghost" hidden>Entfernen</button><label class="btn tiny">Logo wählen<input id="reportLogoFile" type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden /></label></span>
+          </div>
         </section>
 
         <section class="card set-block" id="set-data">

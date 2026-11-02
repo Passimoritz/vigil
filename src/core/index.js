@@ -26,7 +26,7 @@ function finalize(findings, targets, config, units = []) {
   // Verwundbare Pakete: wird das Paket bzw. die betroffene Funktion ueberhaupt benutzt?
   list = require('./reach').applyReachability(list, units);
   list = [...list, ...correlate(list)];
-  return sortFindings(list.map(enrichRemedy));
+  return sortFindings(require('./taxonomy').applyTaxonomy(list.map(enrichRemedy)));
 }
 
 // Hat ein Tool-Lauf wirklich stattgefunden? (Nur dann duerfen fehlende Befunde als behoben gelten.)
