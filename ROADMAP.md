@@ -1,119 +1,181 @@
 # Vigil – Roadmap
 
-Ziel: ein Analysetool, das **alles Eigene** prüfen kann – Code, Abhängigkeiten, Webseiten,
-Server, Container, Cloud – und dabei genau, nachvollziehbar, günstig und defensiv bleibt.
+Interaktive Fassung zum Abhaken: https://claude.ai/artifact/HEcYEefqB4xW9EvUsZdoqS
 
-Legende: `[x]` erledigt · `[ ]` offen · **P1** als Nächstes · **P2** danach · **P3** später
+Ziel: ein Analysetool, das alles Eigene prüft – Code, Pakete, Webseiten, Server, Container, Cloud – genau, verständlich und defensiv.
+
+## Schon erledigt
+
+Was Vigil heute bereits kann.
+
+- [x] **Zweistufige Prüfung: Regeln und Datenbanken plus KI mit Gegenprüfung**  
+  Feste Regeln finden Bekanntes sicher, die KI findet Logikfehler – und ein zweiter KI-Schritt sortiert Fehlalarme aus.
+- [x] **Keine doppelten Meldungen**  
+  Findet dasselbe Problem mehrere Werkzeuge, erscheint es nur einmal.
+- [x] **Lokale und Cloud-KI frei wählbar**  
+  Ollama, LM Studio und andere laufen kostenlos auf dem eigenen PC; Claude, OpenAI und Gemini für mehr Genauigkeit.
+- [x] **Kosten und Dauer vor dem Start sehen**  
+  Vorschau auf Tokens, Preis und Zeit, Kostenbremse und Live-Kosten während des Laufs.
+- [x] **Verlauf jedes Befunds**  
+  Offen, in Arbeit, behoben, Fehlalarm – Vigil erkennt selbst, was behoben wurde oder wiederkommt.
+- [x] **Schutz vor Prüfen fremder Ziele**  
+  Freigabeliste, ausdrückliche Bestätigung und Domain-Nachweis, bevor eine Webseite tiefer geprüft wird.
+- [x] **Echte Gefahrenlage einbezogen**  
+  Aktiv ausgenutzte Lücken (CISA) und Ausnutzungs-Wahrscheinlichkeit (EPSS) fließen in die Risikobewertung ein.
+- [x] **Angriffswege in Klartext**  
+  Zeigt, wenn mehrere kleine Schwächen zusammen einen echten Angriff ermöglichen – mit beteiligten Befunden zum Anklicken.
+- [x] **Neue Oberfläche und Installer**  
+  Seitenleiste, Liste mit Detailansicht, Radar-Animation, neues Icon und deutscher Installations-Assistent.
+
+## Vertrauen & Auslieferung
+
+Damit Vigil sich problemlos installieren und aktuell halten lässt.
+
+- [ ] **Installer und App digital signieren** · **Als Nächstes** · Aufwand mittel  
+  Windows blockiert unsignierte Programme (Smart App Control, SmartScreen). Mit Signatur lässt sich Vigil normal per Doppelklick installieren.
+- [ ] **Automatische Updates** · **Als Nächstes** · Aufwand mittel  
+  Neue Versionen kommen von selbst, mit Änderungsliste in der App und der Möglichkeit, zurückzugehen.
+- [ ] **Automatische Tests der Oberfläche** · Danach · Aufwand mittel  
+  Jeder Klickweg wird vor einer neuen Version automatisch durchgespielt, damit nichts unbemerkt kaputtgeht.
+- [ ] **Absturzberichte nur lokal** · Danach · Aufwand klein  
+  Bei einem Fehler legt Vigil einen Bericht auf dem PC ab, den man bei Bedarf weitergeben kann – ohne heimliche Datenübertragung.
+- [ ] **Nachprüfbare Versionen** · Danach · Aufwand mittel  
+  Jede Version kommt mit einer Liste aller enthaltenen Bausteine und lässt sich aus dem Quellcode identisch nachbauen.
+- [ ] **Version ohne Installation** · Später · Aufwand klein  
+  Vigil direkt vom USB-Stick oder aus einem Ordner starten.
+- [ ] **Vigil für macOS und Linux** · Später · Aufwand groß  
+  Dieselbe App auch auf Mac und Linux.
+
+## Genauer finden, weniger Fehlalarme
+
+Mehr echte Probleme erkennen und weniger Unnötiges melden.
+
+- [ ] **Prüfen, ob eine verwundbare Funktion überhaupt benutzt wird** · **Als Nächstes** · Aufwand groß  
+  Eine Lücke in einem Paket ist nur gefährlich, wenn der eigene Code die betroffene Stelle aufruft. Das streicht viele Fehlalarme.
+- [ ] **Datenflüsse über mehrere Dateien verfolgen** · Danach · Aufwand groß  
+  Erkennt, wenn eine Eingabe von außen über mehrere Schritte ungeprüft in Datenbank, Befehlszeile oder Webseite landet.
+- [ ] **Mehr Programmiersprachen** · Danach · Aufwand mittel  
+  Eigene Regeln auch für Go, Rust, C#, PHP, Kotlin und Swift.
+- [ ] **Server-Einrichtung als Code prüfen** · Danach · Aufwand mittel  
+  Fehler in Terraform, Kubernetes, Helm, CloudFormation und Ansible finden, bevor sie live gehen.
+- [ ] **Zugangsdaten in der gesamten Git-Historie finden** · Danach · Aufwand klein  
+  Auch Schlüssel, die längst gelöscht wurden, stehen oft noch in alten Versionen und sind dort weiter abrufbar.
+- [ ] **Lizenzen der genutzten Pakete prüfen** · Danach · Aufwand klein  
+  Warnt, wenn ein Paket eine Lizenz hat, die zum eigenen Projekt nicht passt.
+- [ ] **Cloud-Konten nur lesend prüfen** · Später · Aufwand groß  
+  Findet offene Speicher und zu weit gefasste Rechte in AWS, Azure und Google Cloud, ohne etwas zu ändern.
+- [ ] **Windows-PC nach Sicherheitsstandard prüfen** · Später · Aufwand mittel  
+  Prüft Virenschutz, Festplattenverschlüsselung, Firewall und Updates nach dem CIS-Leitfaden.
+- [ ] **Handy-Apps prüfen** · Später · Aufwand groß  
+  Untersucht Android- und iOS-Apps auf zu viele Berechtigungen und eingebaute Schlüssel.
+- [ ] **Laufende Docker-Container prüfen** · Später · Aufwand mittel  
+  Zeigt Container mit zu vielen Rechten, gefährlichen Freigaben oder offenen Ports – nur lesend.
+
+## KI: günstiger und hilfreicher
+
+Weniger Kosten, schnellere Läufe und Antworten auf Rückfragen.
+
+- [ ] **Nur Geändertes neu prüfen** · **Als Nächstes** · Aufwand mittel  
+  Vigil merkt sich die KI-Ergebnisse je Datei. Beim nächsten Lauf werden nur geänderte Dateien neu analysiert – das spart den Großteil der Kosten und Zeit.
+- [ ] **Wiederkehrende Anweisungen zwischenspeichern** · Danach · Aufwand klein  
+  Gleichbleibende Teile der KI-Anfrage werden beim Anbieter gespeichert und günstiger abgerechnet.
+- [ ] **Kleines Modell sortiert vor, großes prüft nach** · Danach · Aufwand mittel  
+  Ein günstiges Modell siebt Unauffälliges aus; nur Verdächtiges geht an das teure, genaue Modell.
+- [ ] **Rückfragen zu einem Befund stellen** · Danach · Aufwand mittel  
+  Direkt in der Detailansicht fragen, z. B. „Ist das bei mir wirklich ausnutzbar?“ – mit dem passenden Code als Kontext.
+- [ ] **Aus Fehlalarmen lernen** · Danach · Aufwand klein  
+  Was als Fehlalarm markiert wurde, meldet Vigil beim nächsten Mal nicht erneut.
+- [ ] **Zwei Modelle gegeneinander prüfen lassen** · Später · Aufwand mittel  
+  Nur was beide Modelle finden, gilt als sicher – das senkt Fehlalarme weiter.
+- [ ] **Trefferquote messen** · Später · Aufwand mittel  
+  Regelmäßige Testläufe gegen absichtlich unsichere Übungsprojekte zeigen, wie gut jedes Modell wirklich findet.
+
+## Beheben statt nur finden
+
+Vom Befund zur fertigen Korrektur.
+
+- [ ] **Korrektur mit einem Klick anwenden** · **Als Nächstes** · Aufwand groß  
+  Vigil zeigt die Änderung Zeile für Zeile, legt sie in einem eigenen Git-Zweig an und lässt danach die Tests laufen.
+- [ ] **Alle sicheren Paket-Updates auf einmal** · Danach · Aufwand mittel  
+  Kleinere Updates ohne Risiko für Brüche werden gesammelt eingespielt.
+- [ ] **Nur die behobenen Stellen nachprüfen** · Danach · Aufwand klein  
+  Nach einer Korrektur prüft Vigil gezielt nur die betroffenen Befunde – in Sekunden statt Minuten.
+- [ ] **Fristen je Dringlichkeit** · Später · Aufwand klein  
+  Kritisches muss in wenigen Tagen behoben sein, Kleineres in Wochen – Vigil erinnert rechtzeitig.
+
+## Arbeitsabläufe & Anbindungen
+
+Vigil dort einsetzen, wo ohnehin gearbeitet wird.
+
+- [ ] **Geplante Prüfungen mit Benachrichtigung** · **Als Nächstes** · Aufwand mittel  
+  Täglich oder wöchentlich automatisch prüfen und per E-Mail, Slack, Teams oder Webhook melden, wenn etwas Neues und Kritisches auftaucht.
+- [ ] **Prüfung bei jeder Code-Änderung** · Danach · Aufwand mittel  
+  Fertige Vorlagen für GitHub und GitLab: Vigil prüft jeden Push und stoppt, wenn etwas Kritisches dazukommt.
+- [ ] **Zugangsdaten schon vor dem Speichern abfangen** · Danach · Aufwand klein  
+  Ein Haken in Git verhindert, dass Schlüssel überhaupt erst ins Repository gelangen.
+- [ ] **Aufgaben direkt anlegen** · Danach · Aufwand mittel  
+  Befunde mit Lösung und Fundstelle als Aufgabe in GitHub, GitLab oder Jira übernehmen.
+- [ ] **Befunde direkt im Code-Editor** · Später · Aufwand groß  
+  Eine Erweiterung für VS Code markiert betroffene Zeilen und öffnet Details in Vigil.
+- [ ] **Vigil als reiner Prüf-Server** · Später · Aufwand mittel  
+  Ein Docker-Abbild, das Prüfungen ohne Oberfläche ausführt, etwa für Build-Server.
+
+## Berichte & Nachweise
+
+Ergebnisse für Chef, Kunden oder Prüfer aufbereiten.
+
+- [ ] **Zuordnung zu bekannten Sicherheitslisten** · Danach · Aufwand klein  
+  Jeder Befund zeigt, zu welchem Punkt der OWASP Top 10 und der CWE-Liste er gehört – Prüfer erwarten das.
+- [ ] **Entwicklung über die Zeit** · Danach · Aufwand mittel  
+  Grafiken zeigen, ob der Sicherheitswert steigt, wie viele Befunde offen sind und wie schnell behoben wird.
+- [ ] **Prüfkataloge für Normen** · Später · Aufwand groß  
+  Technische Nachweise für ISO 27001, BSI IT-Grundschutz, NIS2 und DSGVO.
+- [ ] **Bericht für die Geschäftsführung** · Später · Aufwand klein  
+  Eine Seite in Klartext mit eigenem Logo: Lage, Risiken, nächste Schritte.
+
+## Bedienung
+
+Schneller ans Ziel, auch ohne Vorwissen.
+
+- [ ] **Begleitung beim ersten Start** · Danach · Aufwand mittel  
+  Ein kurzer Assistent hilft bei der KI-Wahl, dem ersten Projekt und zeigt einen Beispiel-Lauf.
+- [ ] **Alles per Tastatur** · Danach · Aufwand klein  
+  Mit Strg+K jede Aktion suchen und ausführen.
+- [ ] **Betroffenen Code direkt anzeigen** · Danach · Aufwand mittel  
+  In der Detailansicht die markierte Zeile mit etwas Umgebung sehen, ohne den Editor zu öffnen.
+- [ ] **Befunde anders sortieren** · Danach · Aufwand klein  
+  Nach Datei, Art des Problems oder Ziel gruppieren statt nur nach Dringlichkeit.
+- [ ] **Hell/Dunkel und Schriftgröße wählbar** · Später · Aufwand klein  
+  Unabhängig von der Windows-Einstellung umschalten und die Schrift größer stellen.
+- [ ] **Englische Oberfläche** · Später · Aufwand mittel  
+  Vigil auch auf Englisch nutzen.
+- [ ] **Barrierefreiheit prüfen** · Später · Aufwand mittel  
+  Bedienung mit Bildschirmleser, nur mit Tastatur und mit ausreichenden Kontrasten sicherstellen.
+
+## Arbeiten im Team
+
+Für mehrere Personen und Rechner.
+
+- [ ] **Gemeinsamer Datenbestand** · Später · Aufwand groß  
+  Mehrere Rechner teilen sich Befunde und Verlauf über einen zentralen Server.
+- [ ] **Benutzer, Rollen und Firmen-Anmeldung** · Später · Aufwand groß  
+  Wer darf prüfen, wer nur lesen – mit Anmeldung über das Firmenkonto (SSO).
+- [ ] **Lückenloses Änderungsprotokoll** · Später · Aufwand mittel  
+  Wer hat wann welchen Befund als behoben oder Fehlalarm markiert – nachträglich nicht veränderbar.
+
+## Sicherheit von Vigil selbst
+
+Ein Sicherheitswerkzeug muss selbst besonders sicher sein.
+
+- [ ] **Fremde Werkzeuge abgeschottet ausführen** · Danach · Aufwand mittel  
+  Zusatzprogramme wie trivy oder semgrep laufen mit möglichst wenig Rechten, damit ein Fehler in ihnen nicht den PC gefährdet.
+- [ ] **Heruntergeladene Daten auf Echtheit prüfen** · Danach · Aufwand klein  
+  Zusatzprogramme und Gefahren-Listen werden vor der Nutzung über Prüfsummen und Signaturen kontrolliert.
+- [ ] **Eigene Schwachstellen systematisch suchen** · Danach · Aufwand klein  
+  Ein dokumentiertes Bedrohungsmodell und regelmäßige Prüfläufe von Vigil gegen sich selbst.
+- [ ] **Externe Sicherheitsprüfung** · Später · Aufwand mittel  
+  Vor einer öffentlichen Version prüfen unabhängige Fachleute Vigil.
 
 ---
 
-## Als Nächstes (Top 6)
-
-1. [ ] **P1** Code-Signing für Installer und App, damit Windows Smart App Control und SmartScreen nicht mehr blockieren (SignPath.io für Open Source oder Azure Trusted Signing)
-2. [ ] **P1** Inkrementelle Scans: KI-Ergebnisse je Datei-Hash zwischenspeichern, nur geänderte Dateien neu analysieren (spart bei Folge-Scans den Großteil der Kosten und Zeit)
-3. [ ] **P1** Auto-Update mit `electron-updater` (signierte Updates, Änderungsprotokoll in der App)
-4. [ ] **P1** Erreichbarkeits-Analyse für Abhängigkeiten: Wird die verwundbare Funktion überhaupt aufgerufen? Senkt Fehlalarme deutlich
-5. [ ] **P2** „Fix anwenden“: Patch als Diff zeigen, in eigenem Git-Branch anwenden, Tests laufen lassen
-6. [ ] **P2** Geplante Scans (täglich/wöchentlich) mit Benachrichtigung bei neuen kritischen Befunden
-
----
-
-## 1. Bereits erledigt
-
-- [x] Zwei-Stufen-Analyse: Regeln und Datenbanken plus KI mit Gegenprüfung
-- [x] Duplikat-Erkennung über alle Quellen
-- [x] Lokale KI (Ollama, LM Studio, Jan, GPT4All, llama.cpp …) und Cloud (Claude, OpenAI, Gemini, kompatible)
-- [x] Kosten-, Token- und Zeitvorschau vor dem Start, Kostenbremse, Live-Kosten während des Laufs
-- [x] Befund-Lebenszyklus (offen, in Arbeit, behoben, Fehlalarm, akzeptiert) mit Auto-Behoben und Wiederkehr-Erkennung
-- [x] Scope-Schutz: Freigabeliste, Bestätigung, Domain-Verifizierung, WAF-Backoff
-- [x] Threat-Intel: CISA KEV und EPSS, Kontext-Risiko 0–100, Angriffspfade
-- [x] SBOM-Paketsuche, Baseline, REST-API, Exporte (PDF, HTML, Markdown, SARIF, JSON)
-- [x] Lösungen mit Schritten, Versions-Patches, Code-Schnipseln, Links (heise, Videos, NVD/OSV)
-- [x] Neue Oberfläche: Seitenleiste, Liste mit Detailansicht, Radar-Animation, neues App-Icon
-- [x] Installer-Assistent (Deutsch, Lizenz, Ordnerwahl), Einzelinstanz
-
----
-
-## 2. Vertrauen & Auslieferung
-
-- [ ] **P1** Code-Signing (siehe oben)
-- [ ] **P1** Auto-Update mit Rollback
-- [ ] **P2** End-to-End-Tests der Oberfläche (Playwright für Electron) in CI
-- [ ] **P2** Lokale Absturzberichte (ohne Telemetrie, nur auf Wunsch exportierbar)
-- [ ] **P2** Reproduzierbare Builds und eigene SBOM von Vigil im Release
-- [ ] **P3** Portable Version (ohne Installation, z. B. für USB-Stick)
-- [ ] **P3** macOS- und Linux-Builds (dmg, AppImage, deb)
-
-## 3. Analyse-Tiefe: mehr finden, weniger Fehlalarme
-
-- [ ] **P1** Erreichbarkeits-Analyse für verwundbare Pakete (Call-Graph)
-- [ ] **P2** Datenfluss-Analyse über Dateigrenzen (Taint: Eingabe → Datenbank/Shell/HTML)
-- [ ] **P2** Mehr Sprachen mit eigenen Regeln: Go, Rust, C#, PHP, Kotlin, Swift
-- [ ] **P2** Infrastruktur als Code: Terraform, Kubernetes, Helm, CloudFormation, Ansible
-- [ ] **P2** Secrets in der kompletten Git-Historie inklusive gelöschter Branches
-- [ ] **P2** Lizenz-Compliance aus der SBOM (GPL in proprietärem Code, unbekannte Lizenzen)
-- [ ] **P3** Cloud-Konfiguration nur lesend (AWS, Azure, GCP): offene Buckets, zu weite IAM-Rechte
-- [ ] **P3** Windows-Host-Audit nach CIS-Benchmark (Defender, BitLocker, Firewall, Updates)
-- [ ] **P3** Mobile Apps (APK/IPA): Berechtigungen, hartkodierte Schlüssel, unsichere Netzwerk-Konfig
-- [ ] **P3** Docker-Host lesend prüfen (laufende Container, privilegierte Mounts, offene Ports)
-
-## 4. KI: genauer, günstiger, hilfreicher
-
-- [ ] **P1** Ergebnis-Cache je Datei-Hash und Modell (inkrementelle Scans)
-- [ ] **P2** Prompt-Caching bei Anthropic/OpenAI für gemeinsame Prompt-Teile
-- [ ] **P2** Modell-Routing: kleines Modell sortiert vor, großes prüft nur Verdächtiges
-- [ ] **P2** „Frag die KI zu diesem Befund“: Chat mit Code-Kontext direkt in der Detailansicht
-- [ ] **P2** Lernen aus Feedback: als Fehlalarm markierte Muster beim nächsten Lauf unterdrücken
-- [ ] **P3** Mehrere Modelle gegeneinander prüfen lassen (Konsens senkt Fehlalarme)
-- [ ] **P3** Benchmark-Suite mit bekannten verwundbaren Projekten (OWASP Juice Shop, DVWA), um die Trefferquote je Modell zu messen
-
-## 5. Beheben statt nur finden
-
-- [ ] **P2** Patch als Diff mit Syntax-Hervorhebung, „In Branch anwenden“, Tests danach
-- [ ] **P2** Abhängigkeits-Updates gebündelt: ein Klick für alle sicheren Minor-/Patch-Updates
-- [ ] **P2** Nachprüfung: nach einem Fix nur die betroffenen Befunde erneut prüfen
-- [ ] **P3** Fälligkeiten (SLA) je Schweregrad mit Erinnerung
-
-## 6. Workflow & Integrationen
-
-- [ ] **P2** GitHub Action und GitLab-CI-Vorlage (SARIF-Upload, Abbruch ab Schweregrad)
-- [ ] **P2** Pre-commit-Hook gegen Secrets
-- [ ] **P2** Tickets anlegen: GitHub Issues, GitLab, Jira (mit Lösung und Fundstelle)
-- [ ] **P2** Benachrichtigungen: E-Mail, Slack, Teams, Webhook
-- [ ] **P3** VS-Code-Erweiterung: Befunde direkt im Editor, „In Vigil öffnen“
-- [ ] **P3** Docker-Image von Vigil als reiner Scan-Server für CI
-
-## 7. Berichte & Compliance
-
-- [ ] **P2** Zuordnung zu OWASP Top 10, OWASP ASVS, CWE Top 25
-- [ ] **P2** Trend-Grafiken: Sicherheitswert, offene Befunde und Behebungszeit über die Zeit
-- [ ] **P3** Prüfkataloge für ISO 27001, BSI IT-Grundschutz, NIS2, DSGVO (technische Maßnahmen)
-- [ ] **P3** Management-Bericht mit eigenem Logo und Zusammenfassung in Klartext
-
-## 8. Bedienung
-
-- [ ] **P2** Einrichtungs-Assistent beim ersten Start (KI wählen, erstes Projekt, Demo-Scan)
-- [ ] **P2** Befehls-Palette (Strg+K): alle Aktionen per Tastatur
-- [ ] **P2** Code-Ansicht im Befund mit markierter Zeile und Umgebung
-- [ ] **P2** Gruppierung nach Datei, Kategorie oder Ziel
-- [ ] **P3** Hell/Dunkel manuell umschaltbar, Schriftgröße einstellbar
-- [ ] **P3** Englische Oberfläche
-- [ ] **P3** Barrierefreiheits-Prüfung (Screenreader, Kontraste, Tastatur) der ganzen App
-
-## 9. Team-Betrieb
-
-- [ ] **P3** Server-Modus mit Postgres und Warteschlange (mehrere Rechner, ein Datenbestand)
-- [ ] **P3** Benutzer, Rollen, Mandanten, Anmeldung per SSO
-- [ ] **P3** Unveränderliches Audit-Log aller Statusänderungen
-
-## 10. Sicherheit von Vigil selbst
-
-- [ ] **P2** Externe Tools isoliert ausführen (eigener Prozess mit eingeschränkten Rechten)
-- [ ] **P2** Prüfsummen und Signaturen beim Laden externer Tools und Threat-Intel prüfen
-- [ ] **P2** Bedrohungsmodell dokumentieren und Vigil regelmäßig mit sich selbst prüfen
-- [ ] **P3** Externer Pentest vor einer öffentlichen Version
-
----
-
-**Grundsatz bleibt:** Vigil prüft nur eigene oder freigegebene Ziele, zerstörungsfrei, ohne
-Angriffe, ohne Last-Tests, und schwärzt Secrets, bevor etwas an eine Cloud-KI geht.
+Grundsatz: Vigil prüft nur eigene oder freigegebene Ziele, zerstörungsfrei, ohne Angriffe und ohne Last-Tests, und schwärzt Zugangsdaten, bevor etwas an eine Cloud-KI geht.

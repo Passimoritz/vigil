@@ -527,7 +527,12 @@ button.stat:hover:not(:disabled) { border-color: var(--line-strong); }
 .f-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .f-sec.full { grid-column: 1 / -1; }
 .f-sec h4, .solution h4 { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
-.f-sec p { color: var(--text); }
+.f-sec p { color: var(--text); white-space: pre-line; }
+.linked-list { display: flex; flex-direction: column; gap: 6px; }
+.linked-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; font: inherit; text-align: left; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-sm); cursor: pointer; }
+.linked-row:hover { border-color: var(--accent); }
+.linked-title { flex: 1; min-width: 0; font-weight: 600; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.linked-go { color: var(--muted); font-size: 18px; line-height: 1; }
 .check-sec { padding: 12px 14px; border-radius: var(--r-sm); background: var(--panel-2); border: 1px solid var(--line); }
 .loc-detail { font-size: 12.5px; color: var(--muted); }
 .loc-detail span { font-weight: 650; color: var(--text-strong); margin-right: 6px; }

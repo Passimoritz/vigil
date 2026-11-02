@@ -454,6 +454,21 @@ const riskOf = (f) => (f.contextualRiskScore != null ? f.contextualRiskScore : (
 const riskCls = (r) => (r >= 85 ? 'crit' : r >= 65 ? 'high' : r >= 40 ? 'med' : 'low');
 const findingKey = (f, i) => f.id || 'i' + i;
 
+// Kategorien in Alltagssprache
+const CATEGORY_LABEL = {
+  Other: 'Sonstiges', Config: 'Konfiguration', Transport: 'Verschlüsselung', Dependencies: 'Abhängigkeiten', Secrets: 'Zugangsdaten',
+  AccessControl: 'Zugriffsrechte', Auth: 'Anmeldung', Injection: 'Einschleusen von Befehlen', XSS: 'Einschleusen von Skripten',
+  Crypto: 'Verschlüsselung', SSRF: 'Server-Anfragen von außen', PathTraversal: 'Dateizugriff', Deserialization: 'Datenverarbeitung',
+  Logic: 'Programmlogik', DoS: 'Überlastung', Supply: 'Lieferkette', SupplyChain: 'Lieferkette', Container: 'Container', Host: 'Server',
+  DNS: 'DNS & E-Mail', LLM: 'KI-Sicherheit', Logging: 'Protokollierung', AttackPath: 'Angriffsweg',
+};
+// Beteiligte Befunde eines Angriffswegs (verknuepft ueber ruleId@location)
+function linkedOf(f) {
+  if (!Array.isArray(f.linkedKeys) || !f.linkedKeys.length) return [];
+  const want = new Set(f.linkedKeys);
+  return state.lastFindings.map((x, i) => ({ x, k: findingKey(x, i) })).filter(({ x }) => want.has(`${x.ruleId}@${x.location}`));
+}
+
 // Kompakte Zeile in der Befundliste (links).
 function findingRow(f, key) {
   const risk = riskOf(f);
@@ -481,23 +496,26 @@ function findingDetail(f) {
     f.epssScore >= 0.1 ? `<span class="chip badge-epss" title="Wahrscheinlichkeit einer Ausnutzung in 30 Tagen">EPSS ${Math.round(f.epssScore * 100)} %</span>` : '',
     f.isNew && state.lastResult && state.lastResult.hasBaseline ? '<span class="chip badge-new">neu</span>' : '',
     f.regression ? '<span class="chip badge-reg" title="War als behoben markiert und ist wieder da">wieder da</span>' : '',
-    `<span class="chip">${esc(f.category)}</span>`,
+    `<span class="chip">${esc(CATEGORY_LABEL[f.category] || f.category)}</span>`,
   ].filter(Boolean).join('');
   const ctx = (f.context || []).filter((c) => CONTEXT[c]);
   const danger = [f.impact, f.reachability].filter(Boolean).join(' ');
   const secs = [
-    f.description && `<div class="f-sec${danger ? '' : ' full'}"><h4>Das Problem</h4><p>${esc(f.description)}</p></div>`,
-    danger && `<div class="f-sec${f.description ? '' : ' full'}"><h4>Wie gefährlich ist das?</h4><p>${esc(danger)}</p></div>`,
+    f.description && `<div class="f-sec${danger ? '' : ' full'}"><h4>Was ist los?</h4><p>${esc(f.description)}</p></div>`,
+    danger && `<div class="f-sec${f.description ? '' : ' full'}"><h4>Was kann passieren?</h4><p>${esc(danger)}</p></div>`,
   ].filter(Boolean).join('');
   const check = f.validation && f.validation.reason
     ? `<div class="f-sec check-sec"><h4>Gegenprüfung: ${f.validation.verdict === 'confirmed' ? 'bestätigt' : 'nicht eindeutig'}</h4><p>${esc(f.validation.reason)}</p></div>` : '';
+  // Angriffsweg: die beteiligten Einzelbefunde zum Anklicken
+  const linked = linkedOf(f);
+  const linkedHtml = linked.length ? `<div class="f-sec linked-sec"><h4>Beteiligte Befunde</h4><div class="linked-list">${linked.map(({ x, k }) => `<button type="button" class="linked-row sev-${x.severity}" data-key="${esc(k)}"><span class="sev-tag">${SEV_LABEL[x.severity]}</span><span class="linked-title">${esc(cleanTitle(x.title))}</span><span class="linked-go" aria-hidden="true">›</span></button>`).join('')}</div></div>` : '';
   return `
     <header class="fd-head">
       <div class="fd-top">${chips}</div>
       <h2 class="fd-title">${esc(cleanTitle(f.title))}</h2>
       ${f.location ? `<div class="fd-loc">${esc(f.location)}</div>` : ''}
       <div class="fd-meta">
-        <span class="meta-text">${srcs.length > 1 ? 'Gefunden von' : 'Quelle'}: ${esc(srcNames)}${f.confidence ? ' · Sicherheit ' + esc(CONF_LABEL[f.confidence] || f.confidence) : ''}${f.ruleId ? ' · ' + esc(f.ruleId) : ''}</span>
+        <span class="meta-text"${f.ruleId ? ` title="Regel: ${esc(f.ruleId)}"` : ''}>${srcs.length > 1 ? 'Gefunden von' : 'Erkannt durch'}: ${esc(srcNames)}${f.confidence ? ' · Verlässlichkeit ' + esc(CONF_LABEL[f.confidence] || f.confidence) : ''}</span>
         ${f.id ? statusSelect(f.id, f.status || 'OPEN') : ''}
       </div>
     </header>
@@ -505,6 +523,7 @@ function findingDetail(f) {
       ${f.locationDetail ? `<p class="loc-detail"><span>Fundort</span>${esc(f.locationDetail)}</p>` : ''}
       ${ctx.length ? `<div class="ctx-row">${ctx.map((c) => `<span class="ctx-chip ctx-${c}">${CONTEXT[c]}</span>`).join('')}</div>` : ''}
       ${secs ? `<div class="f-cols">${secs}</div>` : ''}
+      ${linkedHtml}
       ${check}
       ${f.evidence ? `<div class="f-sec evidence"><h4>Fundstelle</h4><code>${esc(f.evidence)}</code></div>` : ''}
       ${solutionBlock(f)}
@@ -519,7 +538,7 @@ function solutionBlock(f) {
   const parts = [];
   if (f.explanation) parts.push(`<div class="sol-why"><h4>Warum das wichtig ist</h4><p>${esc(f.explanation)}</p></div>`);
   const steps = f.steps && f.steps.length ? f.steps : (f.remediation ? [f.remediation] : []);
-  if (steps.length) parts.push(`<div class="sol-steps"><h4>So behebst du es</h4><ol>${steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>${f.remediation && f.steps && f.steps.length && !f.steps.includes(f.remediation) && !/^Siehe /.test(f.remediation) ? `<p class="muted small">Konkret hier: ${esc(f.remediation)}</p>` : ''}</div>`);
+  if (steps.length) parts.push(`<div class="sol-steps"><h4>So behebst du es</h4><ol>${steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>${f.remediation && f.steps && f.steps.length && !f.steps.includes(f.remediation) && !/^Siehe /.test(f.remediation) ? `<p class="muted small">Für diesen Fund: ${esc(f.remediation)}</p>` : ''}</div>`);
   if (f.versionPatch) {
     const vp = f.versionPatch;
     const code = [vp.command, vp.manifest].filter(Boolean).join('\n\n');
@@ -556,7 +575,7 @@ function bindSolutionControls(root) {
 function toxicBanner(list) {
   const toxic = list.filter((f) => /^toxic-/.test(f.ruleId || '') && !f.suppressed);
   if (!toxic.length) return '';
-  return `<div class="toxic-banner" role="alert"><div class="toxic-ico">⚠</div><div><b>${toxic.length} ${toxic.length === 1 ? 'Angriffspfad' : 'Angriffspfade'} erkannt</b><ul>${toxic.map((t) => `<li>${esc(t.title.replace(/^Angriffspfad:\s*/, ''))}</li>`).join('')}</ul><span class="muted small">Mehrere Schwächen ergeben zusammen einen vollständigen Angriffsweg. Ein Glied zu brechen genügt.</span></div></div>`;
+  return `<div class="toxic-banner" role="alert"><div class="toxic-ico">⚠</div><div><b>${toxic.length} ${toxic.length === 1 ? 'Angriffsweg' : 'Angriffswege'} erkannt</b><ul>${toxic.map((t) => `<li>${esc(t.title.replace(/^(Möglicher )?Angriffsweg:\s*/, ''))}</li>`).join('')}</ul><span class="muted small">Mehrere Schwächen ergeben zusammen einen kompletten Weg für einen Angriff. Schon eine einzige Behebung unterbricht ihn.</span></div></div>`;
 }
 
 function visibleList() {
@@ -605,6 +624,11 @@ function renderDetail() {
   pane.innerHTML = findingDetail(f);
   pane.scrollTop = 0;
   bindSolutionControls(pane);
+  pane.querySelectorAll('.linked-row').forEach((b) => b.onclick = () => {
+    // Ausgeblendeter Teilbefund? Filter zuruecksetzen, damit er in der Liste auftaucht.
+    if (!visibleList().some((x) => findingKey(x, state.lastFindings.indexOf(x)) === b.dataset.key)) { state.filter = 'all'; state.query = ''; $('findingSearch').value = ''; state.onlyNew = false; state.onlyProven = false; refreshResultView(); }
+    selectFinding(b.dataset.key);
+  });
   bindStatusSelects(pane, (id, status) => {
     state.lastFindings.forEach((x) => { if (x.id === id) { x.status = status; x.suppressed = HIDDEN_STATUS.has(status); } });
     toast(`Status: ${STATUS_LABEL[status]}`, 'ok');
@@ -666,7 +690,7 @@ function renderViewToggles() {
     renderViewToggles(); renderFindings();
   });
 }
-function sourceLabel(s) { return ({ osv: 'Schwachstellen-DB (OSV)', prescan: 'statische Prüfung', webscan: 'Server-Check', nmap: 'nmap', nuclei: 'nuclei', gitleaks: 'gitleaks', trufflehog: 'trufflehog', trivy: 'trivy', grype: 'grype', semgrep: 'semgrep', bandit: 'bandit', checkov: 'checkov', retire: 'retire.js', hadolint: 'hadolint', 'osv-scanner': 'osv-scanner', binary: 'Binary-Analyse', ai: 'KI', 'supply-chain-audit': 'Lieferkette', 'container-host-audit': 'Container-Prüfung', 'semgrep-custom-sast': 'Code-Regeln', 'llm-prompt-security': 'KI-Sicherheit', 'linux-host-audit': 'Server-Konfig', 'web-exposure-audit': 'Web-Exposure', 'web-tls-posture': 'Web/TLS', 'dns-mail-drift': 'DNS & Mail', 'headless-dom-audit': 'Browser-Prüfung', 'api-auth-matrix': 'API-Rechtematrix', correlator: 'Angriffspfad-Analyse' })[s] || s || 'KI'; }
+function sourceLabel(s) { return ({ osv: 'Schwachstellen-DB (OSV)', prescan: 'statische Prüfung', webscan: 'Server-Check', nmap: 'nmap', nuclei: 'nuclei', gitleaks: 'gitleaks', trufflehog: 'trufflehog', trivy: 'trivy', grype: 'grype', semgrep: 'semgrep', bandit: 'bandit', checkov: 'checkov', retire: 'retire.js', hadolint: 'hadolint', 'osv-scanner': 'osv-scanner', binary: 'Binary-Analyse', ai: 'KI', 'supply-chain-audit': 'Lieferkette', 'container-host-audit': 'Container-Prüfung', 'semgrep-custom-sast': 'Code-Regeln', 'llm-prompt-security': 'KI-Sicherheit', 'linux-host-audit': 'Server-Konfig', 'web-exposure-audit': 'Web-Exposure', 'web-tls-posture': 'Web/TLS', 'dns-mail-drift': 'DNS & Mail', 'headless-dom-audit': 'Browser-Prüfung', 'api-auth-matrix': 'API-Rechtematrix', correlator: 'Angriffsweg-Analyse' })[s] || s || 'KI'; }
 
 // --- Scan-Verlauf -------------------------------------------------------
 async function loadHistory() {
@@ -1035,7 +1059,7 @@ async function loadDashboard() {
   sc.style.setProperty('--tone', stats.posture >= 78 ? 'var(--low)' : stats.posture >= 50 ? 'var(--med)' : 'var(--crit)');
   $('dashGrade').textContent = stats.targets.length ? gradeOf(stats.posture) : '–';
   $('dashScoreLabel').textContent = stats.targets.length ? `${stats.posture} / 100` : 'Sicherheitswert';
-  $('dashToxic').innerHTML = stats.toxic.length ? `<div class="toxic-banner" role="alert"><div class="toxic-ico">⚠</div><div><b>${stats.toxic.length} ${stats.toxic.length === 1 ? 'Angriffspfad' : 'Angriffspfade'} offen</b><ul>${stats.toxic.map((t) => `<li>${esc(t.title.replace(/^Angriffspfad:\s*/, ''))} <span class="muted small">· ${esc(t.targetName)}</span></li>`).join('')}</ul></div></div>` : '';
+  $('dashToxic').innerHTML = stats.toxic.length ? `<div class="toxic-banner" role="alert"><div class="toxic-ico">⚠</div><div><b>${stats.toxic.length} ${stats.toxic.length === 1 ? 'Angriffsweg' : 'Angriffswege'} offen</b><ul>${stats.toxic.map((t) => `<li>${esc(t.title.replace(/^(Möglicher )?Angriffsweg:\s*/, ''))} <span class="muted small">· ${esc(t.targetName)}</span></li>`).join('')}</ul></div></div>` : '';
   try {
     const it = await window.vigil.intelStatus();
     $('intelLine').textContent = `${stats.kev ? `${stats.kev} offene Lücke(n) werden aktiv ausgenutzt (CISA KEV). ` : ''}${stats.newSinceBaseline} offen seit Baseline · Threat-Intel ${it.updatedAt ? 'vom ' + fmtDate(it.updatedAt) + ` (${it.kev} KEV, ${it.epss} EPSS)` : 'noch nicht geladen'}`;

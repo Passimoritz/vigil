@@ -515,6 +515,34 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const chains = correlate([T('container-root-user'), T('container-docker-sock'), T('sast-ssrf', { category: 'SSRF' }), T('container-db-port-public')]);
     check('correlate: Container-Ausbruch erkannt (100)', chains.some((c) => c.ruleId === 'toxic-container-escape' && c.contextualRiskScore === 100 && c.linkedKeys.length >= 3));
     check('correlate: DB-Kette ohne Firewall-Befund nicht', !chains.some((c) => c.ruleId === 'toxic-db-breach'));
+
+    // Sitzungsübernahme: nur mit echtem Anmelde-Cookie, ohne echte XSS-Lücke nur "möglich"
+    const W = (ruleId, title, extra = {}) => nf({ ruleId, title, severity: 'medium', category: 'Config', location: 'https://shop.example/', ...extra }, 'webscan');
+    const csp = W('missing-csp-header', 'Kein Schutz gegen eingeschleuste Skripte (Content-Security-Policy fehlt)');
+    const tracking = correlate([csp, W('cookie-missing-httponly-_ga', 'Cookie „_ga“ ist für Skripte lesbar')]);
+    check('correlate: Tracking-Cookie ergibt keinen Angriffsweg', !tracking.some((c) => c.ruleId === 'toxic-session-hijack'));
+    const [possible] = correlate([csp, W('cookie-missing-httponly-phpsessid', 'Cookie „PHPSESSID“ ist für Skripte lesbar')]);
+    check('correlate: ohne XSS-Lücke nur "möglich" und abgeschwächt', possible && /^Möglicher Angriffsweg/.test(possible.title) && possible.severity === 'medium' && possible.contextualRiskScore < 70);
+    check('correlate: nennt das konkrete Cookie und den Host', /PHPSESSID/.test(possible.description) && /shop\.example/.test(possible.description));
+    const [real] = correlate([csp, W('xss-reflected', 'Reflektiertes XSS im Suchfeld', { category: 'XSS' }), W('cookie-missing-httponly-session', 'Cookie „session“ ist für Skripte lesbar')]);
+    check('correlate: mit echter XSS-Lücke bestätigt', real && /^Angriffsweg/.test(real.title) && real.severity === 'high');
+    check('correlate: Schritte konkret, leichtester zuerst', real.steps.length === 2 && /^Am schnellsten: .*HttpOnly/.test(real.steps[0]) && real.steps.every((s) => /Befund: „/.test(s)));
+
+    // Verständliche Sprache: keine Zählmarken, kein Jargon, keine Ersatz-Umlaute, keine Verweise ins Leere
+    const { KB } = require('../src/core/remedies');
+    const BAD = [/\(\d+×\)/, /\bSenke\b/, /\bGlied\b/, /\bunten\b/, /\b(ueber|fuer|koenn|moeglich|Schluessel|Aenderung|unnoetig|verschluessel|gueltig|eingeschraenkt|laeuft)/i];
+    const texts = [
+      ...[possible, real, ...chains].flatMap((c) => [c.title, c.description, c.impact, c.explanation, ...(c.steps || [])]),
+      ...KB.flatMap((k) => [k.explanation, ...(k.steps || [])]),
+    ].filter(Boolean);
+    const offenders = texts.filter((t) => BAD.some((re) => re.test(t)));
+    check('sprache: Angriffswege und Wissensbasis ohne Jargon/Zählmarken', offenders.length === 0);
+    if (offenders.length) console.log('    ' + offenders.slice(0, 5).join('\n    '));
+    const webSrc = require('fs').readFileSync(require('path').join(__dirname, '../src/core/webscan.js'), 'utf8');
+    const webTexts = [...webSrc.matchAll(/(?:title|description|impact|remediation): [`'"]([^`'"]+)/g)].map((m) => m[1]);
+    const webBad = webTexts.filter((t) => BAD[4].test(t));
+    check('sprache: Web-Check-Texte mit echten Umlauten', webBad.length === 0);
+    if (webBad.length) console.log('    ' + webBad.slice(0, 5).join('\n    '));
   }
 
   console.log('Baseline, SBOM, Verifizierung, Backoff:');

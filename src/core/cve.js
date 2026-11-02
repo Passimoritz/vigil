@@ -120,7 +120,7 @@ async function lookupCves(deps, onProgress = () => {}, signal) {
   }
 
   const ids = [...idToPkgs.keys()].slice(0, MAX_DETAILS);
-  if (idToPkgs.size > MAX_DETAILS) notes.push(`CVE-Abgleich: ${idToPkgs.size} Advisories gefunden, Details fuer die ersten ${MAX_DETAILS} geholt.`);
+  if (idToPkgs.size > MAX_DETAILS) notes.push(`CVE-Abgleich: ${idToPkgs.size} Advisories gefunden, Details für die ersten ${MAX_DETAILS} geholt.`);
   onProgress({ phase: 'cve', message: `CVE-Abgleich: hole Details zu ${ids.length} Advisory(s) …` });
 
   const findings = [];

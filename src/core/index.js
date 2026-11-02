@@ -34,12 +34,12 @@ const completed = (notes) => !(notes || []).some((n) => DID_NOT_RUN.test(n));
 // targets: [{type:'path'|'url'|'endpoint'|'image', value, authorized?}]
 // config:  { provider, model, apiKey, baseUrl, temperature, maxTokens }
 async function runAudit(targets, config, onProgress = () => {}) {
-  onProgress({ phase: 'ingest', message: 'Sammle Pruefmaterial …' });
+  onProgress({ phase: 'ingest', message: 'Sammle Prüfmaterial …' });
   const ing = await ingestTargets(targets, onProgress);
   const scannersRun = []; // [{ target, source }] – vollstaendig gelaufene Pruefungen je Ziel
   for (const t of targets) if (t.type === 'path' && !ing.notes.some((n) => n.includes(t.value) && /nicht gefunden|Fehler/.test(n))) scannersRun.push({ target: t.value, source: 'prescan' });
 
-  onProgress({ phase: 'prescan', message: 'Statische Vorpruefung (Secrets, Deps, Muster) …' });
+  onProgress({ phase: 'prescan', message: 'Statische Vorprüfung (Secrets, Deps, Muster) …' });
   const pre = prescan(ing.units, { customSecrets: config.customRules, disabledRules: config.disabledRules });
   // Native Audit-Module (Lieferkette, Container, Code-Regeln, KI, Server-Konfiguration)
   const mods = runStaticModules(ing.units, onProgress);

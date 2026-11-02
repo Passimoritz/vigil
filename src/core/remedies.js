@@ -186,8 +186,9 @@ const KB = [
     steps: ['Nur an 127.0.0.1 binden.', 'Für Fernzugriff einen Reverse-Proxy mit Authentifizierung davorschalten.'], snippets: { shell: '# Ollama nur lokal\nOLLAMA_HOST=127.0.0.1:11434 ollama serve', compose: 'ports: ["127.0.0.1:11434:11434"]' }, links: [heise('Ollama offen im Internet')] },
 
   // --- Angriffspfade -------------------------------------------------------
-  { match: /^toxic-/, explanation: 'Mehrere einzeln „mittlere“ Schwächen ergeben zusammen einen vollständigen Angriffsweg. Es genügt, ein Glied der Kette zu brechen – am wirksamsten das am leichtesten zu behebende.',
-    steps: ['Die verknüpften Befunde unten nacheinander beheben – mit dem einfachsten beginnen.'], snippets: {}, links: [doc('MITRE ATT&CK', 'https://attack.mitre.org/')] },
+  // Texte und Schritte erzeugt der Korrelator konkret aus den beteiligten Befunden (intel.js).
+  { match: /^toxic-/, explanation: 'Einzeln wirken diese Schwächen oft harmlos. Zusammen ergeben sie einen vollständigen Weg für einen Angriff. Schon eine einzige Behebung unterbricht ihn – fang mit der einfachsten an.',
+    steps: [], snippets: {}, links: [doc('MITRE ATT&CK: bekannte Angriffstechniken', 'https://attack.mitre.org/')] },
 
   // --- Secrets (generisch) ------------------------------------------------
   { match: /^secret-|^gitleaks|^trufflehog|^trivy-secret|^custom-/, explanation: 'Ein Zugangsschlüssel im Code ist für jeden lesbar, der an Repo, Build oder Backup kommt – auch nach dem Löschen bleibt er in der Git-Historie.',

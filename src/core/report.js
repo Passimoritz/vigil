@@ -32,7 +32,7 @@ function toMarkdown(result, title = 'Vigil Sicherheits-Audit') {
   const lc = result.lifecycle;
   L.push('## Executive Summary', '');
   L.push(`- **Offene Befunde:** ${summary.total} (kritisch ${summary.counts.critical || 0}, hoch ${summary.counts.high || 0})`);
-  if (toxic.length) L.push(`- **Angriffspfade:** ${toxic.length} – ${toxic.map((t) => t.title.replace(/^Angriffspfad:\s*/, '')).join('; ')}`);
+  if (toxic.length) L.push(`- **Angriffswege:** ${toxic.length} – ${toxic.map((t) => t.title.replace(/^(Möglicher )?Angriffsweg:\s*/, '')).join('; ')}`);
   if (kev.length) L.push(`- **Aktiv ausgenutzt (CISA KEV):** ${kev.length} – ${kev.map((f) => (f.cves || [f.ruleId]).join('/')).join(', ')}`);
   if (lc) L.push(`- **Seit dem letzten Lauf:** ${lc.created} neu, ${lc.resolved} behoben, ${lc.reopened} wieder aufgetaucht`);
   L.push('');

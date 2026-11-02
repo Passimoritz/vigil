@@ -92,7 +92,7 @@ async function validateFindings({ findings, units, config, onProgress = () => {}
   const batches = [];
   for (let i = 0; i < candidates.length; i += VALIDATE_BATCH) batches.push(candidates.slice(i, i + VALIDATE_BATCH));
 
-  onProgress({ phase: 'validate', message: `Gegenpruefung: ${candidates.length} KI-Befund(e) werden auf Widerlegbarkeit geprueft …`, total: batches.length, done: 0 });
+  onProgress({ phase: 'validate', message: `Gegenprüfung: ${candidates.length} KI-Befund(e) werden auf Widerlegbarkeit geprüft …`, total: batches.length, done: 0 });
   for (let b = 0; b < batches.length; b++) {
     if (config.signal && config.signal.aborted) break;
     const items = batches[b].map((f, i) => {
@@ -111,9 +111,9 @@ async function validateFindings({ findings, units, config, onProgress = () => {}
       }
     } catch (e) {
       if ((config.signal && config.signal.aborted) || e.name === 'AbortError') break;
-      errors.push(`Gegenpruefung Block ${b + 1}: ${e.message}`);
+      errors.push(`Gegenprüfung Block ${b + 1}: ${e.message}`);
     }
-    onProgress({ phase: 'validate', message: `Gegenpruefung ${b + 1}/${batches.length}`, total: batches.length, done: b + 1 });
+    onProgress({ phase: 'validate', message: `Gegenprüfung ${b + 1}/${batches.length}`, total: batches.length, done: b + 1 });
   }
 
   const kept = [];

@@ -179,7 +179,7 @@ async function analyze(opts) {
     merged = v.findings; refuted = v.refuted;
     usedIn += v.usage.inputTokens; usedOut += v.usage.outputTokens;
     errors.push(...v.errors);
-    if (refuted.length) errors.push(`Gegenpruefung: ${refuted.length} KI-Befund(e) widerlegt und verworfen – ${refuted.slice(0, 5).map((f) => f.title).join('; ')}${refuted.length > 5 ? ' …' : ''}`);
+    if (refuted.length) errors.push(`Gegenprüfung: ${refuted.length} KI-Befund(e) widerlegt und verworfen – ${refuted.slice(0, 5).map((f) => f.title).join('; ')}${refuted.length > 5 ? ' …' : ''}`);
   }
   const all = sortFindings(enrich(merged, units));
   return {

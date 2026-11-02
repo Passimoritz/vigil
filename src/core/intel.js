@@ -88,46 +88,74 @@ function contextualRisk(f, { internetExposed = true } = {}) {
   return Math.round(Math.max(0, Math.min(100, s)) * 10) / 10;
 }
 
-// --- Angriffspfade -----------------------------------------------------------
+// --- Angriffswege -------------------------------------------------------------
+// Mehrere einzelne Schwaechen, die zusammen einen kompletten Angriff ergeben. Jeder Teil
+// beschreibt in Alltagssprache, WAS konkret gefunden wurde, und WIE man ihn behebt (`fix`,
+// `effort` 1 = sehr leicht). Ein Weg gilt nur als "bestaetigt", wenn eine echte Luecke als
+// Einstieg gefunden wurde – sonst ist er "moeglich" und wird schwaecher gewichtet.
 const key = (f) => `${f.ruleId}@${f.location}`;
 const rid = (re) => (f) => re.test(String(f.ruleId || ''));
+const hostOfLoc = (loc) => { try { return new URL(String(loc).split(/\s/)[0]).hostname; } catch { return ''; } };
+// Name aus dem Titel („Cookie „session“ ist …“), sonst aus der Regel-ID
+const cookieName = (f) => (String(f.title || '').match(/„([^“]+)“/) || [])[1] || String(f.ruleId || '').replace(/^cookie-missing-[a-z]+-/, '') || 'Cookie';
+// Nur Cookies, die nach Anmeldung/Sitzung aussehen – Tracking- und Consent-Cookies zaehlen nicht.
+const SESSION_COOKIE = /sess|sid\b|^sid|auth|token|jwt|login|logon|remember|^user|account|connect\.sid|phpsessid|jsessionid|asp\.net/i;
+const isSessionCookie = (f) => /^cookie-missing-httponly/.test(f.ruleId || '') && SESSION_COOKIE.test(cookieName(f));
+
 const CHAINS = [
   {
-    ruleId: 'toxic-container-escape', score: 100, severity: 'critical',
-    title: 'Angriffspfad: Container-Ausbruch bis zur Host-Übernahme',
+    ruleId: 'toxic-container-escape', score: 100, possibleScore: 85, severity: 'critical', possibleSeverity: 'high',
+    title: 'Angriffsweg: Vom Container auf den ganzen Server',
     parts: [
-      ['Container läuft als root', rid(/^container-root-user$|^dockerfile-root-user$/)],
-      ['Docker-Socket, privileged oder SYS_ADMIN', rid(/^container-(docker-sock|privileged|cap-sys-admin)$/)],
-      ['Ausnutzbare Web-/API-Lücke oder SSRF', (f) => f.category === 'SSRF' || /ssrf/i.test(f.ruleId || '') || (f.category === 'Dependencies' && ['critical', 'high'].includes(f.severity))],
+      { test: rid(/^container-root-user$|^dockerfile-root-user$/), what: () => 'Der Container läuft mit Administratorrechten (root).', fix: 'Den Container mit einem normalen Benutzer starten (USER im Dockerfile bzw. user: in docker-compose).', effort: 1 },
+      { test: rid(/^container-(docker-sock|privileged|cap-sys-admin)$/), what: () => 'Der Container hat Sonderrechte auf den Server: Er darf Docker steuern (Docker-Socket) oder läuft „privileged“.', fix: 'Docker-Socket nicht in den Container einbinden und privileged/SYS_ADMIN entfernen.', effort: 2 },
+      { test: (f) => f.category === 'SSRF' || /ssrf/i.test(f.ruleId || '') || (f.category === 'Dependencies' && ['critical', 'high'].includes(f.severity)),
+        confirm: (f) => f.category === 'SSRF' || /ssrf/i.test(f.ruleId || ''),
+        what: (items) => `Es gibt einen möglichen Einstieg von außen: ${items.map((x) => `„${x.title}“`).slice(0, 2).join(', ')}.`, fix: 'Die gefundene Lücke in der Anwendung bzw. das verwundbare Paket beheben.', effort: 3 },
     ],
-    story: 'Eine Lücke in der Anwendung bringt den Angreifer in den Container. Dort ist er root und erreicht über Socket bzw. Sonderrechte den Docker-Daemon – damit gehört ihm der ganze Server.',
+    story: 'Wer über die Lücke in die Anwendung kommt, ist im Container sofort Administrator. Mit den Sonderrechten des Containers kann er von dort aus Docker steuern – und damit den ganzen Server samt allen anderen Anwendungen übernehmen.',
   },
   {
     ruleId: 'toxic-sourcemap-api', score: 98, severity: 'critical',
-    title: 'Angriffspfad: Quellcode-Leak führt zu interner API',
+    title: 'Angriffsweg: Offener Quellcode verrät Zugänge',
     parts: [
-      ['Öffentliche SourceMap', rid(/^web-sourcemap-exposed$/)],
-      ['Ungeschützte API-Route oder Client-Secret', (f) => /^api-(bola|unauthenticated)/.test(f.ruleId || '') || (f.category === 'Secrets' && f.severity !== 'info')],
+      { test: rid(/^web-sourcemap-exposed$/), what: () => 'Der ursprüngliche Quellcode der Webseite ist öffentlich abrufbar (SourceMap-Dateien).', fix: 'SourceMaps nicht mit ausliefern (im Build abschalten oder *.map auf dem Server sperren).', effort: 1 },
+      { test: (f) => /^api-(bola|unauthenticated)/.test(f.ruleId || '') || (f.category === 'Secrets' && f.severity !== 'info'),
+        what: (items) => `Darin bzw. dahinter liegt ein Zugang, der nicht geschützt ist: ${items.map((x) => `„${x.title}“`).slice(0, 2).join(', ')}.`, fix: 'Den Zugang absichern: Schlüssel widerrufen und neu erzeugen bzw. die API-Route mit Rechteprüfung versehen.', effort: 2 },
     ],
-    story: 'Aus der SourceMap liest der Angreifer den Original-Quellcode mit allen API-Pfaden und Schlüsseln – und nutzt die ungeschützte Route bzw. das Secret direkt.',
+    story: 'Aus dem offenen Quellcode liest ein Angreifer in Minuten alle internen Adressen und Schlüssel heraus – und benutzt den ungeschützten Zugang direkt.',
   },
   {
-    ruleId: 'toxic-session-hijack', score: 92, severity: 'high',
-    title: 'Angriffspfad: Sitzungsübernahme über XSS',
+    ruleId: 'toxic-session-hijack', score: 92, possibleScore: 55, severity: 'high', possibleSeverity: 'medium',
+    title: 'Angriffsweg: Anmeldungen von Besuchern könnten übernommen werden',
     parts: [
-      ['Fehlende/unsichere CSP oder XSS-Senke', (f) => /^(missing-csp-header|unsafe-csp-directive|csp-wildcard-script-src)$/.test(f.ruleId || '') || f.category === 'XSS'],
-      ['Token im localStorage oder Cookie ohne HttpOnly', rid(/^dom-token-in-storage$|^cookie-missing-httponly/)],
+      { test: (f) => /^(missing-csp-header|unsafe-csp-directive|csp-wildcard-script-src)$/.test(f.ruleId || '') || f.category === 'XSS',
+        confirm: (f) => f.category === 'XSS',
+        what: (items) => (items.some((x) => x.category === 'XSS')
+          ? `Über eine gefundene Lücke lässt sich fremder Code in die Seite einschleusen: „${items.find((x) => x.category === 'XSS').title}“.`
+          : 'Die Seite legt nicht fest, welche Skripte darauf laufen dürfen (keine wirksame Content-Security-Policy). Eingeschleuster Code würde also nicht blockiert.'),
+        fix: 'Eine Content-Security-Policy setzen, die nur eigene Skripte erlaubt – zuerst im Beobachtungsmodus testen.', effort: 2 },
+      { test: (f) => /^dom-token-in-storage$/.test(f.ruleId || '') || isSessionCookie(f),
+        what: (items) => {
+          const c = items.filter(isSessionCookie).map(cookieName);
+          return c.length
+            ? `Das Anmelde-Cookie ${c.slice(0, 2).map((n) => `„${n}“`).join(' und ')} kann von Skripten auf der Seite gelesen werden (Schutz „HttpOnly“ fehlt).`
+            : 'Das Anmelde-Token liegt im Browser-Speicher, den jedes Skript auf der Seite lesen kann.';
+        },
+        fix: 'Beim Anmelde-Cookie das Attribut HttpOnly setzen bzw. das Token aus dem Browser-Speicher in ein HttpOnly-Cookie verlegen – meist eine Zeile Konfiguration.', effort: 1 },
     ],
-    story: 'Ohne wirksame CSP läuft eingeschleustes Skript ungehindert – und liest das Sitzungs-Token direkt aus dem Browser-Speicher bzw. dem nicht geschützten Cookie.',
+    story: 'Schafft es ein Angreifer, eigenen Code in die Seite zu bringen (z. B. über ein Eingabefeld oder ein manipuliertes Fremdskript), kann dieser Code die Anmeldung eines Besuchers auslesen. Der Angreifer ist dann als dieser Besucher eingeloggt – ohne dessen Passwort zu kennen.',
+    possibleNote: 'Eine konkrete Einschleuse-Lücke wurde bisher nicht gefunden. Der Weg ist also möglich, aber nicht bewiesen.',
   },
   {
     ruleId: 'toxic-db-breach', score: 99, severity: 'critical',
-    title: 'Angriffspfad: Datenbank direkt aus dem Internet erreichbar',
+    title: 'Angriffsweg: Datenbank direkt aus dem Internet erreichbar',
     parts: [
-      ['Datenbank-Port auf allen Schnittstellen', (f) => /^container-db-port-public$/.test(f.ruleId || '') || (f.source === 'nmap' && /PostgreSQL|MySQL|Redis|MongoDB|Elasticsearch/i.test(f.title || ''))],
-      ['Keine aktive Host-Firewall', rid(/^host-firewall-inactive$/)],
+      { test: (f) => /^container-db-port-public$/.test(f.ruleId || '') || (f.source === 'nmap' && /PostgreSQL|MySQL|Redis|MongoDB|Elasticsearch/i.test(f.title || '')),
+        what: () => 'Die Datenbank nimmt Verbindungen von allen Netzwerken an, nicht nur vom eigenen Server.', fix: 'Die Datenbank nur an 127.0.0.1 bzw. ein internes Netz binden.', effort: 1 },
+      { test: rid(/^host-firewall-inactive$/), what: () => 'Auf dem Server ist keine Firewall aktiv, die solche Verbindungen abblockt.', fix: 'Firewall einschalten und nur SSH, HTTP und HTTPS freigeben.', effort: 1 },
     ],
-    story: 'Die Datenbank lauscht öffentlich und keine Firewall hält Anfragen auf – automatisierte Scanner finden solche Server innerhalb von Stunden.',
+    story: 'Automatische Scanner durchsuchen das Internet ständig nach offenen Datenbanken. Ein solcher Server wird meist innerhalb von Stunden gefunden und dann ausgelesen, verschlüsselt oder gelöscht.',
   },
 ];
 
@@ -135,17 +163,30 @@ function correlate(findings) {
   const open = findings.filter((f) => !f.suppressed && f.status !== 'RESOLVED' && !/^toxic-/.test(f.ruleId || ''));
   const out = [];
   for (const ch of CHAINS) {
-    const matched = ch.parts.map(([label, test]) => ({ label, items: open.filter(test) }));
+    const matched = ch.parts.map((p) => ({ p, items: open.filter(p.test) }));
     if (matched.some((m) => !m.items.length)) continue;
+    // Bestaetigt nur, wenn jeder Teil mit "confirm" auch eine echte Luecke enthaelt.
+    const confirmed = matched.every((m) => !m.p.confirm || m.items.some(m.p.confirm));
     const linked = matched.flatMap((m) => m.items.slice(0, 2));
+    const hosts = [...new Set(linked.map((x) => hostOfLoc(x.location)).filter(Boolean))];
+    const where = hosts.length === 1 ? ` auf ${hosts[0]}` : '';
+    const n = matched.length === 2 ? 'Zwei' : matched.length === 3 ? 'Drei' : String(matched.length);
+    const steps = [...matched].sort((a, b) => a.p.effort - b.p.effort)
+      .map((m, i) => `${i === 0 ? 'Am schnellsten: ' : ''}${m.p.fix} (Befund: „${m.items[0].title}“)`);
     const f = normalizeFinding({
-      ruleId: ch.ruleId, severity: ch.severity, category: 'Other', title: ch.title,
+      ruleId: ch.ruleId,
+      severity: confirmed ? ch.severity : (ch.possibleSeverity || ch.severity),
+      category: 'Other',
+      title: confirmed ? ch.title : ch.title.replace(/^Angriffsweg:/, 'Möglicher Angriffsweg:'),
       location: [...new Set(linked.map((x) => x.location))].slice(0, 3).join(' · ').slice(0, 290) || 'mehrere Stellen',
-      description: `${ch.story}\n\nKette: ${matched.map((m) => `${m.label} (${m.items.length}×)`).join(' → ')}`,
-      remediation: 'Ein Glied der Kette brechen genügt – am besten das am einfachsten zu behebende.',
-      confidence: 'high', sourceModule: 'attack-path-correlator', linkedKeys: linked.map(key),
+      description: `${n} Schwächen${where} hängen zusammen:\n${matched.map((m, i) => `${i + 1}. ${m.p.what(m.items)}`).join('\n')}`,
+      impact: ch.story + (confirmed || !ch.possibleNote ? '' : ` ${ch.possibleNote}`),
+      explanation: 'Einzeln wirken diese Schwächen oft harmlos. Zusammen ergeben sie einen vollständigen Weg für einen Angriff. Schon eine einzige Behebung unterbricht ihn – fang mit der einfachsten an.',
+      steps,
+      confidence: confirmed ? 'high' : 'medium', sourceModule: 'attack-path-correlator', linkedKeys: linked.map(key),
     }, 'correlator');
-    f.contextualRiskScore = ch.score;
+    f.contextualRiskScore = confirmed ? ch.score : (ch.possibleScore || ch.score);
+    f.category = 'AttackPath'; // eigene Kategorie nur fuer Angriffswege (nicht Teil der KI-Kategorien)
     f.toxic = true;
     out.push(f);
   }

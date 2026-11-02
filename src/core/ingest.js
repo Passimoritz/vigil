@@ -131,7 +131,7 @@ function walkDir(col, dir, root, matcher) {
   catch (e) { col.notes.push(`Ordner nicht lesbar: ${dir} (${e.code || e.message})`); return; }
 
   for (const ent of entries) {
-    if (col.atCapacity()) { col.notes.push('Limit erreicht - weitere Dateien uebersprungen.'); return; }
+    if (col.atCapacity()) { col.notes.push('Limit erreicht - weitere Dateien übersprungen.'); return; }
     const full = path.join(dir, ent.name);
     const rel = path.relative(root, full).replace(/\\/g, '/');
     if (ent.name === '.vigilignore') continue;                 // Steuerdatei selbst nicht pruefen
@@ -186,9 +186,9 @@ function ingestArchive(col, archivePath, label) {
   try { zip = new AdmZip(archivePath); }
   catch (e) { col.notes.push(`Archiv nicht lesbar: ${archivePath} (${e.message})`); return; }
   const entries = zip.getEntries();
-  col.notes.push(`Archiv geoeffnet: ${label} (${entries.length} Eintraege)`);
+  col.notes.push(`Archiv geöffnet: ${label} (${entries.length} Einträge)`);
   for (const ent of entries) {
-    if (col.atCapacity()) { col.notes.push('Limit erreicht - restliches Archiv uebersprungen.'); break; }
+    if (col.atCapacity()) { col.notes.push('Limit erreicht - restliches Archiv übersprungen.'); break; }
     if (ent.isDirectory) continue;
     const name = ent.entryName;
     const ext = extname(name);
@@ -228,7 +228,7 @@ function fetchUrl(url) {
 
 async function ingestEndpoint(col, rawTarget, authorized) {
   if (!authorized) {
-    col.notes.push(`Netzwerkziel "${rawTarget}" uebersprungen: keine Berechtigung bestaetigt.`);
+    col.notes.push(`Netzwerkziel "${rawTarget}" übersprungen: keine Berechtigung bestätigt.`);
     return;
   }
   // IP oder Host ohne Schema -> als https behandeln, Fallback http.
