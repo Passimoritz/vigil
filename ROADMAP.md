@@ -31,17 +31,17 @@ Was Vigil heute bereits kann.
 
 Damit Vigil sich problemlos installieren und aktuell halten lässt.
 
-- [ ] **Installer und App digital signieren** · **Als Nächstes** · Aufwand mittel  
+- [x] **Installer und App digital signieren** · Aufwand mittel   · *vorbereitet – Zertifikat nötig, siehe [SIGNING.md](SIGNING.md)*
   Windows blockiert unsignierte Programme (Smart App Control, SmartScreen). Mit Signatur lässt sich Vigil normal per Doppelklick installieren.
 - [ ] **Automatische Updates** · **Als Nächstes** · Aufwand mittel  
   Neue Versionen kommen von selbst, mit Änderungsliste in der App und der Möglichkeit, zurückzugehen.
-- [ ] **Automatische Tests der Oberfläche** · Danach · Aufwand mittel  
+- [x] **Automatische Tests der Oberfläche** · Aufwand mittel  
   Jeder Klickweg wird vor einer neuen Version automatisch durchgespielt, damit nichts unbemerkt kaputtgeht.
-- [ ] **Absturzberichte nur lokal** · Danach · Aufwand klein  
+- [x] **Absturzberichte nur lokal** · Aufwand klein  
   Bei einem Fehler legt Vigil einen Bericht auf dem PC ab, den man bei Bedarf weitergeben kann – ohne heimliche Datenübertragung.
 - [ ] **Nachprüfbare Versionen** · Danach · Aufwand mittel  
   Jede Version kommt mit einer Liste aller enthaltenen Bausteine und lässt sich aus dem Quellcode identisch nachbauen.
-- [ ] **Version ohne Installation** · Später · Aufwand klein  
+- [x] **Version ohne Installation** · Aufwand klein  
   Vigil direkt vom USB-Stick oder aus einem Ordner starten.
 - [ ] **Vigil für macOS und Linux** · Später · Aufwand groß  
   Dieselbe App auch auf Mac und Linux.
@@ -50,44 +50,44 @@ Damit Vigil sich problemlos installieren und aktuell halten lässt.
 
 Mehr echte Probleme erkennen und weniger Unnötiges melden.
 
-- [ ] **Prüfen, ob eine verwundbare Funktion überhaupt benutzt wird** · **Als Nächstes** · Aufwand groß  
+- [x] **Prüfen, ob eine verwundbare Funktion überhaupt benutzt wird** · Aufwand groß  
   Eine Lücke in einem Paket ist nur gefährlich, wenn der eigene Code die betroffene Stelle aufruft. Das streicht viele Fehlalarme.
-- [ ] **Datenflüsse über mehrere Dateien verfolgen** · Danach · Aufwand groß  
+- [x] **Datenflüsse über mehrere Dateien verfolgen** · Aufwand groß  
   Erkennt, wenn eine Eingabe von außen über mehrere Schritte ungeprüft in Datenbank, Befehlszeile oder Webseite landet.
-- [ ] **Mehr Programmiersprachen** · Danach · Aufwand mittel  
+- [x] **Mehr Programmiersprachen** · Aufwand mittel  
   Eigene Regeln auch für Go, Rust, C#, PHP, Kotlin und Swift.
-- [ ] **Server-Einrichtung als Code prüfen** · Danach · Aufwand mittel  
+- [x] **Server-Einrichtung als Code prüfen** · Aufwand mittel  
   Fehler in Terraform, Kubernetes, Helm, CloudFormation und Ansible finden, bevor sie live gehen.
-- [ ] **Zugangsdaten in der gesamten Git-Historie finden** · Danach · Aufwand klein  
+- [x] **Zugangsdaten in der gesamten Git-Historie finden** · Aufwand klein  
   Auch Schlüssel, die längst gelöscht wurden, stehen oft noch in alten Versionen und sind dort weiter abrufbar.
-- [ ] **Lizenzen der genutzten Pakete prüfen** · Danach · Aufwand klein  
+- [x] **Lizenzen der genutzten Pakete prüfen** · Aufwand klein  
   Warnt, wenn ein Paket eine Lizenz hat, die zum eigenen Projekt nicht passt.
-- [ ] **Cloud-Konten nur lesend prüfen** · Später · Aufwand groß  
+- [x] **Cloud-Konten nur lesend prüfen** · Aufwand groß  
   Findet offene Speicher und zu weit gefasste Rechte in AWS, Azure und Google Cloud, ohne etwas zu ändern.
-- [ ] **Windows-PC nach Sicherheitsstandard prüfen** · Später · Aufwand mittel  
+- [x] **Windows-PC nach Sicherheitsstandard prüfen** · Aufwand mittel  
   Prüft Virenschutz, Festplattenverschlüsselung, Firewall und Updates nach dem CIS-Leitfaden.
-- [ ] **Handy-Apps prüfen** · Später · Aufwand groß  
+- [x] **Handy-Apps prüfen** · Aufwand groß  
   Untersucht Android- und iOS-Apps auf zu viele Berechtigungen und eingebaute Schlüssel.
-- [ ] **Laufende Docker-Container prüfen** · Später · Aufwand mittel  
+- [x] **Laufende Docker-Container prüfen** · Aufwand mittel  
   Zeigt Container mit zu vielen Rechten, gefährlichen Freigaben oder offenen Ports – nur lesend.
 
 ## KI: günstiger und hilfreicher
 
 Weniger Kosten, schnellere Läufe und Antworten auf Rückfragen.
 
-- [ ] **Nur Geändertes neu prüfen** · **Als Nächstes** · Aufwand mittel  
+- [x] **Nur Geändertes neu prüfen** · Aufwand mittel  
   Vigil merkt sich die KI-Ergebnisse je Datei. Beim nächsten Lauf werden nur geänderte Dateien neu analysiert – das spart den Großteil der Kosten und Zeit.
-- [ ] **Wiederkehrende Anweisungen zwischenspeichern** · Danach · Aufwand klein  
+- [x] **Wiederkehrende Anweisungen zwischenspeichern** · Aufwand klein  
   Gleichbleibende Teile der KI-Anfrage werden beim Anbieter gespeichert und günstiger abgerechnet.
-- [ ] **Kleines Modell sortiert vor, großes prüft nach** · Danach · Aufwand mittel  
+- [x] **Kleines Modell sortiert vor, großes prüft nach** · Aufwand mittel  
   Ein günstiges Modell siebt Unauffälliges aus; nur Verdächtiges geht an das teure, genaue Modell.
-- [ ] **Rückfragen zu einem Befund stellen** · Danach · Aufwand mittel  
+- [x] **Rückfragen zu einem Befund stellen** · Aufwand mittel  
   Direkt in der Detailansicht fragen, z. B. „Ist das bei mir wirklich ausnutzbar?“ – mit dem passenden Code als Kontext.
-- [ ] **Aus Fehlalarmen lernen** · Danach · Aufwand klein  
+- [x] **Aus Fehlalarmen lernen** · Aufwand klein  
   Was als Fehlalarm markiert wurde, meldet Vigil beim nächsten Mal nicht erneut.
-- [ ] **Zwei Modelle gegeneinander prüfen lassen** · Später · Aufwand mittel  
+- [x] **Zwei Modelle gegeneinander prüfen lassen** · Aufwand mittel  
   Nur was beide Modelle finden, gilt als sicher – das senkt Fehlalarme weiter.
-- [ ] **Trefferquote messen** · Später · Aufwand mittel  
+- [x] **Trefferquote messen** · Aufwand mittel  
   Regelmäßige Testläufe gegen absichtlich unsichere Übungsprojekte zeigen, wie gut jedes Modell wirklich findet.
 
 ## Beheben statt nur finden
@@ -124,32 +124,32 @@ Vigil dort einsetzen, wo ohnehin gearbeitet wird.
 
 Ergebnisse für Chef, Kunden oder Prüfer aufbereiten.
 
-- [ ] **Zuordnung zu bekannten Sicherheitslisten** · Danach · Aufwand klein  
+- [x] **Zuordnung zu bekannten Sicherheitslisten** · Aufwand klein  
   Jeder Befund zeigt, zu welchem Punkt der OWASP Top 10 und der CWE-Liste er gehört – Prüfer erwarten das.
-- [ ] **Entwicklung über die Zeit** · Danach · Aufwand mittel  
+- [x] **Entwicklung über die Zeit** · Aufwand mittel  
   Grafiken zeigen, ob der Sicherheitswert steigt, wie viele Befunde offen sind und wie schnell behoben wird.
-- [ ] **Prüfkataloge für Normen** · Später · Aufwand groß  
+- [x] **Prüfkataloge für Normen** · Aufwand groß  
   Technische Nachweise für ISO 27001, BSI IT-Grundschutz, NIS2 und DSGVO.
-- [ ] **Bericht für die Geschäftsführung** · Später · Aufwand klein  
+- [x] **Bericht für die Geschäftsführung** · Aufwand klein  
   Eine Seite in Klartext mit eigenem Logo: Lage, Risiken, nächste Schritte.
 
 ## Bedienung
 
 Schneller ans Ziel, auch ohne Vorwissen.
 
-- [ ] **Begleitung beim ersten Start** · Danach · Aufwand mittel  
+- [x] **Begleitung beim ersten Start** · Aufwand mittel  
   Ein kurzer Assistent hilft bei der KI-Wahl, dem ersten Projekt und zeigt einen Beispiel-Lauf.
 - [ ] **Alles per Tastatur** · Danach · Aufwand klein  
   Mit Strg+K jede Aktion suchen und ausführen.
-- [ ] **Betroffenen Code direkt anzeigen** · Danach · Aufwand mittel  
+- [x] **Betroffenen Code direkt anzeigen** · Aufwand mittel  
   In der Detailansicht die markierte Zeile mit etwas Umgebung sehen, ohne den Editor zu öffnen.
 - [ ] **Befunde anders sortieren** · Danach · Aufwand klein  
   Nach Datei, Art des Problems oder Ziel gruppieren statt nur nach Dringlichkeit.
-- [ ] **Hell/Dunkel und Schriftgröße wählbar** · Später · Aufwand klein  
+- [x] **Hell/Dunkel und Schriftgröße wählbar** · Aufwand klein  
   Unabhängig von der Windows-Einstellung umschalten und die Schrift größer stellen.
-- [ ] **Englische Oberfläche** · Später · Aufwand mittel  
+- [x] **Englische Oberfläche** · Aufwand mittel  
   Vigil auch auf Englisch nutzen.
-- [ ] **Barrierefreiheit prüfen** · Später · Aufwand mittel  
+- [x] **Barrierefreiheit prüfen** · Aufwand mittel  
   Bedienung mit Bildschirmleser, nur mit Tastatur und mit ausreichenden Kontrasten sicherstellen.
 
 ## Arbeiten im Team

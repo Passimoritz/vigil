@@ -158,3 +158,7 @@ Neuer Anbieter: in `src/core/providers.js` einen Eintrag + Aufruf ergänzen – 
 ## Roadmap
 
 Geplante Erweiterungen mit Checkliste: [ROADMAP.md](ROADMAP.md).
+
+Tests: `npm test` (Kern), `npm run e2e` (echte Oberfläche inkl. Barrierefreiheit), `npm run bench` (Trefferquote am Übungsprojekt, optional mit KI: `npm run bench -- ollama qwen2.5-coder:14b`).
+
+Signieren für eine Installation ohne Windows-Sperre: [SIGNING.md](SIGNING.md).
