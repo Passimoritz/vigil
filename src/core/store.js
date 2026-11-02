@@ -202,6 +202,38 @@ function applyRun(store, run) {
   return { findings: annotated, counters: { ...counters, toxic }, resolved: resolvedNow, targetIds: runTargets.map((t) => t.id) };
 }
 
+// --- Loeschen ---------------------------------------------------------------------
+// Befunde endgueltig entfernen. Ist die Luecke noch da, taucht sie beim naechsten Lauf als neu auf –
+// zum dauerhaften Ausblenden ist "Fehlalarm" bzw. "Risiko akzeptiert" der richtige Weg.
+function deleteFindings(store, ids) {
+  let n = 0;
+  for (const id of new Set((ids || []).map(String))) if (store.findings[id]) { delete store.findings[id]; n++; }
+  for (const f of Object.values(store.findings)) if (Array.isArray(f.linkedFindingIds)) f.linkedFindingIds = f.linkedFindingIds.filter((x) => store.findings[x]);
+  return { ok: true, deleted: n };
+}
+// Ziel mit allen Befunden und seinem Paket-Inventar entfernen; Laeufe behalten, aber Verweis loesen
+function deleteTarget(store, targetId) {
+  if (!store.targets[targetId]) return { ok: false, error: 'Ziel nicht gefunden.' };
+  const ids = Object.values(store.findings).filter((f) => f.targetId === targetId).map((f) => f.id);
+  deleteFindings(store, ids);
+  delete store.targets[targetId];
+  if (store.sboms) delete store.sboms[targetId];
+  for (const r of store.runs) if (Array.isArray(r.targetIds)) r.targetIds = r.targetIds.filter((x) => x !== targetId);
+  return { ok: true, deletedFindings: ids.length };
+}
+function deleteRun(store, runId) {
+  const i = store.runs.findIndex((r) => r.id === runId);
+  if (i < 0) return { ok: false, error: 'Lauf nicht gefunden.' };
+  if (store.runs[i].status === 'RUNNING' || store.runs[i].status === 'QUEUED') return { ok: false, error: 'Ein laufender Lauf kann nicht gelöscht werden.' };
+  store.runs.splice(i, 1);
+  return { ok: true };
+}
+// Behobene Befunde aufraeumen (optional nur fuer ein Ziel)
+function purgeResolved(store, targetId) {
+  const ids = Object.values(store.findings).filter((f) => f.status === 'RESOLVED' && (!targetId || f.targetId === targetId)).map((f) => f.id);
+  return deleteFindings(store, ids);
+}
+
 const normTitle = (t) => String(t || '').toLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 80);
 
 // Bestaetigte Fehlalarme der Ziele (neueste zuerst) – Hinweis fuer die KI
@@ -316,4 +348,4 @@ function updateRun(store, id, patch) {
   return r;
 }
 
-module.exports = { emptyStore, load, save, targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, falsePositivesFor, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };
+module.exports = { emptyStore, load, save, targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, falsePositivesFor, deleteFindings, deleteTarget, deleteRun, purgeResolved, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };

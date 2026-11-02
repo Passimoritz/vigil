@@ -495,6 +495,12 @@ ipcMain.handle('finding:setStatus', (_e, id, body) => {
 });
 ipcMain.handle('dashboard:get', (_e, filter) => ({ stats: orchestrator.stats(), findings: orchestrator.listFindings(filter || {}) }));
 ipcMain.handle('store:clear', () => { orchestrator.clear(); return { ok: true }; });
+// Loeschen in der Uebersicht – IDs sind Hex-Fingerabdruecke bzw. UUIDs, alles andere wird verworfen
+const idOk = (s) => typeof s === 'string' && /^[\w-]{6,80}$/.test(s);
+ipcMain.handle('findings:delete', (_e, ids) => orchestrator.deleteFindings((Array.isArray(ids) ? ids : []).filter(idOk).slice(0, 5000)));
+ipcMain.handle('target:delete', (_e, id) => (idOk(id) ? orchestrator.deleteTarget(id) : { ok: false, error: 'Ungültige ID.' }));
+ipcMain.handle('run:delete', (_e, id) => (idOk(id) ? orchestrator.deleteRun(id) : { ok: false, error: 'Ungültige ID.' }));
+ipcMain.handle('findings:purgeResolved', (_e, targetId) => orchestrator.purgeResolved(idOk(targetId) ? targetId : ''));
 ipcMain.handle('api:info', () => { const c = loadConfig(); return { enabled: !!c.apiEnabled, port: c.apiPort, token: c.apiToken, running: !!(api && api.running()) }; });
 // --- Ziele: Verifizierung, Baseline, Einstellungen -------------------------
 ipcMain.handle('target:verify', async (_e, id) => {

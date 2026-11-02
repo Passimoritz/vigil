@@ -912,6 +912,26 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     site.close();
   }
 
+  // --- Uebersicht: Befunde, Ziele und Laeufe loeschen ---
+  {
+    const st = require('../src/core/store');
+    const db = st.emptyStore();
+    const tg = [{ type: 'path', value: 'C:/a' }];
+    const tg2 = [{ type: 'path', value: 'C:/b' }];
+    const r1 = st.applyRun(db, { targets: tg, findings: [{ ruleId: 'x1', title: 'A', location: 'a/1.js:1', category: 'Other', severity: 'high', source: 'prescan' }, { ruleId: 'x2', title: 'B', location: 'a/2.js:1', category: 'Other', severity: 'low', source: 'prescan' }], scannersRun: [] });
+    st.applyRun(db, { targets: tg2, findings: [{ ruleId: 'y', title: 'C', location: 'b/1.js:1', category: 'Other', severity: 'low', source: 'prescan' }], scannersRun: [] });
+    st.addRun(db, { id: 'run-aaaaaaaa', status: 'COMPLETED', targets: tg, targetIds: [st.targetIdOf(tg[0])] });
+    const d = st.deleteFindings(db, [r1.findings[0].id, 'gibt-es-nicht']);
+    check('löschen: einzelner Befund entfernt, unbekannte ID ignoriert', d.deleted === 1 && Object.keys(db.findings).length === 2);
+    const t = st.deleteTarget(db, st.targetIdOf(tg[0]));
+    check('löschen: Ziel mit seinen Befunden, andere bleiben', t.ok && t.deletedFindings === 1 && Object.keys(db.findings).length === 1 && !db.targets[st.targetIdOf(tg[0])] && !!db.targets[st.targetIdOf(tg2[0])]);
+    st.addRun(db, { id: 'run-bbbbbbbb', status: 'RUNNING', targets: [] });
+    check('löschen: Lauf entfernt, laufender Lauf geschützt', st.deleteRun(db, 'run-aaaaaaaa').ok && !db.runs.some((r) => r.id === 'run-aaaaaaaa') && !st.deleteRun(db, 'run-bbbbbbbb').ok);
+    const rid = Object.keys(db.findings)[0];
+    st.setStatus(db, rid, 'RESOLVED');
+    check('aufräumen: behobene Befunde löschen', st.purgeResolved(db).deleted === 1 && Object.keys(db.findings).length === 0);
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

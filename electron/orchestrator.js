@@ -94,6 +94,10 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
     searchSbom: (q) => store.searchSbom(db, q),
     getTarget: (id) => db.targets[id] || null,
     setTargetMeta(id, patch) { const r = store.setTargetMeta(db, id, patch); if (r.ok) persist(); return r; },
+    deleteFindings(ids) { const r = store.deleteFindings(db, ids); if (r.deleted) persist(); return r; },
+    deleteTarget(id) { const r = store.deleteTarget(db, id); if (r.ok) persist(); return r; },
+    deleteRun(id) { const r = store.deleteRun(db, id); if (r.ok) persist(); return r; },
+    purgeResolved(targetId) { const r = store.purgeResolved(db, targetId); if (r.deleted) persist(); return r; },
     clear() { db = store.emptyStore(); persist(); },
   };
 }

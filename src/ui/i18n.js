@@ -88,6 +88,19 @@
     'Modellname eingeben': 'Enter model name', 'API-Schlüssel einfügen': 'Paste API key', 'Checkliste vor dem Start': 'Pre-start checklist', 'Umschalten': 'Toggle', 'Befunde durchsuchen': 'Search findings', 'Befunde': 'Findings', 'Titel, Ort oder Regel': 'Title, location or rule',
     'Schweregrad': 'Severity', 'Befund-Details': 'Finding details', 'Vorheriger Befund': 'Previous finding', 'Nächster Befund': 'Next finding', 'Paket suchen, z. B. lodash oder lodash@4.17': 'Search package, e.g. lodash or lodash@4.17', 'Paket suchen': 'Search package', 'Einstellungsbereiche': 'Settings sections',
     'Eigene Frage zu diesem Befund …': 'Your own question about this finding …', 'Frage zu diesem Befund': 'Question about this finding',
+    // Uebersicht (neu)
+    'Alle Prüfungen zusammen': 'All scans combined', 'Aktualisieren': 'Refresh', 'Aufräumen ▾': 'Clean up ▾', 'Behobene Befunde löschen': 'Delete resolved findings', 'entfernt alles, was als behoben gilt': 'removes everything marked as resolved',
+    'Alle gefilterten Befunde löschen': 'Delete all filtered findings', 'nur die gerade angezeigte Liste': 'only the list currently shown', 'Offene Befunde nach Schwere': 'Open findings by severity', 'Pakete': 'Packages',
+    'Alle Ziele': 'All targets', 'Status setzen …': 'Set status …', 'Löschen': 'Delete', 'Auswahl aufheben': 'Clear selection', 'Alle auswählen': 'Select all', 'Auswählen': 'Select', 'Befund löschen': 'Delete finding',
+    'Erneut prüfen': 'Scan again', 'Baseline': 'Baseline', 'Nachweisen': 'Verify', 'nachgewiesen': 'verified', '✓ nichts offen': '✓ nothing open', 'offene Angriffswege': 'open attack paths', 'Lauf löschen': 'Delete run',
+    'Alle bisher geprüften Ziele. „Löschen“ entfernt das Ziel mit allen seinen Befunden aus der Übersicht – die Prüfung selbst lässt sich jederzeit wiederholen.': 'All targets checked so far. “Delete” removes the target and all its findings from the overview – you can scan it again any time.',
+    'Sehr gut aufgestellt': 'In very good shape', 'Gut – kleinere Baustellen': 'Good – minor issues', 'Ordentlich, aber mit Lücken': 'Decent, but with gaps', 'Deutlicher Handlungsbedarf': 'Clear need for action', 'Dringend handeln': 'Act urgently', 'Noch nichts geprüft': 'Nothing checked yet',
+    'Befund löschen?': 'Delete finding?', 'Ziel löschen?': 'Delete target?', 'Lauf löschen?': 'Delete run?', 'Behobene Befunde löschen?': 'Delete resolved findings?', 'Noch keine Ziele': 'No targets yet', 'Noch keine Läufe.': 'No runs yet.',
+    // Einstellungen (neu)
+    'Login-Prüfung': 'Login check', 'Schadsoftware': 'Malware', 'Schadsoftware & Webseiten-Durchgang': 'Malware & website crawl', 'Programme und Dateien auf Schadsoftware prüfen': 'Check programs and files for malware',
+    'Abgleich mit bekannten Schadprogrammen': 'Match against known malware', 'Unterseiten und Formulare durchgehen': 'Crawl subpages and forms', 'Darstellung & App': 'Appearance & app',
+    'Anmelde-Adresse, z. B. https://meine-seite.de/login': 'Login address, e.g. https://my-site.com/login', 'Benutzername oder E-Mail des Testkontos': 'Username or e-mail of the test account', 'Passwort des Testkontos (leer = unverändert)': 'Test account password (empty = unchanged)',
+    'Feldname Benutzer (optional, sonst automatisch)': 'User field name (optional, otherwise automatic)', 'Feldname Passwort (optional)': 'Password field name (optional)', 'Auth-Key (leer = unverändert)': 'Auth key (empty = unchanged)', 'Noch kein Testkonto hinterlegt.': 'No test account stored yet.',
   };
   // Teil-Uebersetzungen fuer zusammengesetzte Texte (Regex -> Ersatz)
   const PARTS = [

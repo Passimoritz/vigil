@@ -365,50 +365,60 @@
   <section id="dashView" class="view" hidden aria-labelledby="dashTitle">
     <header class="page-head">
       <div>
+        <span class="eyebrow">Alle Prüfungen zusammen</span>
         <h1 id="dashTitle">Übersicht</h1>
         <p class="page-sub" id="dashSummary"></p>
       </div>
-    </header>
-
-    <div class="kpi-row">
-      <div class="card posture">
-        <div id="dashScore" class="score" role="img" aria-label="Sicherheitswert"><div class="score-inner"><span class="score-grade" id="dashGrade">–</span><span class="score-label" id="dashScoreLabel">Sicherheitswert</span></div></div>
-        <div class="posture-text">
-          <span class="eyebrow">Sicherheitswert</span>
-          <p class="intel-line" id="intelLine"></p>
+      <div class="head-actions">
+        <button type="button" class="btn ghost" id="dashRefresh" title="Neu laden">Aktualisieren</button>
+        <div class="menu-wrap">
+          <button type="button" class="btn" id="dashCleanBtn" aria-haspopup="menu" aria-expanded="false">Aufräumen ▾</button>
+          <div id="dashCleanMenu" class="menu" role="menu" hidden>
+            <button type="button" role="menuitem" id="dashPurgeResolved"><b>Behobene Befunde löschen</b><span>entfernt alles, was als behoben gilt</span></button>
+            <button type="button" role="menuitem" id="dashPurgeFiltered"><b>Alle gefilterten Befunde löschen</b><span>nur die gerade angezeigte Liste</span></button>
+          </div>
         </div>
       </div>
-      <div class="stats dash-stats" id="dashStats"></div>
+    </header>
+
+    <!-- Lagebild -->
+    <div class="dash-hero">
+      <div class="card hero-score">
+        <div id="dashScore" class="score" role="img" aria-label="Sicherheitswert"><div class="score-inner"><span class="score-grade" id="dashGrade">–</span><span class="score-label" id="dashScoreLabel">Sicherheitswert</span></div></div>
+        <div class="hero-score-text">
+          <span class="eyebrow">Sicherheitswert</span>
+          <b class="hero-verdict" id="dashVerdict">–</b>
+          <span class="muted small" id="dashDelta"></span>
+          <div id="dashSpark" class="hero-spark"></div>
+        </div>
+      </div>
+      <div class="card hero-sev">
+        <div class="hero-sev-head"><span class="eyebrow">Offene Befunde nach Schwere</span><span class="hero-total" id="dashOpenTotal">0</span></div>
+        <div class="sev-bar" id="dashSevBar" role="img" aria-label="Verteilung der offenen Befunde"></div>
+        <div class="sev-legend" id="dashStats"></div>
+      </div>
+      <div class="card hero-kpis" id="dashTrendKpis"></div>
     </div>
     <div id="dashToxic"></div>
+    <p class="intel-line muted small" id="intelLine"></p>
 
-    <div class="dash-grid">
-      <section class="card">
-        <header class="card-bar"><h2>Ziele</h2></header>
-        <div id="dashTargets" class="tgt-list"></div>
-      </section>
-      <section class="card" id="dashTrendCard">
-        <header class="card-bar"><h2>Entwicklung</h2><span class="muted small" id="dashTrendNote"></span></header>
-        <div class="trend-kpis" id="dashTrendKpis"></div>
-        <div id="dashTrend" class="trend-chart"></div>
-      </section>
-      <section class="card">
-        <header class="card-bar"><h2>Letzte Läufe</h2></header>
-        <div id="dashRuns" class="runs-list"></div>
-      </section>
+    <!-- Reiter -->
+    <div class="dash-tabs" role="tablist" aria-label="Bereiche der Übersicht">
+      <button type="button" role="tab" class="dash-tab active" data-tab="findings" aria-selected="true">Befunde <span class="count" id="tabCountFindings">0</span></button>
+      <button type="button" role="tab" class="dash-tab" data-tab="targets" aria-selected="false">Ziele <span class="count" id="tabCountTargets">0</span></button>
+      <button type="button" role="tab" class="dash-tab" data-tab="runs" aria-selected="false">Verlauf</button>
+      <button type="button" role="tab" class="dash-tab" data-tab="sbom" aria-selected="false">Pakete</button>
     </div>
 
-    <section class="card">
-      <header class="card-bar">
-        <h2>Alle Befunde</h2>
-        <div class="seg-mini" id="dashStatus" role="tablist">
+    <!-- Befunde -->
+    <section class="card dash-pane" data-pane="findings">
+      <div class="dash-tools">
+        <div class="seg-mini" id="dashStatus" role="group" aria-label="Status">
           <button class="fbtn" data-s="OPEN,IN_PROGRESS">Aktiv</button>
           <button class="fbtn" data-s="RESOLVED">Behoben</button>
           <button class="fbtn" data-s="FALSE_POSITIVE,ACCEPTED_RISK">Fehlalarm / akzeptiert</button>
           <button class="fbtn" data-s="">Alle</button>
         </div>
-      </header>
-      <div class="dash-tools">
         <label class="search">
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           <input id="dashSearch" type="search" placeholder="Titel, Ort oder Regel" aria-label="Befunde durchsuchen" />
@@ -421,29 +431,45 @@
           <option value="low">Niedrig</option>
           <option value="info">Hinweis</option>
         </select>
+        <select id="dashTargetSelect" aria-label="Ziel"><option value="">Alle Ziele</option></select>
         <div class="chips" id="dashToggles">
           <button class="fbtn toggle" data-t="newSinceBaseline" title="Nur Befunde, die nach dem Setzen der Baseline neu aufgetaucht sind">Neu seit Baseline</button>
           <button class="fbtn toggle" data-t="toxic">Nur Angriffswege</button>
         </div>
       </div>
+      <div class="bulk-bar" id="dashBulk" hidden>
+        <span id="dashBulkCount">0 ausgewählt</span>
+        <select id="dashBulkStatus" aria-label="Status für die Auswahl setzen">
+          <option value="">Status setzen …</option>
+          <option value="OPEN">Offen</option>
+          <option value="IN_PROGRESS">In Arbeit</option>
+          <option value="RESOLVED">Behoben</option>
+          <option value="FALSE_POSITIVE">Fehlalarm</option>
+          <option value="ACCEPTED_RISK">Risiko akzeptiert</option>
+        </select>
+        <button type="button" class="btn danger tiny" id="dashBulkDelete">Löschen</button>
+        <button type="button" class="btn ghost tiny" id="dashBulkClear">Auswahl aufheben</button>
+      </div>
       <p id="dashTargetFilter" class="target-filter" hidden>Nur Ziel: <b id="dashTargetName"></b> <button id="dashTargetClear" class="btn ghost tiny">Filter entfernen</button></p>
       <div id="dashTable" class="ftable-wrap"></div>
-      <div id="dashDrawerBg" class="drawer-bg" hidden></div>
-      <aside id="dashDrawer" class="drawer" role="dialog" aria-modal="true" aria-label="Befund-Details" hidden>
-        <div class="drawer-head">
-          <span class="muted small" id="dashDrawerPos"></span>
-          <span class="drawer-nav">
-            <button type="button" class="btn tiny" id="dashDrawerPrev" aria-label="Vorheriger Befund">↑</button>
-            <button type="button" class="btn tiny" id="dashDrawerNext" aria-label="Nächster Befund">↓</button>
-            <button type="button" class="btn tiny" id="dashDrawerClose" aria-label="Schließen">✕ Schließen</button>
-          </span>
-        </div>
-        <div id="dashDrawerBody" class="fdetail drawer-body"></div>
-      </aside>
     </section>
 
-    <section class="card">
-      <header class="card-bar"><h2>Paketsuche (SBOM)</h2></header>
+    <!-- Ziele -->
+    <section class="card dash-pane" data-pane="targets" hidden>
+      <p class="hint">Alle bisher geprüften Ziele. „Löschen“ entfernt das Ziel mit allen seinen Befunden aus der Übersicht – die Prüfung selbst lässt sich jederzeit wiederholen.</p>
+      <div id="dashTargets" class="tgt-grid"></div>
+    </section>
+
+    <!-- Verlauf -->
+    <section class="card dash-pane" data-pane="runs" hidden>
+      <header class="card-bar"><h2>Entwicklung</h2><span class="muted small" id="dashTrendNote"></span></header>
+      <div id="dashTrend" class="trend-chart"></div>
+      <header class="card-bar runs-head"><h2>Letzte Läufe</h2></header>
+      <div id="dashRuns" class="runs-list"></div>
+    </section>
+
+    <!-- Pakete -->
+    <section class="card dash-pane" data-pane="sbom" hidden>
       <p class="hint">Neue Lücke in einem Paket gemeldet? Hier siehst du sofort, in welchen geprüften Projekten es steckt und in welcher Version.</p>
       <label class="search wide">
         <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -451,6 +477,29 @@
       </label>
       <div id="sbomResults" class="sbom-results"></div>
     </section>
+
+    <div id="dashDrawerBg" class="drawer-bg" hidden></div>
+    <aside id="dashDrawer" class="drawer" role="dialog" aria-modal="true" aria-label="Befund-Details" hidden>
+      <div class="drawer-head">
+        <span class="muted small" id="dashDrawerPos"></span>
+        <span class="drawer-nav">
+          <button type="button" class="btn tiny" id="dashDrawerPrev" aria-label="Vorheriger Befund">↑</button>
+          <button type="button" class="btn tiny" id="dashDrawerNext" aria-label="Nächster Befund">↓</button>
+          <button type="button" class="btn tiny danger" id="dashDrawerDelete">Löschen</button>
+          <button type="button" class="btn tiny" id="dashDrawerClose" aria-label="Schließen">✕ Schließen</button>
+        </span>
+      </div>
+      <div id="dashDrawerBody" class="fdetail drawer-body"></div>
+    </aside>
+
+    <!-- Bestaetigung zum Loeschen -->
+    <div id="confirmBg" class="ob-bg" hidden>
+      <div class="ob confirm-box" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmText">
+        <h2 id="confirmTitle">Löschen?</h2>
+        <p class="ob-lead" id="confirmText"></p>
+        <footer class="ob-foot"><button type="button" class="btn ghost" id="confirmNo">Abbrechen</button><button type="button" class="btn danger" id="confirmYes">Löschen</button></footer>
+      </div>
+    </div>
   </section>
 
   <!-- ===================== Verlauf ===================== -->
