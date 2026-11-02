@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('vigil', {
   askFinding: (payload) => ipcRenderer.invoke('finding:ask', payload),
   crashInfo: () => ipcRenderer.invoke('crash:info'),
   crashOpen: () => ipcRenderer.invoke('crash:open'),
+  sampleDemo: () => ipcRenderer.invoke('sample:demo'),
   aiCacheClear: () => ipcRenderer.invoke('aicache:clear'),
   searchSbom: (q) => ipcRenderer.invoke('sbom:search', q),
   intelStatus: () => ipcRenderer.invoke('intel:status'),

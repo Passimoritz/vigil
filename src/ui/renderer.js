@@ -1789,4 +1789,46 @@ document.addEventListener('keydown', (e) => {
   else if (mod && ['1', '2', '3', '4'].includes(e.key)) { e.preventDefault(); showView(['scan', 'results', 'dash', 'history'][+e.key - 1]); }
 });
 
-init();
+// --- Begleitung beim ersten Start --------------------------------------------------
+const ob = { step: 0 };
+function showOnboarding() {
+  ob.step = 0;
+  $('onboard').hidden = false;
+  paintOnboarding();
+  window.vigil.ollama.status().then((s) => { $('obLocalState').textContent = s && s.running ? '✓ Ollama läuft bereits' : s && s.installed ? 'Ollama ist installiert' : 'Ollama wird bei Bedarf eingerichtet'; }).catch(() => {});
+  setTimeout(() => $('obNext').focus(), 50);
+}
+function paintOnboarding() {
+  document.querySelectorAll('#onboard .ob-step').forEach((s) => { s.hidden = Number(s.dataset.step) !== ob.step; });
+  document.querySelectorAll('#onboard .ob-steps i').forEach((d, i) => d.classList.toggle('on', i <= ob.step));
+  $('obBack').hidden = ob.step === 0;
+  $('obNext').textContent = ob.step === 2 ? 'Fertig' : 'Weiter';
+}
+function finishOnboarding() {
+  $('onboard').hidden = true;
+  state.config.onboarded = true;
+  saveCfg();
+}
+function setupOnboarding() {
+  $('obNext').onclick = () => { if (ob.step >= 2) finishOnboarding(); else { ob.step++; paintOnboarding(); } };
+  $('obBack').onclick = () => { ob.step = Math.max(0, ob.step - 1); paintOnboarding(); };
+  $('obSkip').onclick = finishOnboarding;
+  document.querySelectorAll('#onboard [data-mode]').forEach((b) => b.onclick = () => { setMode(b.dataset.mode); document.querySelectorAll('#onboard [data-mode]').forEach((x) => x.classList.toggle('picked', x === b)); setTimeout(() => { ob.step = 2; paintOnboarding(); }, 250); });
+  $('obFolder').onclick = async () => { const p = await window.vigil.pickFolder(); if (p && p.length) { p.forEach((x) => addTarget('path', x)); finishOnboarding(); showView('scan'); toast('Ordner übernommen – jetzt „Prüfung starten“', 'ok'); } };
+  $('obDemo').onclick = async () => {
+    $('obDemo').disabled = true;
+    const r = await window.vigil.sampleDemo();
+    $('obDemo').disabled = false;
+    if (!r || !r.ok) { toast('Beispiel-Lauf nicht möglich: ' + ((r && r.error) || '?'), 'err'); return; }
+    finishOnboarding();
+    showView('results');
+    $('emptyState').hidden = true; $('progressPanel').hidden = true;
+    renderResult(r.result);
+    toast(`Beispiel-Lauf: ${r.result.summary.total} Befunde im Übungsprojekt`, 'ok');
+  };
+  $('onboard').addEventListener('keydown', (e) => { if (e.key === 'Escape') finishOnboarding(); });
+  $('onboardAgainBtn').onclick = showOnboarding;
+  if (!state.config.onboarded) showOnboarding();
+}
+
+init().then(setupOnboarding).catch((e) => console.error(e));

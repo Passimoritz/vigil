@@ -711,6 +711,42 @@
 </div>
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
+<div id="onboard" class="ob-bg" hidden>
+  <div class="ob" role="dialog" aria-modal="true" aria-labelledby="obTitle">
+    <div class="ob-steps" aria-hidden="true"><i class="on"></i><i></i><i></i></div>
+    <section class="ob-step" data-step="0">
+      <span class="logo-tile ob-logo"><svg viewBox="0 0 1024 1024"><path fill="#f2b23a" d="M216 208 L380 208 L512 540 L644 208 L808 208 L808 492 C808 676 692 808 512 892 C332 808 216 676 216 492 Z"/></svg></span>
+      <h2 id="obTitle">Willkommen bei Vigil</h2>
+      <p class="ob-lead">Vigil sucht Sicherheitslücken in deinen eigenen Projekten, Webseiten, Servern und Cloud-Konten – und erklärt in Klartext, was zu tun ist.</p>
+      <ul class="ob-list">
+        <li><b>Feste Regeln und Datenbanken</b> finden Bekanntes sicher: Zugangsdaten im Code, verwundbare Pakete, Fehlkonfigurationen.</li>
+        <li><b>Eine KI</b> sucht zusätzlich nach Logikfehlern und prüft ihre Funde selbst gegen.</li>
+        <li><b>Nur Eigenes, zerstörungsfrei:</b> keine Angriffe, keine Last-Tests, Zugangsdaten werden vor dem Versand an eine Cloud-KI geschwärzt.</li>
+      </ul>
+    </section>
+    <section class="ob-step" data-step="1" hidden>
+      <h2>Welche KI soll mithelfen?</h2>
+      <p class="ob-lead">Lässt sich später jederzeit ändern. Für Webseiten, Server und Container braucht Vigil gar keine KI.</p>
+      <div class="ob-choices">
+        <button type="button" class="ob-choice" data-mode="local"><b>Lokal auf diesem PC</b><span>Kostenlos und privat – der Code verlässt den Rechner nicht. Braucht Ollama und etwas Geduld.</span><em id="obLocalState"></em></button>
+        <button type="button" class="ob-choice" data-mode="cloud"><b>Cloud-KI</b><span>Claude, OpenAI oder Gemini: schneller und genauer, kostet meist wenige Cent je Prüfung. Braucht einen API-Schlüssel.</span></button>
+      </div>
+    </section>
+    <section class="ob-step" data-step="2" hidden>
+      <h2>Los geht’s</h2>
+      <p class="ob-lead">Am schnellsten siehst du, was Vigil kann, am mitgelieferten Übungsprojekt – es steckt voller absichtlicher Lücken.</p>
+      <div class="ob-choices">
+        <button type="button" class="ob-choice" id="obDemo"><b>Beispiel-Lauf ansehen</b><span>Prüft das Übungsprojekt in wenigen Sekunden mit den festen Regeln, ganz ohne KI.</span></button>
+        <button type="button" class="ob-choice" id="obFolder"><b>Eigenen Projektordner wählen</b><span>Danach nur noch auf „Prüfung starten“ klicken.</span></button>
+      </div>
+    </section>
+    <footer class="ob-foot">
+      <button type="button" class="btn ghost" id="obSkip">Überspringen</button>
+      <span class="ob-nav"><button type="button" class="btn" id="obBack" hidden>Zurück</button><button type="button" class="btn primary" id="obNext">Weiter</button></span>
+    </footer>
+  </div>
+</div>
+
 <script src="renderer.js"></script>
 </body>
 </html>

@@ -429,6 +429,23 @@ ipcMain.handle('finding:ask', async (_e, payload) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// Beispiel-Lauf beim ersten Start: Uebungsprojekt nur mit Regeln und Modulen pruefen (ohne KI, ohne Netz)
+ipcMain.handle('sample:demo', async () => {
+  try {
+    const dir = path.join(app.getAppPath(), 'bench', 'vulnerable-app');
+    const { ingestTargets } = require('../src/core/ingest');
+    const { prescan } = require('../src/core/prescan');
+    const { runStaticModules } = require('../src/core/modules/static');
+    const { dedupeFindings, sortFindings, summarize } = require('../src/core/schema');
+    const { enrichRemedy } = require('../src/core/remedies');
+    const { applyTaxonomy } = require('../src/core/taxonomy');
+    const ing = await ingestTargets([{ type: 'path', value: dir }]);
+    const pre = prescan(ing.units, {});
+    const findings = sortFindings(applyTaxonomy(dedupeFindings([...pre.findings, ...runStaticModules(ing.units).findings]).map(enrichRemedy)));
+    return { ok: true, result: { findings, summary: summarize(findings), errors: ['Beispiel-Lauf: absichtlich unsicheres Übungsprojekt, nur feste Regeln (ohne KI).'], meta: { provider: 'regeln', model: 'ohne KI', at: new Date().toISOString(), units: ing.units.length, demo: true } } };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 ipcMain.handle('aicache:info', () => ({ entries: aiCache().size() }));
 ipcMain.handle('aicache:clear', () => { aiCache().clear(); return { ok: true }; });
 ipcMain.handle('audit:cancel', () => ({ ok: orchestrator.cancel() }));
