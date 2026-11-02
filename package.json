@@ -11,7 +11,8 @@
     "make-icon": "node tools/make-icon.js",
     "dist": "electron-builder --win",
     "dist:portable": "electron-builder --win portable",
-    "bench": "node tools/bench.js"
+    "bench": "node tools/bench.js",
+    "e2e": "node test/e2e.js"
   },
   "license": "MIT",
   "devDependencies": {

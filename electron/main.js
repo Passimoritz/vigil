@@ -24,7 +24,9 @@ const { verifyOwnership, hostOf: scopeHost } = require('../src/core/scope');
 // Version ohne Installation: Die portable EXE (bzw. eine Datei "portable" neben Vigil.exe)
 // speichert alle Daten im Ordner "VigilData" daneben statt im Benutzerprofil.
 const PORTABLE_DIR = process.env.PORTABLE_EXECUTABLE_DIR || (fs.existsSync(path.join(path.dirname(process.execPath), 'portable')) ? path.dirname(process.execPath) : '');
-if (PORTABLE_DIR) { try { const d = path.join(PORTABLE_DIR, 'VigilData'); fs.mkdirSync(d, { recursive: true }); app.setPath('userData', d); } catch { /* dann Standardort */ } }
+// Tests laufen mit eigenem, leerem Datenordner
+if (process.env.VIGIL_E2E_DATA) { fs.mkdirSync(process.env.VIGIL_E2E_DATA, { recursive: true }); app.setPath('userData', process.env.VIGIL_E2E_DATA); }
+else if (PORTABLE_DIR) { try { const d = path.join(PORTABLE_DIR, 'VigilData'); fs.mkdirSync(d, { recursive: true }); app.setPath('userData', d); } catch { /* dann Standardort */ } }
 
 // Absturzberichte nur lokal: Minidumps (crashReporter ohne Upload) plus eine lesbare
 // JSON-Datei je Fehler im Ordner "crash-reports". Es wird nichts uebertragen.
@@ -216,7 +218,7 @@ function createWindow() {
     height: 820,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#14171c',
+    backgroundColor: '#0a0e15',
     title: 'Vigil',
     icon: iconPath(),
     webPreferences: {
@@ -231,6 +233,16 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.loadFile(path.join(__dirname, '..', 'src', 'ui', 'index.html'));
+  // Automatische Oberflaechen-Tests (test/e2e.js): Skript im Fenster ausfuehren, Ergebnis schreiben, beenden
+  if (process.env.VIGIL_E2E_SCRIPT) {
+    win.webContents.once('did-finish-load', async () => {
+      let out;
+      try { out = await win.webContents.executeJavaScript(fs.readFileSync(process.env.VIGIL_E2E_SCRIPT, 'utf8'), true); }
+      catch (e) { out = { ok: false, results: [{ name: 'Skript', ok: false, info: e.message }] }; }
+      try { fs.writeFileSync(process.env.VIGIL_E2E_OUT, JSON.stringify(out, null, 2)); } catch { /* egal */ }
+      app.exit(out && out.ok ? 0 : 1);
+    });
+  }
 }
 
 // Gespeicherten Proxy anwenden, aber nie am Start abstuerzen (ungueltige URL o. Ae.).

@@ -1419,6 +1419,17 @@ function closeDashDetail() {
 }
 
 // --- Einstellungen ------------------------------------------------------
+// Barrierefreiheit: Eingabefelder ohne eigene Beschriftung bekommen den Namen ihrer Zeile
+// (Einstellungen: fettgedruckter Titel links) bzw. ihren Platzhalter als Namen fuer Bildschirmleser.
+function labelOrphans(root = document) {
+  root.querySelectorAll('input, select, textarea').forEach((i) => {
+    if (i.type === 'hidden' || (i.labels && i.labels.length) || i.getAttribute('aria-label') || i.closest('label')) return;
+    const row = i.closest('.set-row');
+    const name = (row && row.querySelector('.set-label b') && row.querySelector('.set-label b').textContent) || i.getAttribute('placeholder') || i.getAttribute('title');
+    if (name) i.setAttribute('aria-label', name.trim());
+  });
+}
+
 // --- Darstellung: Farbschema, Schriftgroesse ------------------------------------
 const SCALES = [0.9, 1, 1.12, 1.25];
 function applyAppearance() {
@@ -1445,6 +1456,7 @@ function setupAppearance() {
   });
   $('crashOpenBtn').onclick = () => window.vigil.crashOpen();
   applyAppearance();
+  if (state.config.lang === 'en' && window.applyLanguage) window.applyLanguage('en');
 }
 function renderReportLogo() {
   const has = /^data:image\//.test(state.config.reportLogo || '');
@@ -1588,6 +1600,7 @@ async function init() {
   $('clearBtn').onclick = () => { state.targets = []; renderTargets(); };
   setupKnown();
   setupAppearance();
+  labelOrphans();
 
   // Schritt 2: KI
   $('modeLocal').onclick = () => setMode('local');
