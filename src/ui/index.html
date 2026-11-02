@@ -536,6 +536,7 @@
         <a href="#set-privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>Datenschutz</a>
         <a href="#set-scope"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17 19 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Freigaben</a>
         <a href="#set-deep"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m20 20-4.2-4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Tiefe Prüfungen</a>
+        <a href="#set-feeds"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 9M20 4v5h-5M20 12a8 8 0 0 1-13.7 5.6L4 15M4 20v-5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Erkennungsdaten</a>
         <a href="#set-login"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>Login-Prüfung</a>
         <a href="#set-malware"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v5.5c0 4.3-2.9 7.6-7 9-4.1-1.4-7-4.7-7-9V6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>Schadsoftware</a>
         <a href="#set-matrix"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>API-Rechtematrix</a>
@@ -634,6 +635,13 @@
             <div class="set-label"><b>Threat-Intel (CISA KEV, EPSS)</b><span id="intelSettings"></span></div>
             <button id="intelSyncBtn" type="button" class="btn">Jetzt aktualisieren</button>
           </div>
+        </section>
+
+        <section class="card set-block" id="set-feeds">
+          <h2>Erkennungsdaten – automatisch aktuell</h2>
+          <p class="hint">Vigil holt sich neue Erkennungsdaten selbst, ganz ohne App-Update: beim Start und danach alle 6 Stunden, spätestens einmal am Tag. Es werden nur Daten geladen, nie Programmcode. Jede Quelle wird vor der Nutzung geprüft; schlägt ein Download fehl, bleibt die letzte gute Fassung aktiv.</p>
+          <ul class="feed-list" id="feedList"><li class="muted small">Lade Stand …</li></ul>
+          <div class="row-inline"><button id="feedsSyncBtn" type="button" class="btn">Jetzt alles aktualisieren</button><span id="feedsSyncStatus" class="hint"></span></div>
         </section>
 
         <section class="card set-block" id="set-login">

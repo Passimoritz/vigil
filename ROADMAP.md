@@ -179,3 +179,44 @@ Ein Sicherheitswerkzeug muss selbst besonders sicher sein.
 ---
 
 Grundsatz: Vigil prüft nur eigene oder freigegebene Ziele, zerstörungsfrei, ohne Angriffe und ohne Last-Tests, und schwärzt Zugangsdaten, bevor etwas an eine Cloud-KI geht.
+
+## Weitere Prüfungen (Ideen)
+
+Für Vigil gedacht, noch nicht umgesetzt. Alle Ideen bleiben zerstörungsfrei und lesen nur.
+
+- [ ] **Mehr tagesaktuelle Quellen** · Aufwand klein
+  Weitere geprüfte Feeds über dasselbe System einbinden:
+  - Zertifikats-Transparenz (neue, unbekannte Zertifikate für die eigene Domain),
+  - Phishing-Listen (taucht die eigene Domain dort auf?),
+  - Have-I-Been-Pwned für die Firmen-Domain.
+- [ ] **Abgelaufene oder bald ablaufende Zertifikate und Domains** · Aufwand klein
+  Warnung 30, 14 und 3 Tage vorher, auch für Subdomains.
+- [ ] **E-Mail-Sicherheit vollständig** · Aufwand klein
+  MTA-STS, TLS-RPT, BIMI und DNSSEC, zusätzlich zu SPF, DMARC und DKIM.
+- [ ] **Browser-Erweiterungen und installierte Programme** · Aufwand mittel
+  Veraltete Programme auf dem PC (über winget/Registry) gegen bekannte Lücken abgleichen.
+- [ ] **WLAN und Router im eigenen Netz** · Aufwand mittel
+  Nur lesend:
+  - offene Verwaltungsoberflächen im LAN,
+  - UPnP,
+  - veraltete Router-Firmware nach Herstellerangabe.
+- [ ] **Datenbanken direkt** · Aufwand mittel
+  Mit eigenem Lesezugang:
+  - Standardpasswörter,
+  - öffentliche Rechte,
+  - unverschlüsselte Verbindungen,
+  - veraltete Version (PostgreSQL, MySQL, MongoDB, Redis).
+- [ ] **CI/CD-Konten** · Aufwand mittel
+  GitHub-, GitLab- und Azure-DevOps-Einstellungen über die offizielle API, nur lesend:
+  - Branch-Schutz,
+  - Secret-Scanning an,
+  - zu weit gefasste Tokens.
+- [ ] **Microsoft 365 / Google Workspace** · Aufwand groß
+  Nur lesend:
+  - Mehr-Faktor-Anmeldung für alle,
+  - veraltete Anmeldeverfahren,
+  - offene Freigaben.
+- [ ] **Datenschutz-Check von Webseiten** · Aufwand mittel
+  Welche Cookies und Dritt-Dienste vor der Einwilligung geladen werden (DSGVO/TTDSG).
+- [ ] **Software-Stückliste ausgeben** · Aufwand klein
+  SBOM im CycloneDX- und SPDX-Format für jedes geprüfte Projekt.

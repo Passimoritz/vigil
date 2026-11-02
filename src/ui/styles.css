@@ -991,3 +991,14 @@ button.stat:hover:not(:disabled) { border-color: var(--line-strong); }
 .dash-pane .ftable td.ft-main { max-width: 460px; }
 .dash-pane .ftable td.ft-main b, .dash-pane .ftable td.ft-main .f-loc { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dash-pane .ftable td.ft-tgt { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Erkennungsdaten */
+.feed-list { list-style: none; margin: 6px 0 12px; padding: 0; }
+.feed-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.feed-row:last-child { border-bottom: 0; }
+.feed-row > div { display: flex; flex-direction: column; min-width: 0; }
+.feed-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.feed-dot.ok { background: var(--low); box-shadow: 0 0 0 3px color-mix(in srgb, var(--low) 20%, transparent); }
+.feed-dot.bad { background: var(--med); }
+.feed-dot.live { background: var(--accent); }
+.feed-when { color: var(--muted); text-align: right; max-width: 280px; }

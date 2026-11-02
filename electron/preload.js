@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('vigil', {
   deleteRun: (id) => ipcRenderer.invoke('run:delete', id),
   purgeResolved: (targetId) => ipcRenderer.invoke('findings:purgeResolved', targetId || ''),
   aiCacheInfo: () => ipcRenderer.invoke('aicache:info'),
+  feedsStatus: () => ipcRenderer.invoke('feeds:status'),
+  feedsSync: () => ipcRenderer.invoke('feeds:sync'),
   findingSnippet: (location) => ipcRenderer.invoke('finding:snippet', String(location || '')),
   askFinding: (payload) => ipcRenderer.invoke('finding:ask', payload),
   crashInfo: () => ipcRenderer.invoke('crash:info'),

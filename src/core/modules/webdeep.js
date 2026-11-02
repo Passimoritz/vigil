@@ -256,11 +256,13 @@ async function loginAudit(cfg, guard, { signal, onProgress = () => {} } = {}) {
 async function runDeepWeb(targetUrl, { deep = false, login = null, rps = 4, signal, onProgress = () => {} } = {}) {
   const guard = new WafGuard(rps);
   const findings = [], notes = [], ran = [];
+  const scripts = new Set(); // eingebundene Skripte (fuer den Abgleich verwundbarer Bibliotheken)
   const url = /^https?:\/\//i.test(targetUrl) ? targetUrl : 'https://' + targetUrl;
   try {
     onProgress({ phase: 'webscan', message: `Unterseiten und Formulare: ${new URL(url).host} …` });
     const pages = await crawl(url, guard, { signal, max: deep ? MAX_PAGES : 12 });
     findings.push(...formFindings(pages));
+    for (const p of pages) for (const m of String(p.html).matchAll(/<script\b[^>]*\bsrc\s*=\s*["']([^"']+)/gi)) { try { scripts.add(new URL(m[1], p.url).href); } catch { /* egal */ } }
     ran.push('web-crawl');
     notes.push(`Webseite durchgegangen: ${pages.length} Seite(n), ${pages.reduce((n, p) => n + p.forms.length, 0)} Formular(e).`);
     if (deep) {
@@ -276,10 +278,10 @@ async function runDeepWeb(targetUrl, { deep = false, login = null, rps = 4, sign
       }
     } else notes.push('Schwachstellen-Proben und Login-Prüfung nur für nachgewiesene eigene Domains (Übersicht › Verifizieren).');
   } catch (e) {
-    if (e.throttled) return { findings, notes: [...notes, e.message], ran, throttled: true };
+    if (e.throttled) return { findings, notes: [...notes, e.message], ran, throttled: true, scripts: [...scripts] };
     notes.push('Tiefe Web-Prüfung: ' + e.message);
   }
-  return { findings, notes, ran, throttled: false };
+  return { findings, notes, ran, throttled: false, scripts: [...scripts] };
 }
 
 module.exports = { runDeepWeb, crawl, parseForms, formFindings, paramTargets, probe, loginAudit, Jar, buildLoginBody };

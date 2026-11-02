@@ -51,6 +51,20 @@ app.on('child-process-gone', (_e, d) => { if (d.reason !== 'clean-exit') writeCr
 const INTEL_PATH = () => path.join(app.getPath('userData'), 'threat-intel.json');
 let intel = null;
 let intelSyncing = null;
+// Tagesaktuelle Erkennungsdaten (gitleaks-Regeln, retire.js) – geladen beim Start, alle 6 Std. geprueft
+const feeds = require('../src/core/feeds');
+const FEEDS_DIR = () => path.join(app.getPath('userData'), 'feeds');
+let feedsCompiled = null;
+let feedsSyncing = null;
+const currentFeeds = () => (feedsCompiled = feedsCompiled || feeds.loadCompiled(FEEDS_DIR()));
+function syncFeedsInBackground(force = false) {
+  if (feedsSyncing) return feedsSyncing;
+  if (!force && !feeds.needsFeedSync(FEEDS_DIR())) return Promise.resolve({ ok: true, skipped: true });
+  feedsSyncing = feeds.syncFeeds(FEEDS_DIR(), { force }).then((r) => { feedsCompiled = feeds.loadCompiled(FEEDS_DIR()); return { ok: r.every((x) => x.ok || x.skipped), results: r }; })
+    .catch((e) => ({ ok: false, error: e.message })).finally(() => { feedsSyncing = null; });
+  return feedsSyncing;
+}
+
 function syncIntelInBackground(force = false) {
   if (intelSyncing) return intelSyncing;
   if (!force && intel && !needsSync(intel)) return Promise.resolve({ ok: true, skipped: true });
@@ -288,14 +302,14 @@ app.whenReady().then(() => {
     runAudit,
     buildConfig: (providerId) => {
       const c = loadConfig(); applyProxySafe(c);
-      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), webCrawl: c.webCrawl !== false, malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4 };
+      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), webCrawl: c.webCrawl !== false, malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4 };
     },
   });
   api = createApi({ orchestrator, getConfig: loadConfig, enforceScope });
   applyApi(cfg);
   intel = loadIntel(INTEL_PATH());
-  setTimeout(() => syncIntelInBackground(), 5000); // nach dem Start, ohne ihn zu bremsen
-  setInterval(() => syncIntelInBackground(), 6 * 60 * 60 * 1000);
+  setTimeout(() => { syncIntelInBackground(); syncFeedsInBackground(); }, 5000); // nach dem Start, ohne ihn zu bremsen
+  setInterval(() => { syncIntelInBackground(); syncFeedsInBackground(); }, 6 * 60 * 60 * 1000);
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -526,6 +540,9 @@ ipcMain.handle('sbom:search', (_e, q) => orchestrator.searchSbom(String(q || '')
 // --- Threat-Intel -------------------------------------------------------------
 ipcMain.handle('intel:status', () => ({ updatedAt: intel && intel.updatedAt, kev: intel ? intel.kev.size : 0, epss: intel ? intel.epss.size : 0, syncing: !!intelSyncing }));
 ipcMain.handle('intel:sync', () => syncIntelInBackground(true));
+// Uebersicht aller Erkennungsquellen fuer die Einstellungen
+ipcMain.handle('feeds:status', () => ({ feeds: feeds.feedStatus(FEEDS_DIR()), intel: { updatedAt: intel && intel.updatedAt, kev: intel ? intel.kev.size : 0, epss: intel ? intel.epss.size : 0 }, syncing: !!(feedsSyncing || intelSyncing) }));
+ipcMain.handle('feeds:sync', async () => { const [a, b] = await Promise.all([syncFeedsInBackground(true), syncIntelInBackground(true)]); return { ok: !!(a && a.ok !== false) && !!(b && b.ok !== false), feeds: a, intel: b }; });
 
 // --- Links: nur geprüfte Ziele im Standardbrowser öffnen --------------------
 ipcMain.handle('link:open', (_e, url) => (isAllowedLink(String(url || '')) ? shell.openExternal(String(url)).then(() => ({ ok: true })) : { ok: false, error: 'Link nicht erlaubt.' }));

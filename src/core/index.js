@@ -95,6 +95,8 @@ async function runAudit(targets, config, onProgress = () => {}) {
         const login = deep && typeof config.webLogin === 'function' ? config.webLogin(t.value) : null;
         const dw = await runDeepWeb(t.value, { deep, login, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress });
         webFindings.push(...dw.findings); webNotes.push(...dw.notes);
+        // Eingebundene Skripte gegen die taeglich aktualisierte retire.js-Datenbank
+        if (config.feeds && config.feeds.retire.length && dw.scripts && dw.scripts.length) webFindings.push(...require('./feedscan').scanScriptUris(dw.scripts, config.feeds.retire, t.value));
         if (dw.throttled) throttled = true;
         else for (const id of dw.ran) scannersRun.push({ target: t.value, source: id });
       }
@@ -162,6 +164,15 @@ async function runAudit(targets, config, onProgress = () => {}) {
         } catch (e) { webNotes.push(`${nm} ${t.value}: ${e.message}`); }
       }
     }
+  }
+  // Tagesaktuelle Feeds: Zugangsdaten-Formate (gitleaks) und verwundbare JS-Bibliotheken (retire.js)
+  if (config.feeds && ing.units.length) {
+    const fs2 = require('./feedscan');
+    const f1 = fs2.scanSecretsWithFeed(ing.units, config.feeds.secretRules);
+    const f2 = fs2.scanJsLibs(ing.units, config.feeds.retire);
+    webFindings.push(...f1, ...f2);
+    if (config.feeds.secretRules.length) for (const t of targets.filter((x) => x.type === 'path')) scannersRun.push({ target: t.value, source: 'gitleaks-feed' });
+    if (config.feeds.retire.length) for (const t of targets.filter((x) => x.type === 'path')) scannersRun.push({ target: t.value, source: 'retire-feed' });
   }
   // Schadsoftware: Defender (ohne Loeschen), Signaturen, Abgleich bekannter Schadprogramme
   if (config.malwareScan !== false && !aborted()) {

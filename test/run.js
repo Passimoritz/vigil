@@ -932,6 +932,35 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('aufräumen: behobene Befunde löschen', st.purgeResolved(db).deleted === 1 && Object.keys(db.findings).length === 0);
   }
 
+  // --- Tagesaktuelle Erkennungsdaten (Feeds) ---
+  {
+    const fs = require('fs'); const os = require('os'); const path = require('path');
+    const feeds = require('../src/core/feeds');
+    const fscan = require('../src/core/feedscan');
+    const toml = ['title = "gitleaks"', ...Array.from({ length: 60 }, (_, i) => `[[rules]]\nid = "demo-${i}"\ndescription = "Demo Token ${i}"\nregex = '''(?i)\\b(demo${i}_[a-z0-9]{20})\\b'''\nkeywords = ["demo${i}_"]\n`), '[[rules]]\nid = "github-pat"\ndescription = "GitHub Personal Access Token"\nregex = \'\'\'ghp_[0-9a-zA-Z]{36}\'\'\'\nkeywords = ["ghp_"]\n[[rules.allowlists]]\nregexes = [\'\'\'x\'\'\']'].join('\n');
+    const repo = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`lib${i}`, { vulnerabilities: [{ below: '2.0.0', severity: 'high', identifiers: { CVE: [`CVE-2020-000${i}`], summary: 'XSS' } }], extractors: { filename: [`lib${i}-(§§version§§)(.min)?\\.js`], filecontent: [`/\\*! lib${i} v(§§version§§)`] } }]));
+    const fake = (bodies) => async (url) => { const b = bodies[url]; if (b instanceof Error) throw b; return { ok: b !== undefined, status: b === undefined ? 404 : 200, arrayBuffer: async () => Buffer.from(b) }; };
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-feeds-'));
+    const urls = { [feeds.FEEDS[0].urls[0]]: toml, [feeds.FEEDS[1].urls[0]]: JSON.stringify(repo) };
+    const r1 = await feeds.syncFeeds(dir, { fetchImpl: fake(urls) });
+    check('feeds: beide Quellen geladen und geprüft', r1.every((x) => x.ok) && r1[0].count === 61 && r1[1].count === 25);
+    const r2 = await feeds.syncFeeds(dir, { fetchImpl: fake({}) });
+    check('feeds: frische Daten werden nicht erneut geladen', r2.every((x) => x.skipped));
+    const r3 = await feeds.syncFeeds(dir, { force: true, fetchImpl: fake({ [feeds.FEEDS[0].urls[0]]: 'kaputt', [feeds.FEEDS[1].urls[0]]: new Error('offline'), [feeds.FEEDS[1].urls[1]]: new Error('offline') }) });
+    const st = feeds.feedStatus(dir);
+    check('feeds: fehlerhafte Quelle – letzte gute Fassung bleibt aktiv', r3.every((x) => !x.ok) && st[0].count === 61 && /Format unerwartet/.test(st[0].lastError) && st[1].count === 25);
+    check('feeds: nur erlaubte HTTPS-Quellen', feeds.FEEDS.every((f) => f.urls.every((u) => u.startsWith('https://raw.githubusercontent.com/'))));
+    const c = feeds.loadCompiled(dir);
+    check('feeds: Go-Regex nach JavaScript übersetzt', c.secretRules.length === 61 && c.secretRules[0].re.flags.includes('i') && feeds.goRegexToJs('(?P<k>a)\\z').source === '(?<k>a)$' && feeds.goRegexToJs('\\p{L}+') === null);
+    const sec = fscan.scanSecretsWithFeed([{ label: 'p/a.js', content: 'x = "DEMO7_abcdefghij0123456789"\ny = "ghp_' + 'A'.repeat(18) + 'b'.repeat(18) + '"\nz = "demo3_example_example_ex"' }], c.secretRules);
+    check('feeds: Zugangsdaten mit neuen Regeln gefunden, Beispielwerte ignoriert', sec.length === 2 && sec.some((f) => f.ruleId === 'gl-demo-7' && f.location === 'p/a.js:1') && sec.some((f) => f.ruleId === 'gl-github-pat' && f.severity === 'critical'));
+    const libs = fscan.scanJsLibs([{ label: 'p/vendor/lib4-1.9.2.min.js', content: '' }, { label: 'p/x.js', content: '/*! lib5 v2.1.0 */' }], c.retire);
+    check('feeds: verwundbare Bibliothek per Dateiname, aktuelle Version still', libs.length === 1 && /lib4 1\.9\.2 \(CVE-2020-0004\)/.test(libs[0].title) && libs[0].package.fixed === '2.0.0');
+    check('feeds: Skripte einer Webseite geprüft', fscan.scanScriptUris(['https://cdn.example/lib9-1.0.0.js'], c.retire, 'https://x').length === 1);
+    check('feeds: Versionsvergleich', fscan.cmpVer('1.10.0', '1.9.9') > 0 && fscan.cmpVer('2.0.0-beta', '2.0.0') < 0 && fscan.cmpVer('3.4.1', '3.4.1') === 0);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

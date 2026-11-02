@@ -1596,6 +1596,23 @@ function setupAppearance() {
   applyAppearance();
   if (state.config.lang === 'en' && window.applyLanguage) window.applyLanguage('en');
 }
+// Erkennungsquellen: was ist wie aktuell? (live, taeglich, von Windows)
+function renderFeeds() {
+  if (!window.vigil.feedsStatus) return;
+  window.vigil.feedsStatus().then((s) => {
+    const age = (iso) => { if (!iso) return null; const h = (Date.now() - Date.parse(iso)) / 36e5; return h < 1 ? 'vor weniger als einer Stunde' : h < 48 ? `vor ${Math.round(h)} Std.` : `vor ${Math.round(h / 24)} Tagen`; };
+    const row = (name, desc, when, ok, extra = '') => `<li class="feed-row"><span class="feed-dot ${ok === true ? 'ok' : ok === false ? 'bad' : 'live'}" aria-hidden="true"></span><div><b>${esc(name)}</b><span class="muted small">${esc(desc)}</span></div><span class="small feed-when">${esc(when)}${extra}</span></li>`;
+    const fresh = (iso) => !!iso && Date.now() - Date.parse(iso) < 30 * 36e5;
+    const rows = [
+      row('Paket-Schwachstellen (OSV.dev)', 'npm, PyPI, Maven, Go, Cargo, NuGet, RubyGems … – wird bei jedem Lauf live abgefragt', 'immer aktuell', null),
+      row('Aktiv ausgenutzte Lücken (CISA KEV)', `${s.intel.kev || 0} Einträge`, s.intel.updatedAt ? age(s.intel.updatedAt) : 'noch nicht geladen', fresh(s.intel.updatedAt)),
+      row('Ausnutzungs-Wahrscheinlichkeit (EPSS)', `${s.intel.epss || 0} Werte`, s.intel.updatedAt ? age(s.intel.updatedAt) : 'noch nicht geladen', fresh(s.intel.updatedAt)),
+      ...s.feeds.map((f) => row(f.label, f.count ? `${f.count} ${f.id === 'retirejs' ? 'Bibliotheken' : 'Regeln'}` : 'noch nicht geladen', f.fetchedAt ? age(f.fetchedAt) : 'noch nicht geladen', f.fetchedAt ? fresh(f.fetchedAt) && !f.lastError : false, f.lastError ? ` · letzter Versuch fehlgeschlagen: ${esc(f.lastError)}` : '')),
+      row('Schadsoftware-Signaturen (Microsoft Defender)', 'aktualisiert Windows selbst mehrmals täglich', 'von Windows', null),
+    ];
+    $('feedList').innerHTML = rows.join('');
+  }).catch(() => {});
+}
 function renderLoginStatus() {
   if (!window.vigil.webLoginGet) return;
   window.vigil.webLoginGet().then((list) => {
@@ -1637,7 +1654,7 @@ function renderSettings() {
   $('reportCompanyInput').value = state.config.reportCompany || '';
   $('malwareChk').checked = state.config.malwareScan !== false;
   $('crawlChk').checked = state.config.webCrawl !== false;
-  renderLoginStatus(); renderMalwareStatus();
+  renderLoginStatus(); renderMalwareStatus(); renderFeeds();
   applyAppearance();
   if (window.vigil.crashInfo) window.vigil.crashInfo().then((c) => { $('crashInfo').textContent = c.count ? `Bisher ${c.count} Bericht(e) gespeichert.` : 'Bisher keine Abstürze.'; }).catch(() => {});
   renderReportLogo();
@@ -1840,6 +1857,13 @@ async function init() {
   };
   document.querySelectorAll('#presetGrid .preset').forEach((b) => b.onclick = () => applyPreset(b.dataset.preset));
   // Schalter, die zu einem Profil gehoeren: Profil-Markierung sofort mitziehen
+  $('feedsSyncBtn').onclick = async () => {
+    $('feedsSyncBtn').disabled = true; $('feedsSyncStatus').textContent = 'Lade die neuesten Erkennungsdaten …';
+    const r = await window.vigil.feedsSync();
+    $('feedsSyncBtn').disabled = false;
+    $('feedsSyncStatus').textContent = r.ok ? '✓ Alles aktuell.' : 'Teilweise fehlgeschlagen – die letzte gute Fassung bleibt aktiv.';
+    renderFeeds();
+  };
   $('cacheClearBtn').onclick = async () => { await window.vigil.aiCacheClear(); $('cacheInfo').textContent = ''; toast('KI-Zwischenspeicher geleert – der nächste Lauf prüft alles neu', 'ok'); };
   ['depthSelect', 'validateChk', 'cveChk', 'activeChk', 'domChk', 'malwareChk', 'crawlChk'].forEach((id) => $(id).addEventListener('change', () => { collectSettings(); renderPresets(); }));
   // Einstellungen: Unternavigation folgt dem Scrollen
