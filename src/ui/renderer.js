@@ -671,8 +671,56 @@ function findingDetail(f) {
       ${linkedHtml}
       ${check}
       ${f.evidence ? `<div class="f-sec evidence"><h4>Fundstelle</h4><code>${esc(f.evidence)}</code></div>` : ''}
+      ${/:\d+(:\d+)?$/.test(f.location || '') && !/^https?:/i.test(f.location || '') ? '<div class="f-sec code-sec" hidden><h4>Betroffener Code</h4><div class="code-view"></div></div>' : ''}
       ${solutionBlock(f)}
+      <div class="f-sec ask-sec">
+        <h4>Rückfrage an die KI</h4>
+        <div class="ask-log" aria-live="polite"></div>
+        <div class="ask-quick">
+          <button type="button" class="chip-btn" data-q="Ist das bei mir wirklich ausnutzbar? Was müsste dafür gegeben sein?">Wirklich ausnutzbar?</button>
+          <button type="button" class="chip-btn" data-q="Wie behebe ich das genau in meinem Code? Bitte mit konkretem Beispiel.">Wie genau beheben?</button>
+          <button type="button" class="chip-btn" data-q="Kann das ein Fehlalarm sein? Woran erkenne ich das?">Fehlalarm?</button>
+        </div>
+        <form class="ask-form"><input type="text" class="ask-input" placeholder="Eigene Frage zu diesem Befund …" aria-label="Frage zu diesem Befund" maxlength="2000" /><button type="submit" class="btn primary tiny">Fragen</button></form>
+      </div>
     </div>`;
+}
+
+// Nach dem Einfuegen der Detailansicht: Code-Ausschnitt laden und Rueckfragen verdrahten.
+// Gespraeche bleiben je Befund erhalten, solange die App laeuft.
+state.chats = state.chats || {};
+function hydrateDetail(root, f) {
+  const codeSec = root.querySelector('.code-sec');
+  if (codeSec && window.vigil.findingSnippet) {
+    window.vigil.findingSnippet(f.location).then((s) => {
+      if (!s || !s.ok || !root.contains(codeSec)) return;
+      codeSec.hidden = false;
+      codeSec.querySelector('.code-view').innerHTML = `<div class="code-file">${esc(s.file)}</div><pre>${s.lines.map((l, i) => { const n = s.from + i; return `<span class="cl${n === s.line ? ' hit' : ''}"><i>${n}</i>${esc(l) || ' '}</span>`; }).join('')}</pre>`;
+    }).catch(() => {});
+  }
+  const sec = root.querySelector('.ask-sec');
+  if (!sec) return;
+  const key = f.id || `${f.ruleId}@${f.location}`;
+  const chat = state.chats[key] || (state.chats[key] = []);
+  const log = sec.querySelector('.ask-log');
+  const paint = () => {
+    log.innerHTML = chat.map((m) => `<div class="ask-msg ${m.role}">${m.role === 'user' ? '<b>Du</b>' : `<b>${esc(m.model || 'KI')}</b>`}<div>${m.pending ? '<span class="ask-dots"><i></i><i></i><i></i></span>' : esc(m.text).replace(/`([^`\n]+)`/g, '<code>$1</code>')}</div></div>`).join('');
+    log.hidden = !chat.length;
+  };
+  paint();
+  const ask = async (q) => {
+    q = String(q || '').trim();
+    if (!q || chat.some((m) => m.pending)) return;
+    const history = chat.filter((m) => !m.pending).map((m) => ({ role: m.role, text: m.text }));
+    chat.push({ role: 'user', text: q }, { role: 'ai', pending: true });
+    paint();
+    const r = await window.vigil.askFinding({ question: q, history, finding: { title: f.title, severity: f.severity, location: f.location, category: f.category, description: f.description, impact: f.impact, reachability: f.reachability, remediation: f.remediation } });
+    chat.pop();
+    chat.push({ role: 'ai', text: r && r.ok ? r.answer : `Keine Antwort: ${(r && r.error) || 'unbekannter Fehler'}`, model: r && r.model });
+    if (root.contains(sec)) paint();
+  };
+  sec.querySelectorAll('[data-q]').forEach((b) => b.onclick = () => ask(b.dataset.q));
+  sec.querySelector('.ask-form').onsubmit = (e) => { e.preventDefault(); const inp = sec.querySelector('.ask-input'); ask(inp.value); inp.value = ''; };
 }
 
 // --- Loesungsteil: Warum, Schritte, Versions-Patch, Schnipsel, Links -------
@@ -769,6 +817,7 @@ function renderDetail() {
   pane.innerHTML = findingDetail(f);
   pane.scrollTop = 0;
   bindSolutionControls(pane);
+  hydrateDetail(pane, f);
   pane.querySelectorAll('.linked-row').forEach((b) => b.onclick = () => {
     // Ausgeblendeter Teilbefund? Filter zuruecksetzen, damit er in der Liste auftaucht.
     if (!visibleList().some((x) => findingKey(x, state.lastFindings.indexOf(x)) === b.dataset.key)) { state.filter = 'all'; state.query = ''; $('findingSearch').value = ''; state.onlyNew = false; state.onlyProven = false; refreshResultView(); }
@@ -1352,6 +1401,7 @@ function openDashDetail(i, keepScroll) {
     + findingDetail(f)
     + (linked.length ? `<div class="f-sec"><h4>Beteiligte Befunde</h4>${linked.map((k) => `<button type="button" class="linked-row" data-i="${k}"><span class="sev-tag sev-${list[k].severity}">${SEV_LABEL[list[k].severity]}</span> ${esc(cleanTitle(list[k].title))}</button>`).join('')}</div>` : '');
   bindSolutionControls(body);
+  hydrateDetail(body, f);
   body.querySelectorAll('.linked-row').forEach((b) => b.onclick = () => openDashDetail(Number(b.dataset.i)));
   bindStatusSelects(body, (id, status) => { toast(`Status: ${STATUS_LABEL[status]}`, 'ok'); loadDashboard(); });
   $('dashDrawerPos').textContent = `Befund ${i + 1} von ${list.length}`;
@@ -1369,6 +1419,33 @@ function closeDashDetail() {
 }
 
 // --- Einstellungen ------------------------------------------------------
+// --- Darstellung: Farbschema, Schriftgroesse ------------------------------------
+const SCALES = [0.9, 1, 1.12, 1.25];
+function applyAppearance() {
+  const t = state.config.theme;
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  const z = Number(state.config.uiScale) || 1;
+  document.documentElement.style.zoom = z === 1 ? '' : String(z);
+  const mark = (id, attr, val) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset[attr] === String(val))));
+  mark('themeSeg', 'theme', t === 'light' || t === 'dark' ? t : 'system');
+  mark('scaleSeg', 'scale', z);
+  mark('langSeg', 'lang', state.config.lang === 'en' ? 'en' : 'de');
+}
+function setScale(z) { state.config.uiScale = z; saveCfg(); applyAppearance(); }
+function setupAppearance() {
+  document.querySelectorAll('#themeSeg button').forEach((b) => b.onclick = () => { state.config.theme = b.dataset.theme; saveCfg(); applyAppearance(); });
+  document.querySelectorAll('#scaleSeg button').forEach((b) => b.onclick = () => setScale(Number(b.dataset.scale)));
+  document.querySelectorAll('#langSeg button').forEach((b) => b.onclick = () => { state.config.lang = b.dataset.lang; saveCfg(); applyAppearance(); if (window.applyLanguage) window.applyLanguage(state.config.lang); });
+  document.addEventListener('keydown', (e) => {
+    if (!e.ctrlKey || e.altKey) return;
+    const cur = SCALES.indexOf(Number(state.config.uiScale) || 1);
+    if (e.key === '+' || e.key === '=') { e.preventDefault(); setScale(SCALES[Math.min(SCALES.length - 1, (cur < 0 ? 1 : cur) + 1)]); }
+    else if (e.key === '-') { e.preventDefault(); setScale(SCALES[Math.max(0, (cur < 0 ? 1 : cur) - 1)]); }
+    else if (e.key === '0') { e.preventDefault(); setScale(1); }
+  });
+  $('crashOpenBtn').onclick = () => window.vigil.crashOpen();
+  applyAppearance();
+}
 function renderReportLogo() {
   const has = /^data:image\//.test(state.config.reportLogo || '');
   $('reportLogoPreview').hidden = !has; $('reportLogoClear').hidden = !has;
@@ -1395,6 +1472,8 @@ function renderSettings() {
   $('domChk').checked = state.config.domAudit !== false;
   $('costWarnInput').value = state.config.costWarnUsd ?? 2;
   $('reportCompanyInput').value = state.config.reportCompany || '';
+  applyAppearance();
+  if (window.vigil.crashInfo) window.vigil.crashInfo().then((c) => { $('crashInfo').textContent = c.count ? `Bisher ${c.count} Bericht(e) gespeichert.` : 'Bisher keine Abstürze.'; }).catch(() => {});
   renderReportLogo();
   renderPresets();
   window.vigil.intelStatus().then((it) => { $('intelSettings').textContent = it.updatedAt ? `Stand ${fmtDate(it.updatedAt)} · ${it.kev} aktiv ausgenutzte CVEs · ${it.epss} EPSS-Werte` : 'Noch nicht geladen – wird automatisch täglich aktualisiert.'; }).catch(() => {});
@@ -1508,6 +1587,7 @@ async function init() {
   $('addTargetBtn').onclick = addTypedTarget;
   $('clearBtn').onclick = () => { state.targets = []; renderTargets(); };
   setupKnown();
+  setupAppearance();
 
   // Schritt 2: KI
   $('modeLocal').onclick = () => setMode('local');

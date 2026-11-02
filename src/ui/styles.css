@@ -38,8 +38,24 @@
   --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, monospace;
   color-scheme: dark;
 }
+/* Hell: folgt Windows, ausser in den Einstellungen ist fest Hell oder Dunkel gewaehlt */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
+    --bg: #f5f6f8; --side: #eceef2; --panel: #ffffff; --panel-2: #f7f8fa; --panel-3: #eef0f4;
+    --hover: rgba(15, 20, 40, .04);
+    --line: rgba(15, 20, 40, .09); --line-strong: rgba(15, 20, 40, .16);
+    --text: #2a2f3a; --text-strong: #0e1118; --muted: #626a78; --faint: #949aa6;
+    --accent: #9a5b00; --accent-strong: #e8a21f; --accent-soft: rgba(232, 162, 31, .14); --accent-ink: #1a1305;
+    --crit: #dc1f43; --high: #e0620f; --med: #b78400; --low: #0f9a62; --info: #667085;
+    --code-bg: #0f121a; --code-text: #e3e7f0;
+    --shadow: 0 1px 2px rgba(15,20,40,.05), 0 8px 24px -18px rgba(15,20,40,.25);
+    --shadow-pop: 0 18px 50px -18px rgba(15,20,40,.35), 0 0 0 1px var(--line-strong);
+    --ring: 0 0 0 3px rgba(232, 162, 31, .3);
+    color-scheme: light;
+  }
+}
+@media all {
+  :root[data-theme="light"] {
     --bg: #f5f6f8; --side: #eceef2; --panel: #ffffff; --panel-2: #f7f8fa; --panel-3: #eef0f4;
     --hover: rgba(15, 20, 40, .04);
     --line: rgba(15, 20, 40, .09); --line-strong: rgba(15, 20, 40, .16);
@@ -841,3 +857,31 @@ button.stat:hover:not(:disabled) { border-color: var(--line-strong); }
 .tr-legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
 .lg-post { background: var(--accent); } .lg-open { background: var(--high); }
 @media (max-width: 760px) { .trend-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.seg { display: inline-flex; flex: none; padding: 3px; gap: 2px; border-radius: 9px; background: var(--panel-2); border: 1px solid var(--line); }
+.seg button { font: inherit; font-size: 12.5px; padding: 5px 11px; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; }
+.seg button:hover { color: var(--text); }
+.seg button[aria-checked="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+
+/* Betroffener Code */
+.code-view { border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--code-bg); }
+.code-file { font-family: var(--mono); font-size: 11.5px; color: #9aa3b5; padding: 6px 12px; border-bottom: 1px solid rgba(255,255,255,.07); }
+.code-view pre { margin: 0; padding: 6px 0; overflow-x: auto; font: 12px/1.6 var(--mono); color: var(--code-text); }
+.code-view .cl { display: block; padding: 0 12px 0 0; white-space: pre; }
+.code-view .cl i { display: inline-block; width: 46px; padding-right: 12px; text-align: right; font-style: normal; color: #5d6576; user-select: none; }
+.code-view .cl.hit { background: rgba(242, 178, 58, .16); box-shadow: inset 3px 0 0 #f2b23a; }
+.code-view .cl.hit i { color: #f2b23a; }
+/* Rueckfragen */
+.ask-log { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.ask-msg { padding: 9px 12px; border-radius: 10px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.ask-msg b { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; font-weight: 600; }
+.ask-msg.user { background: var(--accent-soft); align-self: flex-end; max-width: 85%; }
+.ask-msg.ai { background: var(--panel-2); border: 1px solid var(--line); }
+.ask-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip-btn { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); cursor: pointer; }
+.chip-btn:hover { border-color: var(--accent); color: var(--accent); }
+.ask-form { display: flex; gap: 6px; }
+.ask-input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); }
+.ask-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ask-dots i { display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%; background: var(--muted); animation: askDot 1s infinite ease-in-out; }
+.ask-dots i:nth-child(2) { animation-delay: .15s; } .ask-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes askDot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }

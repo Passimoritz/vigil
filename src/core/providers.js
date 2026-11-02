@@ -103,7 +103,7 @@ async function httpJson(url, options, timeoutMs = 120000, extSignal) {
 }
 
 // --- Ollama -------------------------------------------------------------
-async function callOllama(cfg, { system, user, prefix }) {
+async function callOllama(cfg, { system, user, prefix, json: jsonMode = true }) {
   const base = (cfg.baseUrl || PROVIDERS.ollama.defaultBaseUrl).replace(/\/$/, '');
   let json;
   try {
@@ -113,7 +113,7 @@ async function callOllama(cfg, { system, user, prefix }) {
       body: JSON.stringify({
         model: cfg.model || PROVIDERS.ollama.defaultModel,
         stream: false,
-        format: 'json',
+        ...(jsonMode ? { format: 'json' } : {}),
         options: { temperature: cfg.temperature ?? 0.1 },
         // Modell zwischen den Bloecken im Speicher halten (sonst Neuladen je Aufruf)
         keep_alive: '20m',
@@ -168,7 +168,7 @@ async function callAnthropic(cfg, { system, user, prefix }) {
 }
 
 // --- OpenAI (und kompatibel) -------------------------------------------
-async function callOpenAICompatible(cfg, { system, user, prefix }, fallbackBase) {
+async function callOpenAICompatible(cfg, { system, user, prefix, json: jsonMode = true }, fallbackBase) {
   const base = (cfg.baseUrl || fallbackBase || '').replace(/\/$/, '');
   if (!base) throw new Error('Keine Basis-URL fuer den OpenAI-kompatiblen Anbieter gesetzt.');
   const headers = { 'Content-Type': 'application/json' };
@@ -181,7 +181,7 @@ async function callOpenAICompatible(cfg, { system, user, prefix }, fallbackBase)
       temperature: cfg.temperature ?? 0.1,
       max_tokens: cfg.maxTokens || 4096,
       messages: [{ role: 'system', content: system }, { role: 'user', content: prefix ? prefix + user : user }],
-      response_format: { type: 'json_object' },
+      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
     }),
   }, 120000, cfg.signal);
   const u = json?.usage || {};
@@ -192,7 +192,7 @@ async function callOpenAICompatible(cfg, { system, user, prefix }, fallbackBase)
 }
 
 // --- Gemini -------------------------------------------------------------
-async function callGemini(cfg, { system, user, prefix }) {
+async function callGemini(cfg, { system, user, prefix, json: jsonMode = true }) {
   const base = (cfg.baseUrl || PROVIDERS.gemini.defaultBaseUrl).replace(/\/$/, '');
   const model = cfg.model || PROVIDERS.gemini.defaultModel;
   // Schluessel als Header statt in der URL (landet sonst in Logs/Proxies/History).
@@ -206,7 +206,7 @@ async function callGemini(cfg, { system, user, prefix }) {
       generationConfig: {
         temperature: cfg.temperature ?? 0.1,
         maxOutputTokens: cfg.maxTokens || 4096,
-        responseMimeType: 'application/json',
+        ...(jsonMode ? { responseMimeType: 'application/json' } : {}),
       },
     }),
   }, 120000, cfg.signal);

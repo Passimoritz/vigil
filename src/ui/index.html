@@ -492,6 +492,7 @@
         <a href="#set-rules"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h11M8 12h11M8 18h11M4 6h.01M4 12h.01M4 18h.01" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>Eigene Regeln</a>
         <a href="#set-network"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.5 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.5-3.5-8.5s1-5.9 3.5-8.5z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Netzwerk</a>
         <a href="#set-providers"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="14" width="16" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 7h.01M8 17h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>KI-Server</a>
+        <a href="#set-app"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/></svg>Darstellung</a>
         <a href="#set-rest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>REST-API</a>
         <a href="#set-data"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Daten</a>
       </nav>
@@ -630,6 +631,42 @@
           <h2>Server-Adressen der KI-Anbieter</h2>
           <p class="hint">Nur für eigene Server (z. B. Ollama auf einem anderen Rechner) oder OpenAI-kompatible Dienste. Leer = Standard.</p>
           <div id="providerSettings"></div>
+        </section>
+
+        <section class="card set-block" id="set-app">
+          <h2>Darstellung &amp; App</h2>
+          <div class="set-row">
+            <div class="set-label"><b>Farbschema</b><span>Unabhängig von der Windows-Einstellung.</span></div>
+            <span class="seg" role="radiogroup" aria-label="Farbschema" id="themeSeg">
+              <button type="button" role="radio" data-theme="system">Wie Windows</button>
+              <button type="button" role="radio" data-theme="light">Hell</button>
+              <button type="button" role="radio" data-theme="dark">Dunkel</button>
+            </span>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Schriftgröße</b><span>Vergrößert die ganze Oberfläche. Auch mit Strg + Plus / Minus.</span></div>
+            <span class="seg" role="radiogroup" aria-label="Schriftgröße" id="scaleSeg">
+              <button type="button" role="radio" data-scale="0.9">Klein</button>
+              <button type="button" role="radio" data-scale="1">Normal</button>
+              <button type="button" role="radio" data-scale="1.12">Groß</button>
+              <button type="button" role="radio" data-scale="1.25">Sehr groß</button>
+            </span>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Sprache</b><span>Oberfläche auf Deutsch oder Englisch. Befundtexte bleiben vorerst Deutsch.</span></div>
+            <span class="seg" role="radiogroup" aria-label="Sprache" id="langSeg">
+              <button type="button" role="radio" data-lang="de">Deutsch</button>
+              <button type="button" role="radio" data-lang="en">English</button>
+            </span>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Absturzberichte</b><span>Stürzt Vigil ab, landet ein Bericht nur auf diesem PC – nichts wird übertragen. Bei Bedarf kannst du ihn selbst weitergeben. <span id="crashInfo"></span></span></div>
+            <button id="crashOpenBtn" type="button" class="btn tiny">Ordner öffnen</button>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Einführung</b><span>Die kurze Einführung vom ersten Start noch einmal zeigen.</span></div>
+            <button id="onboardAgainBtn" type="button" class="btn tiny">Einführung zeigen</button>
+          </div>
         </section>
 
         <section class="card set-block" id="set-rest">

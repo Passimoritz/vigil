@@ -21,6 +21,31 @@ const { runApiMatrix } = require('../src/core/modules/apimatrix');
 const { verifyOwnership, hostOf: scopeHost } = require('../src/core/scope');
 
 // --- Threat-Intel (CISA KEV + EPSS), taeglich im Hintergrund aktualisiert ---
+// Version ohne Installation: Die portable EXE (bzw. eine Datei "portable" neben Vigil.exe)
+// speichert alle Daten im Ordner "VigilData" daneben statt im Benutzerprofil.
+const PORTABLE_DIR = process.env.PORTABLE_EXECUTABLE_DIR || (fs.existsSync(path.join(path.dirname(process.execPath), 'portable')) ? path.dirname(process.execPath) : '');
+if (PORTABLE_DIR) { try { const d = path.join(PORTABLE_DIR, 'VigilData'); fs.mkdirSync(d, { recursive: true }); app.setPath('userData', d); } catch { /* dann Standardort */ } }
+
+// Absturzberichte nur lokal: Minidumps (crashReporter ohne Upload) plus eine lesbare
+// JSON-Datei je Fehler im Ordner "crash-reports". Es wird nichts uebertragen.
+const CRASH_DIR = () => path.join(app.getPath('userData'), 'crash-reports');
+try { require('electron').crashReporter.start({ uploadToServer: false, compress: true }); } catch { /* egal */ }
+function writeCrash(kind, detail) {
+  try {
+    fs.mkdirSync(CRASH_DIR(), { recursive: true });
+    const at = new Date().toISOString();
+    const home = require('os').homedir();
+    // Benutzername aus Pfaden entfernen – der Bericht soll weitergegeben werden koennen
+    const clean = (s) => String(s || '').split(home).join('~');
+    const rep = { at, kind, version: app.getVersion(), electron: process.versions.electron, os: `${process.platform} ${require('os').release()}`, message: clean(detail && detail.message || detail), stack: clean(detail && detail.stack || '') };
+    fs.writeFileSync(path.join(CRASH_DIR(), `vigil-${kind}-${at.replace(/[:.]/g, '-')}.json`), JSON.stringify(rep, null, 2));
+  } catch { /* nichts mehr zu retten */ }
+}
+process.on('uncaughtException', (e) => { writeCrash('main', e); console.error(e); });
+process.on('unhandledRejection', (e) => { writeCrash('promise', e instanceof Error ? e : new Error(String(e))); });
+app.on('render-process-gone', (_e, _wc, d) => writeCrash('renderer', new Error(`Fenster beendet: ${d.reason} (Code ${d.exitCode})`)));
+app.on('child-process-gone', (_e, d) => { if (d.reason !== 'clean-exit') writeCrash('child', new Error(`${d.type}: ${d.reason} (Code ${d.exitCode})`)); });
+
 const INTEL_PATH = () => path.join(app.getPath('userData'), 'threat-intel.json');
 let intel = null;
 let intelSyncing = null;
@@ -342,6 +367,66 @@ ipcMain.handle('audit:run', async (e, payload) => {
     } catch (err) { console.warn('Laufzeit nicht gelernt:', err.message); }
   }
   return out;
+});
+
+// --- Betroffener Code & Rueckfragen -------------------------------------------
+// Ort "projekt/src/a.js:42" -> echte Datei. Erlaubt sind nur Dateien INNERHALB bereits
+// gepruefter Ordner (Ziele vom Typ "path") – keine beliebigen Pfade aus dem Renderer.
+function resolveFindingFile(location) {
+  const m = String(location || '').replace(/\\/g, '/').match(/^(.*?):(\d+)(?::\d+)?$/);
+  if (!m || /^[a-z]+:\/\//i.test(m[1]) || m[1].includes('!/')) return null;
+  const rel = m[1], line = Number(m[2]);
+  for (const t of orchestrator.targets().filter((x) => x.type === 'path')) {
+    const root = path.resolve(t.identifier);
+    let stat; try { stat = fs.statSync(root); } catch { continue; }
+    const base = path.basename(root);
+    const cands = stat.isFile() ? (rel.split('/').pop() === base ? [root] : [])
+      : [path.resolve(root, rel), rel.startsWith(base + '/') ? path.resolve(root, rel.slice(base.length + 1)) : null].filter(Boolean);
+    for (const c of cands) {
+      const inside = c === root || c.startsWith(root + path.sep);
+      try { if (inside && fs.statSync(c).isFile() && fs.statSync(c).size < 3 * 1024 * 1024) return { file: c, line, rel }; } catch { /* weiter */ }
+    }
+  }
+  return null;
+}
+function readSnippet(location, around = 6) {
+  const r = resolveFindingFile(location);
+  if (!r) return null;
+  const lines = fs.readFileSync(r.file, 'utf8').split(/\r?\n/);
+  const from = Math.max(1, r.line - around), to = Math.min(lines.length, r.line + around);
+  return { file: r.rel, line: r.line, from, lines: lines.slice(from - 1, to) };
+}
+ipcMain.handle('finding:snippet', (_e, location) => { try { const s = readSnippet(location, 6); return s ? { ok: true, ...s } : { ok: false }; } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle('crash:info', () => { try { return { count: fs.readdirSync(CRASH_DIR()).filter((f) => f.endsWith('.json')).length }; } catch { return { count: 0 }; } });
+ipcMain.handle('crash:open', () => { fs.mkdirSync(CRASH_DIR(), { recursive: true }); return shell.openPath(CRASH_DIR()).then((err) => ({ ok: !err })); });
+
+const ASK_PROMPT = `Du bist ein erfahrener, defensiver Sicherheitsberater und beantwortest Rueckfragen zu EINEM Befund aus einer Sicherheitspruefung des eigenen Projekts des Nutzers.
+- Antworte auf Deutsch, in Alltagssprache, kurz und konkret (hoechstens etwa 12 Saetze, Code nur wenn er hilft).
+- Beziehe dich auf den mitgelieferten Code-Ausschnitt. Sag ehrlich, wenn der Ausschnitt nicht reicht, und was man zusaetzlich pruefen muesste.
+- Bei "Ist das bei mir ausnutzbar?": erklaere die Voraussetzungen konzeptionell (Eingang, Bedingungen, wie realistisch) und gib eine Einschaetzung – aber KEINE einsatzfertigen Angriffs-Payloads oder Schritt-fuer-Schritt-Anleitungen.
+- Schwerpunkt: verstehen und beheben.`;
+ipcMain.handle('finding:ask', async (_e, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const question = String(p.question || '').trim().slice(0, 2000);
+  if (!question) return { ok: false, error: 'Leere Frage.' };
+  const f = p.finding || {};
+  const cfg = loadConfig();
+  const eff = effectiveConfig(cfg, cfg.selected);
+  let code = '';
+  try { const s = readSnippet(f.location, 30); if (s) code = `Datei ${s.file}, Zeilen ${s.from}–${s.from + s.lines.length - 1} (Befund in Zeile ${s.line}):\n` + s.lines.map((l, i) => `${String(s.from + i).padStart(5)}  ${l}`).join('\n'); } catch { /* ohne Code */ }
+  const facts = [`Titel: ${f.title || ''}`, `Schwere: ${f.severity || ''}`, `Ort: ${f.location || ''}`, `Kategorie: ${f.category || ''}`, f.description && `Beschreibung: ${f.description}`, f.impact && `Auswirkung: ${f.impact}`, f.reachability && `Erreichbarkeit: ${f.reachability}`, f.remediation && `Behebung: ${f.remediation}`].filter(Boolean).map((x) => String(x).slice(0, 1500)).join('\n');
+  const history = (Array.isArray(p.history) ? p.history : []).slice(-6).map((h) => `${h.role === 'user' ? 'Frage' : 'Antwort'}: ${String(h.text || '').slice(0, 1500)}`).join('\n\n');
+  let user = `## Befund\n${facts}\n\n${code ? '## Code\n```\n' + code + '\n```\n\n' : '## Code\n(nicht verfuegbar)\n\n'}${history ? '## Bisheriges Gespraech\n' + history + '\n\n' : ''}## Neue Frage\n${question}`;
+  const { shouldRedact, redactSecrets } = require('../src/core/harness');
+  if (shouldRedact(eff)) user = redactSecrets(user).text;
+  try {
+    const { callProvider } = require('../src/core/providers');
+    const r = await callProvider({ ...eff, maxTokens: 1500 }, { system: ASK_PROMPT, user, json: false });
+    let text = String(r.text || '').trim();
+    // Manche lokalen Modelle antworten wegen JSON-Modus in JSON – dann den Text herausziehen
+    try { const j = JSON.parse(text); text = j.answer || j.antwort || j.text || Object.values(j).find((v) => typeof v === 'string') || text; } catch { /* normaler Text */ }
+    return { ok: true, answer: text, withCode: !!code, model: eff.model };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 
 ipcMain.handle('aicache:info', () => ({ entries: aiCache().size() }));

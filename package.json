@@ -9,7 +9,8 @@
     "cli": "node src/cli.js",
     "test": "node test/run.js",
     "make-icon": "node tools/make-icon.js",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable"
   },
   "license": "MIT",
   "devDependencies": {
@@ -40,7 +41,20 @@
       "!build/**"
     ],
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "assets/icon.ico",
       "legalTrademarks": "Vigil",
       "signtoolOptions": {
@@ -70,7 +84,11 @@
       "artifactName": "Vigil-Setup-${version}.${ext}",
       "menuCategory": false
     },
-    "copyright": "Copyright © 2026 Passimoritz"
+    "copyright": "Copyright © 2026 Passimoritz",
+    "portable": {
+      "artifactName": "Vigil-Portable-${version}.${ext}",
+      "unicode": true
+    }
   },
   "author": {
     "name": "Passimoritz",
