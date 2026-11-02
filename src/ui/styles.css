@@ -787,3 +787,37 @@ button.stat:hover:not(:disabled) { border-color: var(--line-strong); }
 .drawer-meta { margin-bottom: 10px; }
 @keyframes drawerIn { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* Bekannte & vertraute Ziele */
+.known { margin-top: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); overflow: hidden; }
+.known-toggle { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 14px; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--text); background: none; border: 0; cursor: pointer; text-align: left; }
+.known-toggle:hover { background: color-mix(in srgb, var(--panel-2) 85%, var(--accent)); }
+.known-ico { color: var(--accent); }
+.known-hint { margin-left: auto; font-weight: 400; }
+.known .chev { transition: transform .15s; color: var(--muted); }
+.known.open .chev { transform: rotate(180deg); }
+.known-panel { border-top: 1px solid var(--line); padding: 10px 12px 12px; }
+.known-tools { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.known-tools input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+.known-filter { display: flex; gap: 4px; }
+.known-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+.known-row { display: flex; align-items: center; gap: 6px; border-radius: 8px; }
+.known-row + .known-row { margin-top: 2px; }
+.known-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 8px; font: inherit; font-size: 13px; color: var(--text); background: none; border: 0; border-radius: 8px; cursor: pointer; text-align: left; }
+.known-main:hover:not(:disabled) { background: var(--panel-3); }
+.known-main:disabled { cursor: default; opacity: .6; }
+.known-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.known-meta { margin-left: auto; white-space: nowrap; }
+.known-actions { display: flex; gap: 4px; flex: none; }
+.badge { flex: none; font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px; }
+.badge.trust { color: var(--low); background: color-mix(in srgb, var(--low) 14%, transparent); }
+.badge.verified { color: var(--accent); background: var(--accent-soft); }
+.known-empty { padding: 10px; }
+.known-foot { margin: 10px 2px 0; line-height: 1.5; }
+@media (max-width: 760px) { .known-meta { display: none; } }
+.known-main { flex-wrap: wrap; row-gap: 3px; }
+.known-name { flex: 0 1 auto; min-width: 0; }
+.known-meta { flex-basis: 100%; margin-left: 0; white-space: normal; }
+.known-row { flex-wrap: wrap; align-items: flex-start; padding-right: 4px; }
+.known-actions { align-self: center; }
+@media (max-width: 760px) { .known-meta { display: block; } }

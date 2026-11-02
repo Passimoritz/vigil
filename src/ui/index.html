@@ -106,6 +106,25 @@
             <button type="button" class="sys-chip" data-system="azure">Azure</button>
             <button type="button" class="sys-chip" data-system="gcp">Google Cloud</button>
           </div>
+          <div id="knownBox" class="known" hidden>
+            <button type="button" id="knownToggle" class="known-toggle" aria-expanded="false" aria-controls="knownPanel">
+              <span class="known-ico" aria-hidden="true">★</span>
+              <span>Bekannte &amp; vertraute Ziele <span class="count" id="knownCount">0</span></span>
+              <span class="known-hint muted small" id="knownHint"></span>
+              <span class="chev" aria-hidden="true">▾</span>
+            </button>
+            <div id="knownPanel" class="known-panel" hidden>
+              <div class="known-tools">
+                <input id="knownSearch" type="search" placeholder="Ziele durchsuchen …" aria-label="Bekannte Ziele durchsuchen" />
+                <span class="known-filter" role="group" aria-label="Filter">
+                  <button type="button" class="fbtn active" data-kf="all">Alle</button>
+                  <button type="button" class="fbtn" data-kf="trusted">Vertraut</button>
+                </span>
+              </div>
+              <ul id="knownList" class="known-list"></ul>
+              <p class="muted small known-foot">„Vertraut“ heißt: Vigil prüft diese Webadresse bzw. diesen Server ohne erneute Rückfrage. Mit „Vertrauen entziehen“ fragt Vigil beim nächsten Mal wieder nach. „Ausblenden“ entfernt ein Ziel nur aus dieser Liste – Befunde und Verlauf bleiben erhalten.</p>
+            </div>
+          </div>
           <label id="authRow" class="check confirm" hidden><input type="checkbox" id="authChk" /> <span id="authLabel">Ich bin berechtigt, diesen Server zu prüfen.</span></label>
           <p id="webNote" class="note" hidden>Webadressen und Server prüft Vigil nur zerstörungsfrei: Zertifikat, Sicherheits-Header, Cookies, CORS und offen liegende Pfade. Keine Angriffe, keine Last-Tests.</p>
           <p id="imageNote" class="note" hidden>Container-Images prüft Vigil mit <b>trivy</b> (Pakete, CVEs, Fehlkonfigurationen). trivy muss installiert sein; mit Präfix <code>image:</code> wird immer als Image erkannt.</p>

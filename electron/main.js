@@ -379,6 +379,9 @@ ipcMain.handle('target:meta', (_e, id, patch) => {
   const p = {};
   if (patch && typeof patch.internetExposed === 'boolean') p.internetExposed = patch.internetExposed;
   if (patch && ['PRODUCTION', 'STAGING', 'INTERNAL'].includes(patch.environment)) p.environment = patch.environment;
+  // Vertrauen entziehen (Domain-Nachweis zuruecknehmen) geht immer – setzen nur ueber target:verify
+  if (patch && patch.ownershipVerified === false) p.ownershipVerified = false;
+  if (patch && typeof patch.hiddenFromPicker === 'boolean') p.hiddenFromPicker = patch.hiddenFromPicker;
   return orchestrator.setTargetMeta(String(id || ''), p);
 });
 ipcMain.handle('sbom:search', (_e, q) => orchestrator.searchSbom(String(q || '').slice(0, 120)));

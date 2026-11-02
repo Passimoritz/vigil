@@ -36,6 +36,88 @@ function addTarget(type, value, authorized = false) {
   state.targets.push({ type, value, authorized });
   renderTargets();
 }
+// --- Bekannte & vertraute Ziele ---------------------------------------------
+// Quelle: alle bisher geprueften Ziele (Befund-Speicher) plus die Freigabeliste.
+// "Vertraut" = Host steht auf der Freigabeliste -> Pruefung ohne erneute Rueckfrage.
+const known = { list: [], open: false, filter: 'all', q: '' };
+const allowMatches = (e, host) => (e.startsWith('*.') ? host === e.slice(2) || host.endsWith(e.slice(1)) : host === e || host.endsWith('.' + e));
+async function loadKnown() {
+  let targets = [];
+  try { targets = ((await window.vigil.dashboard({ limit: 1 })).stats || {}).targets || []; } catch { /* Vorschau */ }
+  const items = targets.filter((t) => !t.hiddenFromPicker).map((t) => {
+    const host = t.type === 'url' || t.type === 'endpoint' ? hostOfTarget({ type: t.type, value: t.identifier }) : '';
+    return { id: t.id, type: t.type, value: t.identifier, name: t.type === 'system' ? SYSTEM_LABEL[t.identifier] || t.name : t.type === 'url' ? String(t.identifier).replace(/^https?:\/\//, '').replace(/\/$/, '') : t.name, host, trusted: !!host && isAllowlisted(host), verified: !!t.ownershipVerified, lastScanAt: t.lastScanAt, open: t.open ? t.open.total : 0 };
+  });
+  // Freigaben, zu denen es noch keinen Lauf gibt
+  for (const e of state.config.allowlist || []) {
+    if (items.some((i) => i.host && allowMatches(e, i.host))) continue;
+    const h = e.replace(/^\*\./, '');
+    items.push({ id: null, type: 'url', value: 'https://' + h, name: e, host: h, trusted: true, verified: false, lastScanAt: null, open: 0, allowOnly: true });
+  }
+  known.list = items;
+  renderKnown();
+}
+function renderKnown() {
+  const box = $('knownBox');
+  box.hidden = known.list.length === 0;
+  $('knownCount').textContent = known.list.length;
+  const nTrusted = known.list.filter((k) => k.trusted).length;
+  $('knownHint').textContent = nTrusted ? `${nTrusted} vertraut` : '';
+  $('knownToggle').setAttribute('aria-expanded', String(known.open));
+  $('knownPanel').hidden = !known.open;
+  box.classList.toggle('open', known.open);
+  $('knownPanel').querySelectorAll('[data-kf]').forEach((b) => b.classList.toggle('active', b.dataset.kf === known.filter));
+  const q = known.q.toLowerCase();
+  const rows = known.list.filter((k) => (known.filter === 'all' || k.trusted) && (!q || `${k.name} ${k.value}`.toLowerCase().includes(q)));
+  const inList = (k) => state.targets.some((t) => t.type === k.type && t.value === k.value);
+  $('knownList').innerHTML = rows.length ? rows.map((k) => {
+    const i = known.list.indexOf(k);
+    const added = inList(k);
+    return `<li class="known-row${added ? ' added' : ''}">
+      <button type="button" class="known-main" data-add="${i}" ${added ? 'disabled' : ''} title="${esc(k.value)}">
+        <span class="t-kind ${k.type}">${KIND_LABEL[k.type] || k.type}</span>
+        <span class="known-name">${esc(k.name)}</span>
+        ${k.trusted ? '<span class="badge trust" title="Wird ohne erneute Rückfrage geprüft">✓ vertraut</span>' : ''}
+        ${k.verified ? '<span class="badge verified" title="Domain-Besitz nachgewiesen – tiefe Prüfungen erlaubt">Domain nachgewiesen</span>' : ''}
+        <span class="known-meta muted small">${added ? 'in der Prüfliste' : k.lastScanAt ? `zuletzt ${esc(fmtDate(k.lastScanAt))}${k.open ? ` · ${k.open} offen` : ''}` : 'noch nicht geprüft'}</span>
+      </button>
+      <span class="known-actions">
+        ${k.trusted || k.verified ? `<button type="button" class="btn tiny ghost" data-untrust="${i}">Vertrauen entziehen</button>` : ''}
+        ${k.id ? `<button type="button" class="btn tiny ghost" data-hide="${i}" title="Nur aus dieser Liste entfernen">Ausblenden</button>` : ''}
+      </span>
+    </li>`;
+  }).join('') : `<li class="muted small known-empty">${known.filter === 'trusted' ? 'Keine vertrauten Ziele.' : 'Nichts gefunden.'}</li>`;
+}
+async function untrustKnown(k) {
+  const entries = (state.config.allowlist || []).filter((e) => k.host && allowMatches(e, k.host));
+  const what = entries.length ? `Freigabe ${entries.join(', ')}` : 'Domain-Nachweis';
+  if (!confirm(`${k.name} nicht mehr vertrauen?\n\nEntfernt: ${what}.${k.verified ? '\nDer Domain-Nachweis wird ebenfalls zurückgenommen – tiefe Prüfungen brauchen dann einen neuen Nachweis.' : ''}\nBeim nächsten Prüfen fragt Vigil wieder nach der Berechtigung.`)) return;
+  state.config.allowlist = (state.config.allowlist || []).filter((e) => !entries.includes(e));
+  await saveCfg();
+  if (k.id && k.verified) { try { await window.vigil.setTargetMeta(k.id, { ownershipVerified: false }); } catch { /* egal */ } }
+  // Bereits in der Pruefliste: herausnehmen – zum Pruefen muss die Berechtigung neu bestaetigt werden
+  const before = state.targets.length;
+  state.targets = state.targets.filter((t) => !((t.type === 'url' || t.type === 'endpoint') && hostOfTarget(t) === k.host));
+  renderTargets();
+  toast(`${k.name} wird nicht mehr automatisch vertraut${state.targets.length < before ? ' – aus der Prüfliste genommen' : ''}`, 'ok');
+  loadKnown();
+}
+function setupKnown() {
+  $('knownToggle').onclick = () => { known.open = !known.open; renderKnown(); if (known.open) $('knownSearch').focus(); };
+  $('knownSearch').addEventListener('input', () => { known.q = $('knownSearch').value; renderKnown(); });
+  $('knownPanel').querySelectorAll('[data-kf]').forEach((b) => b.onclick = () => { known.filter = b.dataset.kf; renderKnown(); });
+  $('knownList').addEventListener('click', async (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const k = known.list[Number(b.dataset.add ?? b.dataset.untrust ?? b.dataset.hide)];
+    if (!k) return;
+    if (b.dataset.add != null) { addTarget(k.type, k.value, k.trusted); toast(`${k.name} zur Prüfliste hinzugefügt`, 'ok'); }
+    else if (b.dataset.untrust != null) untrustKnown(k);
+    else if (b.dataset.hide != null) { await window.vigil.setTargetMeta(k.id, { hiddenFromPicker: true }); toast(`${k.name} ausgeblendet`, 'ok'); loadKnown(); }
+  });
+  loadKnown();
+}
+
 function renderTargets() {
   const ul = $('targetList');
   ul.innerHTML = '';
@@ -51,6 +133,7 @@ function renderTargets() {
   document.querySelectorAll('.sys-chip').forEach((b) => b.classList.toggle('on', state.targets.some((t) => t.type === 'system' && t.value === b.dataset.system)));
   $('targetCount').textContent = state.targets.length;
   $('targets').hidden = state.targets.length === 0;
+  if (known.list.length) renderKnown();
   updateRunState();
 }
 
@@ -296,6 +379,7 @@ async function runAudit() {
   const res = await window.vigil.runAudit({ targets: state.targets, providerId: state.config.selected });
   // Bestaetigte Hosts hat der Main-Prozess auf die Freigabeliste gesetzt.
   try { state.config.allowlist = (await window.vigil.getConfig()).allowlist || []; } catch { /* egal */ }
+  loadKnown();
   unsub();
   clearInterval(state.elapsedTimer);
   state.running = false; updateRunState(); setRunEta();
@@ -1311,6 +1395,7 @@ function collectSettings() {
     window.vigil.apiMatrixSave([{ host: $('amHost').value, resourceIdA: $('amResource').value, endpoints: $('amEndpoints').value, tokenA: $('amTokenA').value, tokenB: $('amTokenB').value }]);
   }
   state.config.allowlist = $('allowlistInput').value.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+  setTimeout(loadKnown, 0);
   state.config.apiEnabled = $('apiChk').checked;
   state.config.apiPort = Math.min(65535, Math.max(1024, parseInt($('apiPort').value, 10) || 7811));
   state.config.proxyUrl = $('proxyInput').value.trim();
@@ -1370,6 +1455,7 @@ async function init() {
   $('targetInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTypedTarget(); });
   $('addTargetBtn').onclick = addTypedTarget;
   $('clearBtn').onclick = () => { state.targets = []; renderTargets(); };
+  setupKnown();
 
   // Schritt 2: KI
   $('modeLocal').onclick = () => setMode('local');

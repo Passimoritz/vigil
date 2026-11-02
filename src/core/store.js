@@ -240,7 +240,7 @@ function searchSbom(store, q) {
 function setTargetMeta(store, targetId, patch) {
   const t = store.targets[targetId];
   if (!t) return { ok: false, error: 'Ziel nicht gefunden.' };
-  for (const k of ['ownershipVerified', 'internetExposed', 'environment', 'maxRequestsPerSecond']) if (k in patch) t[k] = patch[k];
+  for (const k of ['ownershipVerified', 'internetExposed', 'environment', 'maxRequestsPerSecond', 'hiddenFromPicker']) if (k in patch) t[k] = patch[k];
   return { ok: true, target: t };
 }
 
