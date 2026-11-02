@@ -101,7 +101,7 @@ npm start
 
 Beim ersten Start erscheint eine kurze Einführung. **Beispiel-Lauf ansehen** prüft das mitgelieferte, absichtlich unsichere Übungsprojekt in wenigen Sekunden – ganz ohne KI.
 
-Die Sprache stellst du unter *Einstellungen → Allgemein* auf Deutsch um (Standard ist Englisch).
+Die Sprache stellst du unter *Einstellungen → Allgemein* auf Deutsch um (Standard ist Englisch). Oberfläche, Befundtexte, Berichte und KI-Antworten folgen der gewählten Sprache; auf der Kommandozeile mit `--lang de`.
 
 API-Schlüssel kannst du in der App eintragen (verschlüsselt gespeichert) oder in eine `.env`-Datei schreiben – siehe [`.env.example`](.env.example).
 

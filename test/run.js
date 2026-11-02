@@ -988,6 +988,36 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('bericht: behobene Befunde zählen nicht als offen', !html.includes('Behobenes Problem') && html.includes('Offenes Problem'));
   }
 
+  // --- Englische Befundtexte und Berichte ---
+  {
+    const path = require('path');
+    const i18n = require('../src/core/findings-i18n');
+    const { localizeReportHtml, localizeReportMd } = require('../src/core/report-en');
+    const { ingestTargets } = require('../src/core/ingest');
+    const { prescan } = require('../src/core/prescan');
+    const { runStaticModules } = require('../src/core/modules/static');
+    const { dedupeFindings, sortFindings, summarize } = require('../src/core/schema');
+    const { enrichRemedy } = require('../src/core/remedies');
+    const ing = await ingestTargets([{ type: 'path', value: path.join(__dirname, '..', 'bench', 'vulnerable-app') }]);
+    const all = sortFindings(dedupeFindings([...prescan(ing.units, {}).findings, ...runStaticModules(ing.units).findings]).map(enrichRemedy));
+    const GER = /[äöüß]|\b(der|die|das|und|nicht|ist|mit|für|oder|wird|werden|auf|eine?|zu|von|bei|nach|aus|sich)\b/;
+    const en = all.map(i18n.localizeFinding);
+    const left = en.flatMap((f) => [f.title, f.description, f.impact, f.remediation, f.explanation, ...(f.steps || [])]).filter((t) => t && GER.test(t));
+    check('englisch: alle Befundtexte des Übungsprojekts übersetzt', left.length === 0, left.slice(0, 2).join(' | '));
+    check('englisch: eingesetzte Namen bleiben erhalten', i18n.translate('Container läuft privilegiert („shop“)') === 'Container runs privileged („shop“)');
+    check('englisch: Unbekanntes bleibt unverändert', i18n.translate('Völlig unbekannter Satz ohne Eintrag.') === 'Völlig unbekannter Satz ohne Eintrag.');
+    check('englisch: Aufzählungen und Leerzeichen am Rand', i18n.translate(' Er startet Programme, lädt Dateien aus dem Internet.') === ' It launches programs, downloads files from the internet.', i18n.translate(' Er startet Programme, lädt Dateien aus dem Internet.'));
+    check('englisch: Original-Befund bleibt deutsch', all.some((f, i) => f.title !== en[i].title) && GER.test(all.map((f) => f.description).join(' ')));
+    const report = require('../src/core/report');
+    const res = i18n.localizeResult({ findings: all, summary: summarize(all), errors: [], meta: { at: '2026-11-02T10:00:00Z', units: 3 } });
+    const html = localizeReportHtml(report.toHtml(res, {}));
+    check('englisch: Bericht (HTML) ohne deutsche Überschriften', /lang="en"/.test(html) && /Findings in detail/.test(html) && !/Befunde im Detail|Auf einen Blick|Nachweise für Normen/.test(html));
+    const md0 = report.toMarkdown(res, {});
+    const md = localizeReportMd(md0);
+    check('englisch: Bericht (Markdown) übersetzt', /^# Security report/m.test(md) && /\*\*What is wrong\?\*\*/.test(md) && !/Was ist los\?|Lösung:/.test(md));
+    check('englisch: Code-Blöcke im Bericht bleiben unverändert', md0.split('```').filter((x, i) => i % 2).join() === md.split('```').filter((x, i) => i % 2).join());
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

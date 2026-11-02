@@ -60,7 +60,7 @@
     'Server-Adressen der KI-Anbieter': 'AI provider server addresses', 'Nur für eigene Server (z. B. Ollama auf einem anderen Rechner) oder OpenAI-kompatible Dienste. Leer = Standard.': 'Only for own servers (e.g. Ollama on another machine) or OpenAI-compatible services. Empty = default.',
     'Darstellung & App': 'Appearance & app', 'Farbschema': 'Colour scheme', 'Unabhängig von der Windows-Einstellung.': 'Independent of the Windows setting.', 'Wie Windows': 'Like Windows', 'Hell': 'Light', 'Dunkel': 'Dark',
     'Schriftgröße': 'Text size', 'Vergrößert die ganze Oberfläche. Auch mit Strg + Plus / Minus.': 'Enlarges the whole interface. Also with Ctrl + plus / minus.', 'Klein': 'Small', 'Normal': 'Normal', 'Groß': 'Large', 'Sehr groß': 'Very large',
-    'Sprache': 'Language', 'Oberfläche auf Deutsch oder Englisch. Befundtexte bleiben vorerst Deutsch.': 'Interface in German or English. Finding texts stay German for now.',
+    'Sprache': 'Language', 'Oberfläche, Befunde, Berichte und KI-Antworten auf Deutsch oder Englisch.': 'Interface, findings, reports and AI answers in English or German.',
     'Absturzberichte': 'Crash reports', 'Stürzt Vigil ab, landet ein Bericht nur auf diesem PC – nichts wird übertragen. Bei Bedarf kannst du ihn selbst weitergeben.': 'If Vigil crashes, a report is stored on this PC only – nothing is sent. Share it yourself if needed.',
     'Ordner öffnen': 'Open folder', 'Einführung': 'Introduction', 'Die kurze Einführung vom ersten Start noch einmal zeigen.': 'Show the short first-start introduction again.', 'Einführung zeigen': 'Show introduction',
     'Lokale REST-API': 'Local REST API', 'REST-API anbieten': 'Offer REST API', 'Für Skripte und CI auf diesem Rechner. Lauscht nur auf 127.0.0.1, verlangt das Token und prüft nur freigegebene Ziele.': 'For scripts and CI on this computer. Listens on 127.0.0.1 only, requires the token and only checks allowed targets.',
@@ -182,7 +182,6 @@
     'DB Connection String mit Passwort': 'DB connection string with password', 'Shell-Ausfuehrung mit moeglicher Eingabe': 'Shell execution with possible input', 'Pfad aus Eingabe': 'Path from input', 'Shell mit shell=True (Python)': 'Shell with shell=True (Python)',
     'XML-Parser (auf XXE pruefen)': 'XML parser (check for XXE)', 'Open Redirect aus Eingabe': 'Open redirect from input', 'Fehlerdetails/Stacktrace nach aussen': 'Error details/stack trace exposed', 'Java: alle Zertifikate/Hosts akzeptiert': 'Java: accepts all certificates/hosts',
     'PHP: LFI/RFI (include aus Eingabe)': 'PHP: LFI/RFI (include from input)', '.NET: SqlCommand mit Konkatenation': '.NET: SqlCommand with concatenation', 'Pipe nach Shell (curl|bash)': 'Pipe to shell (curl|bash)',
-    'Oberfläche auf Deutsch oder Englisch. Befundtexte bleiben vorerst Deutsch.': 'Interface in German or English. Texts of individual findings are mostly written in German.',
   };
   // Teil-Uebersetzungen fuer zusammengesetzte Texte (Regex -> Ersatz)
   const PARTS = [

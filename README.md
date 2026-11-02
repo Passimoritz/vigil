@@ -137,7 +137,7 @@ To add an AI provider, add an entry and a call in `src/core/providers.js` – ev
 
 ## Language
 
-The interface is available in **English (default)** and **German** (*Settings → General*). The detail texts of individual findings are currently mostly written in German; translating them is planned.
+Vigil speaks **English (default)** and **German** (*Settings → General*): the interface, all finding texts, the reports (PDF, HTML, Markdown, SARIF) and the AI answers follow the selected language. On the command line use `--lang de` for German output.
 
 ## Roadmap, signing, license
 

@@ -100,6 +100,13 @@ let win;
 let lastResult = null;
 let lastTargets = [];
 // Angaben fuer den Berichtskopf: gepruefte Ziele, Firma und Logo aus den Einstellungen
+// Englische Berichte: Befundtexte und Vorlage nachtraeglich uebersetzen (Standard; Deutsch nur bei lang 'de')
+const findingsI18n = require('../src/core/findings-i18n');
+const reportEn = require('../src/core/report-en');
+const reportEnglish = () => loadConfig().lang !== 'de';
+const reportResult = () => (lastResult && reportEnglish() ? findingsI18n.localizeResult(lastResult) : lastResult);
+const htmlReport = () => { const h = report.toHtml(reportResult(), reportOpts()); return reportEnglish() ? reportEn.localizeReportHtml(h) : h; };
+const mdReport = () => { const m = report.toMarkdown(reportResult(), reportOpts()); return reportEnglish() ? reportEn.localizeReportMd(m) : m; };
 const reportOpts = () => { const c = loadConfig(); return { targets: lastTargets, company: c.reportCompany || '', logoDataUrl: c.reportLogo || '' }; };
 let orchestrator = null;
 let api = null;
@@ -139,11 +146,13 @@ function executiveHtml() {
   const c = loadConfig();
   const st = orchestrator.stats();
   const trend = st.trend || [];
-  return report.toExecutive(lastResult, { logoDataUrl: c.reportLogo || '', company: c.reportCompany || '', posture: st.posture, trend });
+  const h = report.toExecutive(reportResult(), { logoDataUrl: c.reportLogo || '', company: c.reportCompany || '', posture: st.posture, trend });
+  return reportEnglish() ? reportEn.localizeReportHtml(h) : h;
 }
 
 async function saveReportPdf(outPath, kind) {
-  const html = kind === 'exec' ? executiveHtml() : report.toHtml(lastResult, reportOpts());
+  const html = kind === 'exec' ? executiveHtml() : htmlReport();
+  const en = reportEnglish();
   const tmp = path.join(app.getPath('temp'), `vigil-report-${Date.now()}.html`);
   fs.writeFileSync(tmp, html, 'utf8');
   const w = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } });
@@ -153,7 +162,7 @@ async function saveReportPdf(outPath, kind) {
     const data = await w.webContents.printToPDF({
       printBackground: true, pageSize: 'A4', preferCSSPageSize: true, displayHeaderFooter: kind !== 'exec',
       headerTemplate: '<div></div>',
-      footerTemplate: '<div style="width:100%;font:8.5px Segoe UI,sans-serif;color:#94a3b8;padding:0 14mm;display:flex;justify-content:space-between"><span>Vigil · Sicherheitsbericht</span><span>Seite <span class="pageNumber"></span> von <span class="totalPages"></span></span></div>',
+      footerTemplate: '<div style="width:100%;font:8.5px Segoe UI,sans-serif;color:#94a3b8;padding:0 14mm;display:flex;justify-content:space-between"><span>Vigil · ' + (en ? 'Security report' : 'Sicherheitsbericht') + '</span><span>' + (en ? 'Page' : 'Seite') + ' <span class="pageNumber"></span> ' + (en ? 'of' : 'von') + ' <span class="totalPages"></span></span></div>',
     });
     fs.writeFileSync(outPath, data);
   } finally { try { w.destroy(); } catch { /* egal */ } try { fs.unlinkSync(tmp); } catch { /* egal */ } }
@@ -227,6 +236,8 @@ function effectiveConfig(cfg, providerId) {
     // Kleines Modell zum Vorsortieren bzw. zweites Modell zum Gegenpruefen (je Anbieter, optional)
     triageModel: (p.triageModel || '').trim() || null,
     consensusModel: (p.consensusModel || '').trim() || null,
+    // Sprache der KI-Befundtexte (wie die Oberflaeche)
+    lang: cfg.lang === 'de' ? 'de' : 'en',
   };
 }
 
@@ -650,7 +661,7 @@ ipcMain.handle('report:save', async (_e, { format }) => {
   const ext = format === 'md' ? 'md' : format === 'sarif' ? 'sarif' : format === 'pdf' || format === 'execpdf' ? 'pdf' : format === 'json' ? 'json' : 'html';
   const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
   const r = await dialog.showSaveDialog(win, {
-    defaultPath: path.join(app.getPath('documents'), `vigil-${exec ? 'kurzbericht' : 'report'}-${stamp}.${ext}`),
+    defaultPath: path.join(app.getPath('documents'), `vigil-${exec ? (reportEnglish() ? 'summary' : 'kurzbericht') : 'report'}-${stamp}.${ext}`),
     filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
   });
   if (r.canceled) return { ok: false, canceled: true };
@@ -658,8 +669,8 @@ ipcMain.handle('report:save', async (_e, { format }) => {
     try { await saveReportPdf(r.filePath, exec ? 'exec' : 'full'); return { ok: true, path: r.filePath }; }
     catch (err) { return { ok: false, error: err.message }; }
   }
-  const content = exec ? executiveHtml() : ext === 'md' ? report.toMarkdown(lastResult, reportOpts())
-    : ext === 'sarif' ? report.toSarif(lastResult) : ext === 'json' ? report.toJson(lastResult, orchestrator.stats()) : report.toHtml(lastResult, reportOpts());
+  const content = exec ? executiveHtml() : ext === 'md' ? mdReport()
+    : ext === 'sarif' ? report.toSarif(reportResult()) : ext === 'json' ? report.toJson(reportResult(), orchestrator.stats()) : htmlReport();
   try { fs.writeFileSync(r.filePath, content, 'utf8'); return { ok: true, path: r.filePath }; }
   catch (err) { return { ok: false, error: err.message }; }
 });

@@ -542,7 +542,11 @@ function renderFilters() {
   box.querySelectorAll('.fbtn').forEach((b) => b.onclick = () => setFilter(b.dataset.f));
 }
 
+// Befundtexte kommen deutsch aus den Pruefmodulen; in der englischen Oberflaeche uebersetzen
+const wantEnglish = () => state.config && state.config.lang !== 'de' && !!window.VigilFindingsI18n;
 function renderResult(result) {
+  state.rawResult = result;
+  if (wantEnglish()) result = window.VigilFindingsI18n.localizeResult(result);
   state.lastFindings = result.findings || [];
   state.lastResult = result;
   state.filter = 'all'; state.query = ''; state.onlyNew = false; state.onlyProven = false; state.showSuppressed = false;
@@ -1279,7 +1283,9 @@ function closeMenus() {
 }
 
 async function loadDashboard() {
-  const { stats, findings } = await window.vigil.dashboard({ ...dash, limit: 5000 });
+  const res = await window.vigil.dashboard({ ...dash, limit: 5000 });
+  const stats = res.stats;
+  const findings = wantEnglish() ? res.findings.map(window.VigilFindingsI18n.localizeFinding) : res.findings;
   state.dashStats = stats;
   const open = stats.open || {};
   const total = stats.openTotal || 0;
@@ -1515,6 +1521,10 @@ function updateBulk() {
 
 // Detail-Ansicht fuer einen gespeicherten Befund der Uebersicht (seitliches Fenster).
 function dashFindingFull(rec) {
+  const full = dashFindingMerge(rec);
+  return wantEnglish() ? window.VigilFindingsI18n.localizeFinding(full) : full;
+}
+function dashFindingMerge(rec) {
   return { ...rec, ...(rec.finding || {}), id: rec.id, status: rec.status, severity: rec.severity, title: rec.title, location: rec.location, statusNote: rec.statusNote, firstSeenAt: rec.firstSeenAt, lastSeenAt: rec.lastSeenAt, contextualRiskScore: rec.contextualRiskScore ?? (rec.finding && rec.finding.contextualRiskScore), linkedKeys: [] };
 }
 function openDashDetail(i, keepScroll) {
@@ -1634,7 +1644,7 @@ function setScale(z) { state.config.uiScale = z; saveCfg(); applyAppearance(); }
 function setupAppearance() {
   document.querySelectorAll('#themeSeg button').forEach((b) => b.onclick = () => { state.config.theme = b.dataset.theme; saveCfg(); applyAppearance(); });
   document.querySelectorAll('#scaleSeg button').forEach((b) => b.onclick = () => setScale(Number(b.dataset.scale)));
-  document.querySelectorAll('#langSeg button').forEach((b) => b.onclick = () => { state.config.lang = b.dataset.lang; saveCfg(); applyAppearance(); if (window.applyLanguage) window.applyLanguage(state.config.lang); });
+  document.querySelectorAll('#langSeg button').forEach((b) => b.onclick = () => { state.config.lang = b.dataset.lang; saveCfg(); applyAppearance(); if (window.applyLanguage) window.applyLanguage(state.config.lang); if (state.rawResult) renderResult(state.rawResult); loadDashboard().catch(() => {}); });
   document.addEventListener('keydown', (e) => {
     if (!e.ctrlKey || e.altKey) return;
     const cur = SCALES.indexOf(Number(state.config.uiScale) || 1);

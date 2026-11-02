@@ -11,7 +11,7 @@ const path = require('path');
 const { runAudit, report, atOrAbove } = require('./core');
 
 function parseArgs(argv) {
-  const opts = { targets: [], provider: 'ollama', model: '', out: '', baseUrl: '', authorize: false, cveLookup: true, deep: false, validate: true, redact: true, failOn: '', format: '' };
+  const opts = { targets: [], provider: 'ollama', model: '', out: '', baseUrl: '', authorize: false, cveLookup: true, deep: false, validate: true, redact: true, failOn: '', format: '', lang: 'en' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--provider') opts.provider = argv[++i];
@@ -28,6 +28,7 @@ function parseArgs(argv) {
     else if (a === '--no-redact') opts.redact = false;
     else if (a === '--fail-on') opts.failOn = argv[++i];
     else if (a === '--format') opts.format = argv[++i];
+    else if (a === '--lang') opts.lang = argv[++i] === 'de' ? 'de' : 'en';
     else opts.targets.push({ type: 'path', value: path.resolve(a) });
   }
   return opts;
@@ -59,6 +60,7 @@ function keyFor(provider) {
     analysisDepth: o.deep ? 'thorough' : 'standard',
     aiValidation: o.validate,
     redactSecrets: o.redact,
+    lang: o.lang,
   };
 
   const { result } = await runAudit(o.targets, config, (p) => {
@@ -75,10 +77,14 @@ function keyFor(provider) {
   if (o.out) {
     const fmt = o.format
       || (o.out.endsWith('.md') ? 'md' : o.out.endsWith('.sarif') ? 'sarif' : o.out.endsWith('.json') ? 'json' : 'html');
-    const out = fmt === 'md' ? report.toMarkdown(result)
-      : fmt === 'sarif' ? report.toSarif(result)
-        : fmt === 'json' ? JSON.stringify(result, null, 2)
-          : report.toHtml(result);
+    // Standard Englisch: Befundtexte und Berichtsvorlage uebersetzen (--lang de fuer Deutsch)
+    const en = o.lang !== 'de';
+    const res = en ? require('./core/findings-i18n').localizeResult(result) : result;
+    const R = require('./core/report-en');
+    const out = fmt === 'md' ? (en ? R.localizeReportMd(report.toMarkdown(res)) : report.toMarkdown(res))
+      : fmt === 'sarif' ? report.toSarif(res)
+        : fmt === 'json' ? JSON.stringify(res, null, 2)
+          : en ? R.localizeReportHtml(report.toHtml(res)) : report.toHtml(res);
     fs.writeFileSync(o.out, out, 'utf8');
     console.log(`\nReport (${fmt}) geschrieben: ${o.out}`);
   }

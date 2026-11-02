@@ -99,5 +99,15 @@
   }
   await t('Barrierefreiheit: Tastaturfokus sichtbar', () => { showView('scan'); const b = $('addTargetBtn'); b.focus(); const s = getComputedStyle(b); return (document.activeElement === b && (s.outlineStyle !== 'none' || s.boxShadow !== 'none')) || 'kein sichtbarer Fokusrahmen'; });
 
+  await t('Englisch: Befundtexte im Ergebnis übersetzt', async () => {
+    const r = await window.vigil.sampleDemo();
+    state.config.lang = 'en'; window.applyLanguage('en');
+    showView('results'); renderResult(r.result); await wait(100);
+    document.querySelector('#findings .frow').click(); await wait(100);
+    const txt = document.querySelector('#findingDetail').textContent;
+    state.config.lang = 'de'; window.applyLanguage('de');
+    return (!!window.VigilFindingsI18n && /What is wrong\?/.test(txt) && !/Im Code steht|Wer den Code sieht/.test(txt)) || txt.slice(0, 160);
+  });
+
   return { ok: results.every((r) => r.ok), results };
 })();

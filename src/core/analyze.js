@@ -40,6 +40,11 @@ Antworte AUSSCHLIESSLICH mit gueltigem JSON in genau dieser Form:
 }]}
 Wenn du nichts findest: {"findings":[]}. Kein Text ausserhalb des JSON.`;
 
+// Sprache der Textfelder: Deutsch nur, wenn die Oberflaeche auf Deutsch steht
+const systemPrompt = (config) => SYSTEM_PROMPT + (config && config.lang === 'de'
+  ? '\nSchreibe alle Textfelder (title, description, reachability, impact, remediation) auf Deutsch.'
+  : '\nWrite all text fields (title, description, reachability, impact, remediation) in English.');
+
 const DEFAULT_CHAR_BUDGET = 45000;
 const MAX_UNIT_CHARS = 24000;
 
@@ -202,7 +207,7 @@ async function analyze(opts) {
         }
         const tag = models.length > 1 ? ` · ${model}` : '';
         try {
-          const { text, usage } = await callProvider(cfgM, { system: SYSTEM_PROMPT, prefix, user });
+          const { text, usage } = await callProvider(cfgM, { system: systemPrompt(config), prefix, user });
           addUsage(usage);
           const raw = parseFindings(text);
           for (const r of raw) { const f = normalizeFinding(r, 'ai'); f._batch = i; found.push(f); }
@@ -262,7 +267,7 @@ async function analyze(opts) {
 const PROMPT_VERSION = 'v3';
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 function unitKey(u, cfg, depth) {
-  return sha([PROMPT_VERSION, cfg.provider, cfg.model, cfg.consensusModel || '', depth, u.label, u.content || ''].join('\u0000'));
+  return sha([PROMPT_VERSION, cfg.provider, cfg.model, cfg.consensusModel || '', depth, cfg.lang === 'de' ? 'de' : 'en', u.label, u.content || ''].join('\u0000'));
 }
 const fileOf = (loc) => String(loc || '').replace(/\\/g, '/').replace(/(:\d+)+$/, '').trim().toLowerCase();
 // Befunde den Dateien eines Blocks zuordnen (ueber den Dateiteil des Orts)
