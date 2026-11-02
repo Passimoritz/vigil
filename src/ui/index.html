@@ -8,249 +8,317 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="topbar">
+<div class="app">
+
+  <!-- ===================== Seitenleiste ===================== -->
+  <aside class="sidebar" aria-label="Navigation">
     <div class="brand">
-      <span class="logo-tile"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m8.5 12 2.3 2.4L15.8 9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-      <div class="title">Vigil</div>
+      <span class="logo-tile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m8.5 12 2.3 2.4L15.8 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <span class="brand-name">Vigil</span>
+      <span class="brand-tag">Security Audit</span>
     </div>
-    <div class="view-tabs" role="tablist" aria-label="Ansicht">
-      <button id="tabCheck" class="vtab active" role="tab" aria-selected="true">Prüfen</button>
-      <button id="tabDash" class="vtab" role="tab" aria-selected="false">Übersicht</button>
-    </div>
-    <nav class="top-actions">
-      <button id="historyBtn" class="btn ghost icon-btn" aria-label="Scan-Verlauf">
-        <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span>Verlauf</span>
+
+    <nav class="nav" aria-label="Bereiche">
+      <button class="nav-item" data-view="scan" id="navScan" title="Neue Prüfung (Strg+1)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <span class="nav-label">Neue Prüfung</span>
       </button>
-      <button id="settingsBtn" class="btn ghost icon-btn" aria-label="Einstellungen">
-        <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.5-2-3.4-2.3 1a7.6 7.6 0 0 0-1.7-1l-.4-2.6h-4l-.3 2.6a7.6 7.6 0 0 0-1.8 1l-2.3-1-2 3.4L4.6 11a7.6 7.6 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7.6 7.6 0 0 0 1.7 1l.4 2.6h4l.3-2.6a7.6 7.6 0 0 0 1.8-1l2.3 1 2-3.4-2-1.5z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
-        <span>Einstellungen</span>
+      <button class="nav-item" data-view="results" id="navResults" title="Ergebnis (Strg+2)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 11h6M9 14.5h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <span class="nav-label">Ergebnis</span>
+        <span class="nav-badge" id="navResultsCount" hidden></span>
+      </button>
+      <button class="nav-item" data-view="dash" id="navDash" title="Übersicht (Strg+3)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="13.5" y="3.5" width="7" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="13.5" y="11.5" width="7" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="3.5" y="15.5" width="7" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+        <span class="nav-label">Übersicht</span>
+      </button>
+      <button class="nav-item" data-view="history" id="navHistory" title="Verlauf (Strg+4)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6L3.5 8.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 3.5v5h5M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="nav-label">Verlauf</span>
       </button>
     </nav>
-  </header>
 
-  <main>
-   <div id="checkView" class="workspace">
-    <aside class="setup-col" aria-label="Prüfung einrichten">
-    <header class="col-head">
-      <h1>Neue Prüfung</h1>
-      <p class="muted small">Ziel wählen, KI wählen, starten.</p>
+    <div class="side-spacer"></div>
+
+    <button class="ai-pill" id="aiPill" type="button" title="KI wählen">
+      <span class="dot" id="sbDot"></span>
+      <span class="ai-pill-text"><span class="ai-pill-label">Aktive KI</span><b id="sbAi">–</b></span>
+    </button>
+
+    <button class="nav-item" data-view="settings" id="navSettings" title="Einstellungen (Strg+,)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.5-2-3.4-2.3 1a7.6 7.6 0 0 0-1.7-1l-.4-2.6h-4l-.3 2.6a7.6 7.6 0 0 0-1.8 1l-2.3-1-2 3.4L4.6 11a7.6 7.6 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7.6 7.6 0 0 0 1.7 1l.4 2.6h4l.3-2.6a7.6 7.6 0 0 0 1.8-1l2.3 1 2-3.4-2-1.5z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+      <span class="nav-label">Einstellungen</span>
+    </button>
+    <div class="side-foot"><span id="sbIntel"></span><span>v<span id="sbVersion">0.2.0</span></span></div>
+  </aside>
+
+  <main class="main">
+
+  <!-- ===================== Neue Prüfung ===================== -->
+  <section id="scanView" class="view" aria-labelledby="scanTitle">
+    <header class="page-head">
+      <div>
+        <h1 id="scanTitle">Neue Prüfung</h1>
+        <p class="page-sub">Ziel hinzufügen, KI wählen, Kosten prüfen, starten.</p>
+      </div>
     </header>
 
-    <!-- 1 · Was prüfen -->
-    <section class="panel">
-      <header class="panel-head"><span class="num">1</span><h2>Was soll geprüft werden?</h2></header>
+    <div class="scan-grid">
+      <div class="scan-main">
 
-      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Dateien hierher ziehen oder zum Auswählen aktivieren">
-        <svg viewBox="0 0 24 24" class="dz-icon" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        <div class="dz-main">
-          <div class="dz-text">Dateien oder Ordner hierher ziehen</div>
-          <div class="dz-sub">Projekte, Skripte, ZIP, JAR oder EXE</div>
-        </div>
-        <div class="dz-buttons">
-          <button id="pickFilesBtn" class="btn small">Dateien…</button>
-          <button id="pickFolderBtn" class="btn small">Ordner…</button>
-        </div>
-      </div>
+        <!-- 1 · Ziele -->
+        <section class="card">
+          <header class="card-title"><span class="step">1</span><div><h2>Ziele</h2><p>Projektordner, Dateien, Webadressen, Server oder Container-Images</p></div></header>
 
-      <div class="add-row">
-        <input id="targetInput" type="text" placeholder="… oder Webadresse, Server oder Container-Image, z. B. https://meine-seite.example oder nginx:1.25" aria-label="Webadresse oder Server" />
-        <button id="addTargetBtn" class="btn">Hinzufügen</button>
-      </div>
-      <label id="authRow" class="check" hidden><input type="checkbox" id="authChk" /> <span id="authLabel">Ich bin berechtigt, diesen Server zu prüfen.</span></label>
-      <p id="webNote" class="note small" hidden>Für Webadressen und Server prüft Vigil nur zerstörungsfrei: Zertifikat, Sicherheits-Header, Cookies, CORS und versehentlich offene Pfade. Keine Angriffe, keine Last-Tests. Bestätigte Ziele landen auf der Freigabeliste (Einstellungen).</p>
-      <p id="imageNote" class="note small" hidden>Container-Images prüft Vigil mit <b>trivy</b> (Pakete, bekannte CVEs, Fehlkonfigurationen). trivy muss dafür installiert sein; ein Image mit Präfix <code>image:</code> wird immer als Image erkannt.</p>
-
-      <div id="targets" class="targets" hidden>
-        <div class="targets-head"><span>Prüfliste · <span id="targetCount">0</span></span><button id="clearBtn" class="btn ghost tiny">Alle entfernen</button></div>
-        <ul id="targetList"></ul>
-      </div>
-    </section>
-
-    <!-- 2 · KI -->
-    <section class="panel">
-      <header class="panel-head"><span class="num">2</span><h2>Welche KI prüft?</h2></header>
-
-      <div class="segmented" role="tablist" aria-label="Art der KI">
-        <button id="modeLocal" class="seg" role="tab" data-mode="local">
-          <b>Lokal</b><span>privat &amp; kostenlos – Ollama</span>
-        </button>
-        <button id="modeCloud" class="seg" role="tab" data-mode="cloud">
-          <b>Cloud</b><span>stärker – Claude, OpenAI, Gemini</span>
-        </button>
-      </div>
-
-      <!-- Lokal -->
-      <div id="localPane" class="pane">
-        <div class="local-sources">
-          <div class="ls-head"><b>Lokale KI auf diesem PC</b><button id="localScan" type="button" class="btn ghost tiny">Erneut suchen</button></div>
-          <div id="localSources" class="ls-list" role="radiogroup" aria-label="Lokale KI auswählen"></div>
-        </div>
-        <div id="localOtherRow" class="field" hidden>
-          <label for="localOtherModel">Modell</label>
-          <select id="localOtherModel"></select>
-          <p id="localOtherHint" class="muted small"></p>
-        </div>
-        <div id="ollamaBlock">
-        <div id="ollamaStatus" class="status-card">
-          <span class="dot" id="ollamaDot"></span>
-          <div class="status-text"><b id="ollamaTitle">Prüfe Ollama …</b><span id="ollamaSub" class="muted small"></span></div>
-          <button id="ollamaAction" class="btn primary small" hidden></button>
-        </div>
-        <pre id="ollamaLog" class="log mini" hidden></pre>
-
-        <div id="localModelRow" class="field" hidden>
-          <label for="localModel">Modell</label>
-          <select id="localModel"></select>
-        </div>
-
-        <div id="modelShop" class="model-shop" hidden>
-          <button id="shopToggle" type="button" class="shop-head" aria-expanded="true"><h3>Modell herunterladen</h3><span class="muted small">einmalig, danach offline nutzbar</span><span class="shop-chev" aria-hidden="true">▾</span></button>
-          <div id="recList" class="rec-list"></div>
-          <div class="add-row compact">
-            <input id="customPull" type="text" placeholder="anderes Modell aus der Ollama-Bibliothek, z. B. deepseek-coder-v2:16b" aria-label="Eigenes Modell" />
-            <button id="customPullBtn" class="btn small">Laden</button>
+          <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Dateien hierher ziehen oder zum Auswählen aktivieren">
+            <svg viewBox="0 0 24 24" class="dz-icon" aria-hidden="true"><path d="M12 15V4m0 0L8 8m4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            <div class="dz-text"><b>Dateien oder Ordner hierher ziehen</b><span>Projekte, Skripte, ZIP, JAR oder EXE</span></div>
+            <div class="dz-buttons">
+              <button id="pickFolderBtn" class="btn">Ordner wählen</button>
+              <button id="pickFilesBtn" class="btn ghost">Dateien</button>
+            </div>
           </div>
-          <div id="pullBox" class="pull-box" hidden>
-            <div class="pull-top"><b id="pullName"></b><span id="pullPct" class="muted small"></span><button id="pullCancel" class="btn ghost tiny">Abbrechen</button></div>
-            <div class="bar"><div id="pullFill" class="bar-fill"></div></div>
-            <div id="pullText" class="muted small"></div>
+
+          <div class="add-row">
+            <div class="input-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.5 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.5-3.5-8.5s1-5.9 3.5-8.5z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+              <input id="targetInput" type="text" placeholder="https://meine-seite.example · 192.168.1.20:22 · nginx:1.25" aria-label="Webadresse, Server oder Container-Image" />
+            </div>
+            <button id="addTargetBtn" class="btn">Hinzufügen</button>
           </div>
-        </div>
+          <label id="authRow" class="check confirm" hidden><input type="checkbox" id="authChk" /> <span id="authLabel">Ich bin berechtigt, diesen Server zu prüfen.</span></label>
+          <p id="webNote" class="note" hidden>Webadressen und Server prüft Vigil nur zerstörungsfrei: Zertifikat, Sicherheits-Header, Cookies, CORS und offen liegende Pfade. Keine Angriffe, keine Last-Tests.</p>
+          <p id="imageNote" class="note" hidden>Container-Images prüft Vigil mit <b>trivy</b> (Pakete, CVEs, Fehlkonfigurationen). trivy muss installiert sein; mit Präfix <code>image:</code> wird immer als Image erkannt.</p>
+
+          <div id="targets" class="targets" hidden>
+            <div class="targets-head"><span>Prüfliste <span class="count" id="targetCount">0</span></span><button id="clearBtn" class="btn ghost tiny">Alle entfernen</button></div>
+            <ul id="targetList"></ul>
+          </div>
+        </section>
+
+        <!-- 2 · KI -->
+        <section class="card" id="aiCard">
+          <header class="card-title"><span class="step">2</span><div><h2>KI</h2><p>Wer analysiert den Code? Webadressen, Server und Images laufen ohne KI.</p></div></header>
+
+          <div class="segmented" role="tablist" aria-label="Art der KI">
+            <button id="modeLocal" class="seg" role="tab" data-mode="local">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 19.5h8M12 15.5v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+              <span><b>Lokal</b><small>privat &amp; kostenlos</small></span>
+            </button>
+            <button id="modeCloud" class="seg" role="tab" data-mode="cloud">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18.5h10a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7 9.5a4.5 4.5 0 0 0 0 9z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+              <span><b>Cloud</b><small>Claude, OpenAI, Gemini</small></span>
+            </button>
+          </div>
+
+          <!-- Lokal -->
+          <div id="localPane" class="pane">
+            <div class="sub-head"><span>Gefundene lokale KI</span><button id="localScan" type="button" class="btn ghost tiny">
+              <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Erneut suchen</button></div>
+            <div id="localSources" class="ls-list" role="radiogroup" aria-label="Lokale KI auswählen"></div>
+
+            <div id="localOtherRow" class="field" hidden>
+              <label for="localOtherModel">Modell</label>
+              <select id="localOtherModel"></select>
+              <p id="localOtherHint" class="hint"></p>
+            </div>
+
+            <div id="ollamaBlock">
+              <div id="ollamaStatus" class="status-row">
+                <span class="dot" id="ollamaDot"></span>
+                <div class="status-text"><b id="ollamaTitle">Prüfe Ollama …</b><span id="ollamaSub"></span></div>
+                <button id="ollamaAction" class="btn primary" hidden></button>
+              </div>
+              <pre id="ollamaLog" class="log mini" hidden></pre>
+
+              <div id="localModelRow" class="field" hidden>
+                <label for="localModel">Modell</label>
+                <select id="localModel"></select>
+              </div>
+
+              <div id="modelShop" class="model-shop" hidden>
+                <button id="shopToggle" type="button" class="shop-head" aria-expanded="true">
+                  <span><b>Weitere Modelle</b><small>einmal laden, danach offline nutzbar</small></span>
+                  <svg class="shop-chev" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <div class="shop-body">
+                  <div id="recList" class="rec-list"></div>
+                  <div class="add-row compact">
+                    <input id="customPull" type="text" placeholder="Anderes Modell, z. B. deepseek-coder-v2:16b" aria-label="Eigenes Modell" />
+                    <button id="customPullBtn" class="btn">Laden</button>
+                  </div>
+                  <div id="pullBox" class="pull-box" hidden>
+                    <div class="pull-top"><b id="pullName"></b><span id="pullPct"></span><button id="pullCancel" class="btn ghost tiny">Abbrechen</button></div>
+                    <div class="bar"><div id="pullFill" class="bar-fill"></div></div>
+                    <div id="pullText" class="hint"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cloud -->
+          <div id="cloudPane" class="pane" hidden>
+            <div class="field-grid">
+              <div class="field">
+                <label for="cloudProvider">Anbieter</label>
+                <select id="cloudProvider"></select>
+              </div>
+              <div class="field">
+                <label for="cloudModel">Modell</label>
+                <div class="row">
+                  <select id="cloudModel"></select>
+                  <button id="cloudLoadBtn" class="btn icon" title="Modelle neu laden" aria-label="Modelle neu laden"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                </div>
+                <input id="cloudModelManual" type="text" class="model-manual" placeholder="Modellname eingeben" hidden />
+              </div>
+            </div>
+            <div id="cloudKeyRow" class="field">
+              <label for="cloudKey">API-Schlüssel <span id="cloudKeyBadge" class="env-badge" hidden>aus .env</span></label>
+              <div class="row">
+                <input id="cloudKey" type="password" placeholder="API-Schlüssel einfügen" autocomplete="off" />
+                <button id="cloudKeyToggle" type="button" class="btn">anzeigen</button>
+              </div>
+              <p id="cloudStatus" class="model-status hint" aria-live="polite"></p>
+            </div>
+            <p class="note">Code geht an den Anbieter. Erkannte Secrets schwärzt Vigil vorher. Für sensible Projekte ist <b>Lokal</b> die bessere Wahl.</p>
+          </div>
+        </section>
       </div>
 
+      <!-- 3 · Zusammenfassung, Kosten, Start -->
+      <aside class="scan-side">
+        <section class="card summary">
+          <header class="card-title"><span class="step">3</span><div><h2>Starten</h2><p>Vorschau vor dem ersten Token</p></div></header>
+          <dl class="sum-list">
+            <div><dt>Ziele</dt><dd id="sbTargets">0</dd></div>
+            <div><dt>KI</dt><dd id="sumAi">–</dd></div>
+            <div><dt>Gründlichkeit</dt><dd><button type="button" class="link-btn" id="sbMode" title="Umschalten">Gründlich</button></dd></div>
+          </dl>
+          <div id="estimateCard" class="estimate" hidden aria-live="polite"></div>
+          <button id="runBtn" class="btn primary big" disabled>
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 5.5v13l11-6.5-11-6.5z" fill="currentColor"/></svg>
+            Prüfung starten
+          </button>
+          <p class="run-hint" id="runHint" aria-live="polite"></p>
+          <p class="kbd-hint"><kbd>Strg</kbd>+<kbd>Enter</kbd> startet</p>
+        </section>
+        <section class="card how">
+          <h3>So arbeitet Vigil</h3>
+          <ol>
+            <li><b>Regeln &amp; Datenbanken</b> finden Secrets, verwundbare Pakete und Fehlkonfigurationen.</li>
+            <li><b>Die KI</b> sucht Logik- und Zugriffsfehler und prüft ihre Funde gegen.</li>
+            <li><b>Vigil fasst zusammen</b>: keine Doppelungen, mit konkreter Lösung, Verlauf über alle Läufe.</li>
+          </ol>
+        </section>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ===================== Ergebnis ===================== -->
+  <section id="resultsView" class="view results-view" hidden aria-labelledby="resultsTitle">
+    <header class="page-head">
+      <div>
+        <h1 id="resultsTitle">Ergebnis</h1>
+        <p class="page-sub" id="baselineStatus" aria-live="polite"></p>
       </div>
-      <!-- Cloud -->
-      <div id="cloudPane" class="pane" hidden>
-        <div class="field">
-          <label for="cloudProvider">Anbieter</label>
-          <select id="cloudProvider"></select>
-        </div>
-        <div id="cloudKeyRow" class="field">
-          <label for="cloudKey">API-Schlüssel <span id="cloudKeyBadge" class="env-badge" hidden>.env erkannt</span></label>
-          <div class="row">
-            <input id="cloudKey" type="password" placeholder="API-Schlüssel einfügen" autocomplete="off" />
-            <button id="cloudKeyToggle" type="button" class="btn small">anzeigen</button>
+      <div class="head-actions" id="resultActions" hidden>
+        <div class="menu-wrap">
+          <button id="exportBtn" class="btn" aria-haspopup="menu" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Exportieren
+          </button>
+          <div id="exportMenu" class="menu" role="menu" hidden>
+            <button id="exportPdfBtn" role="menuitem"><b>PDF</b><span>zum Teilen und Archivieren</span></button>
+            <button id="exportHtmlBtn" role="menuitem"><b>HTML</b><span>interaktiver Bericht</span></button>
+            <button id="exportMdBtn" role="menuitem"><b>Markdown</b><span>für Tickets und Wikis</span></button>
+            <button id="exportSarifBtn" role="menuitem"><b>SARIF</b><span>VS Code, GitHub Code Scanning, CI</span></button>
+            <button id="exportJsonBtn" role="menuitem"><b>JSON</b><span>maschinenlesbar, inkl. Risiko und Lösungen</span></button>
           </div>
         </div>
-        <div class="field">
-          <label for="cloudModel">Modell</label>
-          <div class="row">
-            <select id="cloudModel"></select>
-            <button id="cloudLoadBtn" class="btn small" title="Verfügbare Modelle neu laden">Neu laden</button>
-          </div>
-          <input id="cloudModelManual" type="text" class="model-manual" placeholder="Modellname eingeben" hidden />
-          <p id="cloudStatus" class="model-status muted small" aria-live="polite"></p>
-        </div>
-        <p class="note small">Code wird an den Anbieter gesendet – erkannte Secrets schwärzt Vigil vorher. Für sensible Projekte ist <b>Lokal</b> die bessere Wahl.</p>
+        <button id="newScanBtn" class="btn primary">Neue Prüfung</button>
       </div>
-    </section>
+    </header>
 
-    <!-- 3 · Start -->
-    <section class="run">
-      <button id="runBtn" class="btn primary big" disabled>
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3z" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-        Jetzt prüfen
-      </button>
-      <button id="cancelBtn" class="btn big" hidden>Abbrechen</button>
-      <p class="muted small" id="runHint" aria-live="polite"></p>
-      <div id="estimateCard" class="estimate" hidden aria-live="polite"></div>
-      <p class="kbd-hint muted small"><kbd>Strg</kbd> + <kbd>Enter</kbd> startet · <kbd>Strg</kbd> + <kbd>K</kbd> sucht · <kbd>Strg</kbd> + <kbd>,</kbd> Einstellungen</p>
-    </section>
-
-    </aside>
-
-    <section class="work-col" aria-label="Ergebnis">
-    <!-- Leerzustand, bis ein Lauf startet -->
-    <div id="emptyState" class="empty-work">
-      <div class="empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="34" height="34"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m8.5 12 2.3 2.4L15.8 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <div id="emptyState" class="empty-hero">
+      <div class="empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="30" height="30"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m8.5 12 2.3 2.4L15.8 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <h2>Noch kein Ergebnis</h2>
-      <p class="muted">Füge links ein Projekt, eine Webadresse oder ein Container-Image hinzu und starte die Prüfung. Die Befunde erscheinen hier – sortiert nach Dringlichkeit, ohne Doppelungen und mit konkreter Lösung.</p>
-      <ol class="how">
-        <li><b>Regeln &amp; Datenbanken</b> finden Secrets, verwundbare Pakete und Fehlkonfigurationen.</li>
-        <li><b>Die KI</b> sucht nach Logik- und Zugriffsfehlern und prüft ihre Funde gegen.</li>
-        <li><b>Vigil fasst zusammen</b> und merkt sich, was neu, behoben oder wieder da ist.</li>
-      </ol>
+      <p>Starte eine Prüfung. Die Befunde erscheinen hier, sortiert nach Risiko, ohne Doppelungen und mit konkreter Lösung.</p>
+      <button class="btn primary" id="emptyScanBtn">Neue Prüfung</button>
     </div>
 
     <!-- Fortschritt -->
-    <section class="card" id="progressPanel" hidden aria-live="polite">
-      <div class="progress-head">
-        <strong id="progressTitle">Prüfung läuft …</strong>
-        <div class="bar"><div id="barFill" class="bar-fill"></div></div>
+    <section class="card progress" id="progressPanel" hidden aria-live="polite">
+      <div class="progress-top">
+        <div class="spinner" aria-hidden="true"></div>
+        <div class="progress-title"><strong id="progressTitle">Prüfung läuft …</strong><span id="progressSub"></span></div>
+        <div id="costPanel" class="cost-meter" hidden></div>
+        <button id="cancelBtn" class="btn" hidden>Abbrechen</button>
       </div>
+      <div class="bar"><div id="barFill" class="bar-fill"></div></div>
       <div id="stepper" class="stepper"></div>
-      <div id="costPanel" class="cost-panel" hidden title="Grobe Schätzung – echte Tarife können abweichen. Lokale Modelle (Ollama) sind kostenlos und werden hier nicht angezeigt."></div>
-      <button id="logToggle" class="adv-toggle" aria-expanded="false">▸ Technische Details</button>
+      <button id="logToggle" class="adv-toggle" aria-expanded="false">Technische Details</button>
       <pre id="log" class="log" hidden></pre>
     </section>
 
     <!-- Ergebnis -->
-    <section id="resultPanel" class="results" hidden>
-      <div id="verdict" class="verdict"></div>
+    <section id="resultPanel" class="result" hidden>
+      <div id="verdict" class="verdict card"></div>
 
-      <div class="card result-card">
-        <div class="result-head">
-          <div>
-            <h2 class="result-title">Befunde</h2>
-            <p id="baselineStatus" class="muted small" aria-live="polite"></p>
-          </div>
-          <div class="result-actions">
-            <div class="btn-group" role="group" aria-label="Bericht exportieren">
-              <span class="btn-group-label">Export</span>
-              <button id="exportHtmlBtn" class="btn small">HTML</button>
-              <button id="exportMdBtn" class="btn small">Markdown</button>
-              <button id="exportSarifBtn" class="btn small" title="SARIF 2.1.0 – lädt direkt in VS Code, GitHub Code Scanning, CI u. a.">SARIF</button>
-              <button id="exportPdfBtn" class="btn small" title="Bericht als PDF – gut zum Teilen oder Archivieren.">PDF</button>
-              <button id="exportJsonBtn" class="btn small" title="Maschinenlesbar inkl. Sicherheitswert, Angriffspfaden und Lösungen.">JSON</button>
-            </div>
-          </div>
-        </div>
+      <div class="toolbar">
+        <label class="search">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <input id="findingSearch" type="search" placeholder="Befunde durchsuchen" aria-label="Befunde durchsuchen" />
+          <kbd>Strg K</kbd>
+        </label>
+        <div class="chips" id="filters" role="tablist"></div>
+        <div class="chips" id="viewToggles"></div>
+      </div>
 
-        <div class="toolbar">
-          <label class="search">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-            <input id="findingSearch" type="search" placeholder="Befunde durchsuchen – Titel, Datei, Kategorie …" aria-label="Befunde durchsuchen" />
-          </label>
-          <div class="filters" id="filters" role="tablist"></div>
-          <div class="filters" id="viewToggles"></div>
-        </div>
-        <div id="findings" class="findings"></div>
+      <div class="md">
+        <div id="findings" class="flist" role="listbox" aria-label="Befunde" tabindex="0"></div>
+        <article id="findingDetail" class="fdetail card" aria-live="polite"></article>
       </div>
     </section>
-    </section>
-   </div>
+  </section>
 
-   <!-- Übersicht: alle Ziele und Befunde über alle Läufe -->
-   <div id="dashView" hidden>
-    <section class="intro">
-      <div class="posture-row">
+  <!-- ===================== Übersicht ===================== -->
+  <section id="dashView" class="view" hidden aria-labelledby="dashTitle">
+    <header class="page-head">
+      <div>
+        <h1 id="dashTitle">Übersicht</h1>
+        <p class="page-sub" id="dashSummary"></p>
+      </div>
+    </header>
+
+    <div class="kpi-row">
+      <div class="card posture">
         <div id="dashScore" class="score" role="img" aria-label="Sicherheitswert"><div class="score-inner"><span class="score-grade" id="dashGrade">–</span><span class="score-label" id="dashScoreLabel">Sicherheitswert</span></div></div>
-        <div>
-          <h1>Übersicht</h1>
-          <p class="lede" id="dashSummary"></p>
+        <div class="posture-text">
+          <span class="eyebrow">Sicherheitswert</span>
           <p class="intel-line" id="intelLine"></p>
         </div>
       </div>
-      <div id="dashToxic"></div>
-    </section>
-    <div class="stats dash-stats" id="dashStats"></div>
+      <div class="stats dash-stats" id="dashStats"></div>
+    </div>
+    <div id="dashToxic"></div>
 
     <div class="dash-grid">
-    <section class="panel">
-      <header class="panel-head"><h2>Ziele</h2></header>
-      <div id="dashTargets" class="tgt-list"></div>
-    </section>
-    <section class="panel">
-      <header class="panel-head"><h2>Letzte Läufe</h2></header>
-      <div id="dashRuns" class="runs-list"></div>
-    </section>
+      <section class="card">
+        <header class="card-bar"><h2>Ziele</h2></header>
+        <div id="dashTargets" class="tgt-list"></div>
+      </section>
+      <section class="card">
+        <header class="card-bar"><h2>Letzte Läufe</h2></header>
+        <div id="dashRuns" class="runs-list"></div>
+      </section>
     </div>
 
-    <section class="panel">
-      <header class="panel-head dash-head">
-        <h2>Befunde</h2>
-        <div class="filters" id="dashStatus" role="tablist">
+    <section class="card">
+      <header class="card-bar">
+        <h2>Alle Befunde</h2>
+        <div class="seg-mini" id="dashStatus" role="tablist">
           <button class="fbtn" data-s="OPEN,IN_PROGRESS">Aktiv</button>
           <button class="fbtn" data-s="RESOLVED">Behoben</button>
           <button class="fbtn" data-s="FALSE_POSITIVE,ACCEPTED_RISK">Fehlalarm / akzeptiert</button>
@@ -259,8 +327,8 @@
       </header>
       <div class="dash-tools">
         <label class="search">
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-          <input id="dashSearch" type="search" placeholder="Titel, Ort oder Regel suchen …" aria-label="Befunde durchsuchen" />
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <input id="dashSearch" type="search" placeholder="Titel, Ort oder Regel" aria-label="Befunde durchsuchen" />
         </label>
         <select id="dashSeverity" aria-label="Schweregrad">
           <option value="">Alle Schweregrade</option>
@@ -270,103 +338,126 @@
           <option value="low">Niedrig</option>
           <option value="info">Hinweis</option>
         </select>
+        <div class="chips" id="dashToggles">
+          <button class="fbtn toggle" data-t="newSinceBaseline" title="Nur Befunde, die nach dem Setzen der Baseline neu aufgetaucht sind">Neu seit Baseline</button>
+          <button class="fbtn toggle" data-t="toxic">Nur Angriffspfade</button>
+        </div>
       </div>
-      <p id="dashTargetFilter" class="target-filter" hidden>Nur Ziel: <b id="dashTargetName"></b> <button id="dashTargetClear" class="btn ghost tiny">✕ Filter entfernen</button></p>
-      <div class="dash-toggles" id="dashToggles">
-        <button class="fbtn toggle" data-t="newSinceBaseline" title="Nur Befunde, die nach dem Setzen der Baseline neu aufgetaucht sind">Nur neu seit Baseline</button>
-        <button class="fbtn toggle" data-t="toxic">Nur Angriffspfade</button>
-      </div>
+      <p id="dashTargetFilter" class="target-filter" hidden>Nur Ziel: <b id="dashTargetName"></b> <button id="dashTargetClear" class="btn ghost tiny">Filter entfernen</button></p>
       <div id="dashTable" class="ftable-wrap"></div>
     </section>
 
-    <section class="panel">
-      <header class="panel-head"><h2>Paketsuche (SBOM)</h2></header>
-      <p class="muted small">Neue Lücke in einem Paket gemeldet? Hier siehst du sofort, in welchen geprüften Projekten es steckt – auch in welcher Version.</p>
-      <label class="search" style="margin-top:10px">
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <section class="card">
+      <header class="card-bar"><h2>Paketsuche (SBOM)</h2></header>
+      <p class="hint">Neue Lücke in einem Paket gemeldet? Hier siehst du sofort, in welchen geprüften Projekten es steckt und in welcher Version.</p>
+      <label class="search wide">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         <input id="sbomSearch" type="search" placeholder="Paket suchen, z. B. lodash oder lodash@4.17" aria-label="Paket suchen" />
       </label>
       <div id="sbomResults" class="sbom-results"></div>
     </section>
+  </section>
 
-   </div>
-  </main>
+  <!-- ===================== Verlauf ===================== -->
+  <section id="historyView" class="view" hidden aria-labelledby="historyTitle">
+    <header class="page-head">
+      <div>
+        <h1 id="historyTitle">Verlauf</h1>
+        <p class="page-sub">Die letzten Läufe, lokal auf deinem Rechner gespeichert. Zum Öffnen anklicken.</p>
+      </div>
+      <div class="head-actions">
+        <span id="historyStatus" class="hint"></span>
+        <button id="historyClearBtn" class="btn ghost">Verlauf leeren</button>
+      </div>
+    </header>
+    <div class="card flush"><div id="historyList" class="history-list"></div></div>
+  </section>
 
-  <footer id="statusBar" class="statusbar" aria-label="Status">
-    <span class="sb-item"><span class="dot ok"></span><span id="sbAi">–</span></span>
-    <span class="sb-item" id="sbTargets"></span>
-    <span class="sb-item" id="sbMode"></span>
-    <span class="sb-spacer"></span>
-    <span class="sb-item" id="sbIntel"></span>
-    <span class="sb-item muted">Vigil <span id="sbVersion">0.2.0</span></span>
-  </footer>
-  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <!-- ===================== Einstellungen ===================== -->
+  <section id="settingsView" class="view settings-view" hidden aria-labelledby="settingsTitle">
+    <header class="page-head">
+      <div>
+        <h1 id="settingsTitle">Einstellungen</h1>
+        <p class="page-sub">Alles wird lokal gespeichert. Schlüssel und Tokens liegen verschlüsselt auf diesem Rechner.</p>
+      </div>
+      <div class="head-actions">
+        <span id="settingsStatus" class="hint"></span>
+        <button id="settingsSave" class="btn primary">Speichern</button>
+      </div>
+    </header>
 
-  <!-- Einstellungen -->
-  <div id="historyOverlay" class="overlay" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
-      <div class="modal-head">
-        <h2 id="historyTitle">Scan-Verlauf</h2>
-        <button id="historyClose" class="btn ghost small" aria-label="Schließen">✕ Schließen</button>
-      </div>
-      <div class="modal-body">
-        <p class="muted small">Die letzten Läufe, lokal auf deinem Rechner gespeichert. Zum Ansehen anklicken.</p>
-        <div id="historyList" class="history-list"></div>
-      </div>
-      <div class="modal-foot">
-        <span id="historyStatus" class="muted small"></span>
-        <button id="historyClearBtn" class="btn ghost small">Verlauf leeren</button>
-      </div>
-    </div>
-  </div>
-  <div id="settingsOverlay" class="overlay" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-      <div class="modal-head">
-        <h2 id="settingsTitle">Einstellungen</h2>
-        <button id="settingsClose" class="btn ghost small" aria-label="Schließen">✕ Schließen</button>
-      </div>
-      <div class="modal-body">
-        <div class="set-block">
-          <h3>Genauigkeit der KI <span class="infotip" tabindex="0" role="note" data-tip="Niedrig = die KI bleibt sachlich und nachvollziehbar (empfohlen für Sicherheitsprüfungen). Hoch = kreativer, erfindet aber eher Dinge.">i</span></h3>
-          <div class="slider-row">
-            <input type="range" id="tempRange" min="0" max="1" step="0.1" />
-            <span id="tempVal" class="temp-val">0.1</span>
+    <div class="settings-layout">
+      <nav class="set-nav" id="setNav" aria-label="Einstellungsbereiche">
+        <a href="#set-analyse">Analyse</a>
+        <a href="#set-privacy">Datenschutz</a>
+        <a href="#set-scope">Freigaben</a>
+        <a href="#set-deep">Tiefe Prüfungen</a>
+        <a href="#set-matrix">API-Rechtematrix</a>
+        <a href="#set-tools">Externe Tools</a>
+        <a href="#set-rules">Eigene Regeln</a>
+        <a href="#set-network">Netzwerk</a>
+        <a href="#set-providers">KI-Server</a>
+        <a href="#set-rest">REST-API</a>
+        <a href="#set-data">Daten</a>
+      </nav>
+
+      <div class="set-body">
+        <section class="card set-block" id="set-analyse">
+          <h2>Analyse</h2>
+          <div class="set-row">
+            <div class="set-label"><b>Gründlichkeit</b><span>Gründlich = fünf fokussierte Durchgänge (Zugriff, Injection, Krypto, Logik, Konfig). Findet mehr, kostet mehr.</span></div>
+            <select id="depthSelect">
+              <option value="thorough">Gründlich – 5 Durchgänge</option>
+              <option value="standard">Schnell – 1 Durchgang</option>
+            </select>
           </div>
-          <p class="muted small" id="tempDesc"></p>
-        </div>
-        <div class="set-block">
-          <label class="check big"><input type="checkbox" id="cveChk" /> Abhängigkeiten gegen bekannte Schwachstellen-Datenbank (OSV.dev) prüfen
-            <span class="infotip" tabindex="0" role="note" data-tip="Vergleicht gefundene Bibliotheken (npm, PyPI, Maven, Go, Cargo, RubyGems) mit öffentlich bekannten CVEs. Kostenlos, kein Schlüssel nötig, braucht aber Internet.">i</span>
-          </label>
-        </div>
-        <div class="set-block">
-          <h3>Gründlichkeit der KI-Analyse <span class="infotip" tabindex="0" role="note" data-tip="Schnell = ein KI-Durchgang. Gründlich = fünf fokussierte Durchgänge (Zugriff, Injection, Krypto, Logik, Konfig) – findet deutlich mehr, dauert länger und kostet mehr API-Nutzung.">i</span></h3>
-          <select id="depthSelect">
-            <option value="thorough">Gründlich – 5 fokussierte Durchgänge (empfohlen)</option>
-            <option value="standard">Schnell – 1 Durchgang</option>
-          </select>
-          <label class="cost-limit">Nachfragen, wenn ein Cloud-Lauf mehr kostet als
-            <input id="costWarnInput" type="number" min="0" step="0.5" /> $</label>
-        </div>
-        <div class="set-block">
-          <h3>Belastbarkeit &amp; Datenschutz <span class="infotip" tabindex="0" role="note" data-tip="Zwei-Stufen-Prinzip: Deterministische Prüfungen (Muster, Schwachstellen-DB, externe Tools) bilden die Basis. Jeden Befund, den nur die KI gemeldet hat, versucht ein zweiter KI-Schritt am konkreten Code-Ausschnitt zu widerlegen – widerlegte Funde werden verworfen, unsichere als ‚unbestätigt' markiert.">i</span></h3>
-          <label class="check big"><input type="checkbox" id="validateChk" /> KI-Befunde gegenprüfen (Falsch-Positive aussortieren)</label>
-          <label class="check big"><input type="checkbox" id="redactChk" /> Secrets schwärzen, bevor Code an externe KI-Anbieter geht</label>
-          <p class="muted small">Lokale Modelle (Ollama) sehen den Code unverändert – dort verlässt nichts deinen Rechner. Die Gegenprüfung kostet bei Cloud-Anbietern etwas zusätzliche API-Nutzung.</p>
-        </div>
-        <div class="set-block">
-          <h3>Freigegebene Ziele <span class="infotip" tabindex="0" role="note" data-tip="Webadressen und Server prüft Vigil nur, wenn sie hier stehen oder du sie beim Hinzufügen ausdrücklich bestätigst (dann landen sie automatisch hier). Ein Eintrag example.com gilt auch für Subdomains; *.example.com nur für Subdomains. Die REST-API darf ausschließlich Ziele von dieser Liste prüfen.">i</span></h3>
+          <div class="set-row">
+            <div class="set-label"><b>Kostenbremse</b><span>Vor dem Start nachfragen, wenn ein Cloud-Lauf voraussichtlich mehr kostet.</span></div>
+            <label class="cost-limit"><input id="costWarnInput" type="number" min="0" step="0.5" /> <span>$</span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Genauigkeit der KI</b><span id="tempDesc"></span></div>
+            <div class="slider-row"><input type="range" id="tempRange" min="0" max="1" step="0.1" /><span id="tempVal" class="temp-val">0.1</span></div>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Schwachstellen-Datenbank</b><span>Abhängigkeiten (npm, PyPI, Maven, Go, Cargo, RubyGems) gegen OSV.dev prüfen. Kostenlos, braucht Internet.</span></div>
+            <label class="switch"><input type="checkbox" id="cveChk" /><span></span></label>
+          </div>
+        </section>
+
+        <section class="card set-block" id="set-privacy">
+          <h2>Belastbarkeit &amp; Datenschutz</h2>
+          <div class="set-row">
+            <div class="set-label"><b>KI-Befunde gegenprüfen</b><span>Ein zweiter KI-Schritt versucht jeden reinen KI-Fund am Code-Ausschnitt zu widerlegen. Widerlegtes fliegt raus.</span></div>
+            <label class="switch"><input type="checkbox" id="validateChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Secrets schwärzen</b><span>Bevor Code an externe KI-Anbieter geht. Lokale Modelle sehen den Code unverändert, dort verlässt nichts den Rechner.</span></div>
+            <label class="switch"><input type="checkbox" id="redactChk" /><span></span></label>
+          </div>
+        </section>
+
+        <section class="card set-block" id="set-scope">
+          <h2>Freigegebene Ziele</h2>
+          <p class="hint">Webadressen und Server prüft Vigil nur, wenn sie hier stehen oder du sie beim Hinzufügen bestätigst. <code>example.com</code> gilt auch für Subdomains, <code>*.example.com</code> nur für Subdomains. Die REST-API darf nur Ziele von dieser Liste prüfen.</p>
           <textarea id="allowlistInput" rows="4" spellcheck="false" placeholder="eine Domain oder IP pro Zeile, z. B.&#10;meine-seite.example&#10;192.168.1.20"></textarea>
-        </div>
-        <div class="set-block">
-          <h3>Tiefe Prüfungen &amp; Threat-Intel <span class="infotip" tabindex="0" role="note" data-tip="Für verifizierte Domains (oder interne Adressen) prüft Vigil zusätzlich offene Dateien, SourceMaps, GraphQL, Subdomains aus Zertifikats-Logs und – im Browser – Tokens im Speicher, Drittskripte ohne SRI und unverschlüsselte Aufrufe. KEV/EPSS werden täglich lokal zwischengespeichert.">i</span></h3>
-          <label class="check big"><input type="checkbox" id="domChk" /> Browser-Laufzeitprüfung für verifizierte Webseiten</label>
-          <p class="intel-line" id="intelSettings"></p>
-          <button id="intelSyncBtn" type="button" class="btn small">Threat-Intel jetzt aktualisieren</button>
-        </div>
-        <div class="set-block">
-          <h3>API-Rechtematrix (BOLA/IDOR) <span class="infotip" tabindex="0" role="note" data-tip="Vigil holt mit dem Token von Nutzer A dessen Objekt und versucht denselben GET-Aufruf ohne Anmeldung und mit dem Token von Nutzer B. Bekommt B die Daten von A, fehlt die Rechteprüfung. Nur GET, nur für verifizierte Domains. Tokens werden verschlüsselt gespeichert und nie angezeigt.">i</span></h3>
-          <p class="muted small">Nur mit Test-Konten deiner eigenen Anwendung verwenden.</p>
+        </section>
+
+        <section class="card set-block" id="set-deep">
+          <h2>Tiefe Prüfungen &amp; Threat-Intel</h2>
+          <div class="set-row">
+            <div class="set-label"><b>Browser-Laufzeitprüfung</b><span>Für verifizierte Webseiten: Tokens im Speicher, Drittskripte ohne SRI, unverschlüsselte Aufrufe.</span></div>
+            <label class="switch"><input type="checkbox" id="domChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Threat-Intel (CISA KEV, EPSS)</b><span id="intelSettings"></span></div>
+            <button id="intelSyncBtn" type="button" class="btn">Jetzt aktualisieren</button>
+          </div>
+        </section>
+
+        <section class="card set-block" id="set-matrix">
+          <h2>API-Rechtematrix (BOLA/IDOR)</h2>
+          <p class="hint">Vigil holt mit dem Token von Nutzer A dessen Objekt und versucht denselben GET-Aufruf ohne Anmeldung und mit dem Token von Nutzer B. Nur GET, nur verifizierte Domains, nur mit Test-Konten deiner eigenen Anwendung.</p>
           <div class="api-row">
             <input id="amHost" type="text" placeholder="Host, z. B. app.example.com" />
             <input id="amResource" type="text" placeholder="Objekt-ID von Nutzer A, z. B. 1042" />
@@ -374,64 +465,73 @@
             <input id="amTokenB" type="password" placeholder="Token Nutzer B (leer = unverändert)" autocomplete="off" />
             <textarea id="amEndpoints" spellcheck="false" placeholder="GET-Endpunkte, einer pro Zeile:&#10;/api/invoices/{id}&#10;/api/users/{id}/profile"></textarea>
           </div>
-          <p id="amStatus" class="muted small"></p>
-        </div>
-        <div class="set-block">
-          <h3>Lokale REST-API <span class="infotip" tabindex="0" role="note" data-tip="Für Skripte und CI auf diesem Rechner: GET /api/stats, /api/targets, /api/findings · PATCH /api/findings/:id/status · POST /api/scans · GET /api/scans/:id. Lauscht nur auf 127.0.0.1, verlangt das Token und prüft nur freigegebene Ziele.">i</span></h3>
-          <label class="check big"><input type="checkbox" id="apiChk" /> REST-API auf diesem Rechner anbieten</label>
-          <div class="api-grid">
-            <label for="apiPort">Port</label>
-            <input id="apiPort" type="number" min="1024" max="65535" />
-            <label for="apiToken">Token</label>
-            <div class="row"><input id="apiToken" type="password" readonly /><button id="apiTokenToggle" type="button" class="btn small">anzeigen</button><button id="apiCopy" type="button" class="btn small">Kopieren</button><button id="apiRegen" type="button" class="btn small">Neu erzeugen</button></div>
+          <p id="amStatus" class="hint"></p>
+        </section>
+
+        <section class="card set-block" id="set-tools">
+          <h2>Externe Sicherheits-Tools</h2>
+          <div class="set-row">
+            <div class="set-label"><b>Installierte Tools einbeziehen</b><span>gitleaks, trufflehog, trivy, grype, semgrep, bandit, checkov, retire.js, hadolint, osv-scanner. Bei freigegebenen Servern zusätzlich nmap und nuclei, ohne DoS und ohne Brute-Force. Fehlende Tools werden übersprungen.</span></div>
+            <label class="switch"><input type="checkbox" id="activeChk" /><span></span></label>
           </div>
-          <p id="apiStatus" class="muted small"></p>
-          <pre id="apiExample" class="log mini"></pre>
-        </div>
-        <div class="set-block">
-          <h3>Gespeicherte Befunde</h3>
-          <p class="muted small">Vigil merkt sich Befunde über alle Läufe hinweg (Status, zuerst/zuletzt gesehen), um Neues, Behobenes und Wiederkehrendes zu erkennen. Alles liegt lokal auf deinem Rechner.</p>
-          <div class="row-inline"><button id="clearStoreBtn" type="button" class="btn small">Befund-Speicher leeren</button><span id="clearStoreStatus" class="muted small"></span></div>
-        </div>
-        <div class="set-block">
-          <h3>Externe Sicherheits-Tools einbeziehen <span class="infotip" tabindex="0" role="note" data-tip="Nutzt etablierte Werkzeuge, falls auf dem Rechner installiert. Bei Servern (nur eigene/freigegebene, mit gesetzter Berechtigung): Port-/Dienst-Scan (nmap) und Schwachstellen-Templates (nuclei) – kein DoS, kein Brute-Force. Bei Ordnern/Dateien: Secrets (gitleaks, trufflehog), Schwachstellen & Fehlkonfiguration (trivy), Paket-Schwachstellen (grype), Code-Analyse (semgrep), Python-Code (bandit), Infrastruktur/IaC (checkov), verwundbare JS-Libs (retire.js), Dockerfiles (hadolint) und verwundbare Abhängigkeiten über viele Ökosysteme gegen OSV.dev (osv-scanner). Nicht installierte Tools werden einfach übersprungen.">i</span></h3>
-          <label class="check big"><input type="checkbox" id="activeChk"> Externe Tools einschalten (Server nur für autorisierte Ziele)</label>
-          <p class="muted small">Bei Servern gilt das nur für Ziele mit bestätigter Berechtigung. Für Ordner/Dateien laufen zusätzlich die installierten Datei- und Abhängigkeits-Scanner. Kann je nach Ziel einige Minuten dauern; mit „Abbrechen" stoppbar.</p>
-        </div>
-        <div class="set-block">
-          <h3>Netzwerk: Proxy / VPN <span class="infotip" tabindex="0" role="note" data-tip="Leitet alle Anfragen (KI, Schwachstellen-DB, Web-Checks) über einen Proxy. Der Zielserver sieht dann die IP des Proxys statt deiner. Unterstützt: http://, https://, socks5:// (z. B. Tor unter socks5://127.0.0.1:9050), socks4://. Nur so lässt sich die IP verbergen – durch Verschlüsselung allein nicht.">i</span></h3>
-          <p class="muted small">Leer = Direktverbindung (der Anbieter sieht deine echte IP). Mit Proxy/VPN sieht er dessen IP. „Testen" zeigt dir die nach außen sichtbare IP.</p>
-          <div class="field" style="margin-top:8px">
-            <div class="row">
-              <input type="text" id="proxyInput" placeholder="z. B. socks5://127.0.0.1:9050 oder http://proxy:3128" />
-              <button id="proxyTestBtn" class="btn small">Testen</button>
-            </div>
-            <p class="muted small" id="proxyTestStatus"></p>
-          </div>
-        </div>
-        <div class="set-block">
-          <h3>Eigene Regeln &amp; Muster <span class="infotip" tabindex="0" role="note" data-tip="Ergänze eigene Muster (regulärer Ausdruck), die Vigil als möglichen Fund meldet – z. B. ein firmeninternes Schlüsselformat. Oder schalte eingebaute Regeln ab, die bei dir nur Rauschen erzeugen. Alles wird lokal gespeichert.">i</span></h3>
-          <p class="muted small">Eigene Secret-/Text-Muster als regulären Ausdruck hinzufügen oder eingebaute Regeln abschalten.</p>
+        </section>
+
+        <section class="card set-block" id="set-rules">
+          <h2>Eigene Regeln &amp; Muster</h2>
+          <p class="hint">Eigene Muster als regulären Ausdruck, z. B. ein firmeninternes Schlüsselformat.</p>
           <div id="customRules"></div>
-          <button id="addRuleBtn" type="button" class="btn small">+ Eigene Regel</button>
+          <button id="addRuleBtn" type="button" class="btn">+ Eigene Regel</button>
           <details class="rules-off">
             <summary>Eingebaute Regeln deaktivieren</summary>
             <div id="disabledRules" class="rules-grid"></div>
           </details>
-        </div>
-        <div class="set-block">
-          <h3>Server-Adressen der KI-Anbieter</h3>
-          <p class="muted small">Nur nötig für eigene Server (z. B. Ollama auf einem anderen Rechner) oder OpenAI-kompatible Dienste wie Mistral, Groq oder LM Studio. Leer = Standard. Schlüssel und Modell wählst du direkt auf dem Hauptschirm; sie bleiben lokal gespeichert und gehen nur verschlüsselt an den gewählten Anbieter.</p>
+        </section>
+
+        <section class="card set-block" id="set-network">
+          <h2>Netzwerk: Proxy / VPN</h2>
+          <p class="hint">Leer = Direktverbindung. Unterstützt <code>http://</code>, <code>https://</code>, <code>socks5://</code> (z. B. Tor unter <code>socks5://127.0.0.1:9050</code>) und <code>socks4://</code>.</p>
+          <div class="row">
+            <input type="text" id="proxyInput" placeholder="z. B. socks5://127.0.0.1:9050" />
+            <button id="proxyTestBtn" class="btn">Testen</button>
+          </div>
+          <p class="hint" id="proxyTestStatus"></p>
+        </section>
+
+        <section class="card set-block" id="set-providers">
+          <h2>Server-Adressen der KI-Anbieter</h2>
+          <p class="hint">Nur für eigene Server (z. B. Ollama auf einem anderen Rechner) oder OpenAI-kompatible Dienste. Leer = Standard.</p>
           <div id="providerSettings"></div>
-        </div>
-      </div>
-      <div class="modal-foot">
-        <span id="settingsStatus" class="muted small"></span>
-        <button id="settingsSave" class="btn primary small">Speichern</button>
+        </section>
+
+        <section class="card set-block" id="set-rest">
+          <h2>Lokale REST-API</h2>
+          <div class="set-row">
+            <div class="set-label"><b>REST-API anbieten</b><span>Für Skripte und CI auf diesem Rechner. Lauscht nur auf 127.0.0.1, verlangt das Token und prüft nur freigegebene Ziele.</span></div>
+            <label class="switch"><input type="checkbox" id="apiChk" /><span></span></label>
+          </div>
+          <div class="api-grid">
+            <label for="apiPort">Port</label>
+            <input id="apiPort" type="number" min="1024" max="65535" />
+            <label for="apiToken">Token</label>
+            <div class="row"><input id="apiToken" type="password" readonly /><button id="apiTokenToggle" type="button" class="btn">anzeigen</button><button id="apiCopy" type="button" class="btn">Kopieren</button><button id="apiRegen" type="button" class="btn">Neu</button></div>
+          </div>
+          <p id="apiStatus" class="hint"></p>
+          <pre id="apiExample" class="log mini"></pre>
+        </section>
+
+        <section class="card set-block" id="set-data">
+          <h2>Gespeicherte Befunde</h2>
+          <p class="hint">Vigil merkt sich Befunde über alle Läufe (Status, zuerst und zuletzt gesehen), um Neues, Behobenes und Wiederkehrendes zu erkennen.</p>
+          <div class="row-inline"><button id="clearStoreBtn" type="button" class="btn danger">Befund-Speicher leeren</button><span id="clearStoreStatus" class="hint"></span></div>
+        </section>
       </div>
     </div>
-  </div>
+  </section>
 
-  <script src="renderer.js"></script>
+  </main>
+</div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="renderer.js"></script>
 </body>
 </html>

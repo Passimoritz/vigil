@@ -192,13 +192,19 @@ async function runAudit() {
   $('progressPanel').hidden = false;
   $('emptyState').hidden = true;
   $('resultPanel').hidden = true;
+  $('resultActions').hidden = true;
   $('log').textContent = '';
   $('costPanel').hidden = true; $('costPanel').innerHTML = '';
   $('barFill').style.width = '0%';
   $('progressTitle').textContent = 'Prüfung läuft …';
-  $('progressPanel').classList.remove('done');
+  $('progressPanel').classList.remove('done', 'failed');
   renderStepper('ingest');
-  $('progressPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  showView('results');
+  // Laufzeit live mitzaehlen
+  const tick = () => { $('progressSub').textContent = `${state.targets.map((t) => t.value).join(', ')} · ${fmtElapsed(Date.now() - state.runStartedAt)}`; };
+  tick();
+  clearInterval(state.elapsedTimer);
+  state.elapsedTimer = setInterval(tick, 1000);
 
   const unsub = window.vigil.onProgress((p) => {
     renderStepper(p.phase);
@@ -212,26 +218,34 @@ async function runAudit() {
   // Bestaetigte Hosts hat der Main-Prozess auf die Freigabeliste gesetzt.
   try { state.config.allowlist = (await window.vigil.getConfig()).allowlist || []; } catch { /* egal */ }
   unsub();
+  clearInterval(state.elapsedTimer);
   state.running = false; updateRunState();
   $('cancelBtn').hidden = true;
+  const took = fmtElapsed(Date.now() - state.runStartedAt);
 
   if (!res.ok) {
-    $('progressTitle').textContent = 'Fehler';
+    $('progressTitle').textContent = 'Prüfung fehlgeschlagen';
+    $('progressSub').textContent = res.error;
+    $('progressPanel').classList.add('failed');
     renderStepper('');
     $('log').hidden = false; $('logToggle').setAttribute('aria-expanded', 'true');
     $('log').textContent += '\nFEHLER: ' + res.error + '\n';
+    toast('Prüfung fehlgeschlagen: ' + res.error, 'err');
     return;
   }
   $('barFill').style.width = '100%';
   $('progressTitle').textContent = res.canceled ? 'Abgebrochen – Teilergebnis' : 'Prüfung abgeschlossen';
+  $('progressSub').textContent = `${state.targets.map((t) => t.value).join(', ')} · Dauer ${took}`;
   $('progressPanel').classList.add('done');
   renderStepper(res.canceled ? '' : 'done');
   if (res.result) {
     if (res.result.meta && res.result.meta.usage) updateCost(res.result.meta.usage, true);
     renderResult(res.result);
-    $('resultPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const n = (res.result.findings || []).filter((f) => !f.suppressed).length;
+    toast(res.canceled ? 'Abgebrochen – Teilergebnis geladen' : `Fertig: ${n} ${n === 1 ? 'Befund' : 'Befunde'} in ${took}`, 'ok');
   }
 }
+const fmtElapsed = (ms) => { const s = Math.round(ms / 1000); return s < 60 ? `${s} s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} min`; };
 
 // Live-Anzeige von Token-/$-Verbrauch. Nur bei nicht-lokalen Anbietern sichtbar.
 function fmtUsd(u) {
@@ -247,16 +261,12 @@ function updateCost(cost, done) {
   el.hidden = false;
   const inT = fmtTok(cost.inputTokens), outT = fmtTok(cost.outputTokens);
   const totalT = fmtTok((cost.inputTokens || 0) + (cost.outputTokens || 0));
-  const label = cost.estimate ? 'Geschätzte Kosten (vor dem Lauf)' : (done ? 'Kosten insgesamt' : 'Bisher verbraucht');
-  const usd = cost.priced
-    ? `<span class="cost-usd">≈ ${esc(fmtUsd(cost.usd || 0))}</span>`
-    : `<span class="cost-usd muted">keine $-Schätzung</span>`;
-  el.innerHTML =
-    `<div class="cost-row"><span class="cost-badge" aria-hidden="true">$</span>` +
-    `<span class="cost-label">${esc(label)}</span>${usd}</div>` +
-    `<div class="cost-tok small muted">${esc(totalT)} Tokens · ${esc(inT)} Eingang · ${esc(outT)} Ausgang` +
-    `${cost.priced ? '' : ' · Modell/Anbieter nicht in der Preisliste'}` +
-    `${done && state.estimate && state.estimate.priced && !cost.estimate ? ` · Vorschau war ≈ ${esc(fmtUsd(state.estimate.usd))}` : ''}</div>`;
+  const label = cost.estimate ? 'Geschätzt' : (done ? 'Kosten gesamt' : 'Bisher');
+  const usd = cost.priced ? `≈ ${esc(fmtUsd(cost.usd || 0))}` : `${esc(totalT)} Tokens`;
+  const was = done && state.estimate && state.estimate.priced && !cost.estimate ? ` · Vorschau ≈ ${esc(fmtUsd(state.estimate.usd))}` : '';
+  el.title = `${totalT} Tokens · ${inT} Eingang · ${outT} Ausgang${cost.priced ? '' : ' · Modell nicht in der Preisliste'}`;
+  el.innerHTML = `<span class="cost-label">${esc(label)}</span><span class="cost-usd">${usd}</span>` +
+    `<span class="cost-tok">${cost.priced ? esc(totalT) + ' Tokens' : 'kein Preis hinterlegt'}${was}</span>`;
 }
 
 // Sicherheitsnote A–F aus den (nicht ausgeblendeten) Befunden.
@@ -298,11 +308,12 @@ function renderVerdict() {
   if (meta.refuted) notes.push(`${meta.refuted} KI-${plural(meta.refuted, 'Befund', 'Befunde')} bei der Gegenprüfung widerlegt und verworfen.`);
   if (meta.redacted) notes.push(`${meta.redacted} ${plural(meta.redacted, 'Secret', 'Secrets')} vor dem Versand an die KI geschwärzt.`);
   const unverified = state.lastFindings.filter((f) => !f.suppressed && f.assurance === 'unverified').length;
-  const mergeNote = notes.map((n) => `<div class="merge-note">${esc(n)}</div>`).join('') +
-    (unverified ? `<div class="merge-note warn">${unverified} ${plural(unverified, 'Befund ist', 'Befunde sind')} nur von der KI gemeldet und unbestätigt – bitte selbst prüfen.</div>` : '');
+  const noteHtml = notes.map((n) => `<span class="merge-note">${esc(n)}</span>`).join('') +
+    (unverified ? `<span class="merge-note warn">${unverified} ${plural(unverified, 'Befund ist', 'Befunde sind')} nur von der KI gemeldet und unbestätigt – bitte selbst prüfen.</span>` : '');
+  const mergeNote = noteHtml ? `<div class="merge-notes">${noteHtml}</div>` : '';
 
   const v = $('verdict');
-  v.className = 'verdict v-' + kind;
+  v.className = 'verdict card v-' + kind;
   v.innerHTML = `
     <div class="score" style="--p:${score}" role="img" aria-label="Sicherheitsnote ${grade}, ${score} von 100">
       <div class="score-inner"><span class="score-grade">${grade}</span><span class="score-label">${score} / 100</span></div>
@@ -334,9 +345,16 @@ function renderResult(result) {
   state.lastFindings = result.findings || [];
   state.lastResult = result;
   state.filter = 'all'; state.query = ''; state.onlyNew = false; state.onlyProven = false; state.showSuppressed = false;
+  state.selected = null;
   $('findingSearch').value = '';
   $('resultPanel').hidden = false;
+  $('resultActions').hidden = false;
   $('emptyState').hidden = true;
+  const open = state.lastFindings.filter((f) => !f.suppressed);
+  const badge = $('navResultsCount');
+  badge.hidden = !open.length;
+  badge.textContent = open.length;
+  badge.classList.toggle('alarm', open.some((f) => f.severity === 'critical' || f.severity === 'high'));
 
   if (result.errors && result.errors.length) {
     $('log').hidden = false; $('logToggle').setAttribute('aria-expanded', 'true');
@@ -374,54 +392,65 @@ const CONTEXT = {
   'sensitive-data': 'berührt sensible Daten',
   'supply-chain': 'Lieferkette (Abhängigkeit)',
 };
-const CHEV = '<svg class="chev" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-function findingCard(f) {
+const riskOf = (f) => (f.contextualRiskScore != null ? f.contextualRiskScore : (f.cvss != null ? f.cvss * 10 : null));
+const riskCls = (r) => (r >= 85 ? 'crit' : r >= 65 ? 'high' : r >= 40 ? 'med' : 'low');
+const findingKey = (f, i) => f.id || 'i' + i;
+
+// Kompakte Zeile in der Befundliste (links).
+function findingRow(f, key) {
+  const risk = riskOf(f);
+  const flags = `${f.inCisaKev ? '<span class="fr-flag kev" title="Aktiv ausgenutzt (CISA KEV)"></span>' : ''}${f.isNew && state.lastResult && state.lastResult.hasBaseline ? '<span class="fr-flag new" title="Neu seit dem letzten Lauf"></span>' : ''}`;
+  return `<button type="button" class="frow sev-${f.severity}${state.selected === key ? ' active' : ''}${f.suppressed ? ' is-suppressed' : ''}" role="option" aria-selected="${state.selected === key}" data-key="${esc(key)}">
+      <span class="fr-main">
+        <span class="fr-title" title="${esc(cleanTitle(f.title))}">${esc(cleanTitle(f.title))}</span>
+        <span class="fr-sub"><span class="fr-loc">${esc(f.location || f.category || '')}</span></span>
+      </span>
+      <span class="fr-side">${flags}${risk != null ? `<span class="risk risk-${riskCls(risk)}" title="Kontext-Risiko 0–100">${Math.round(risk)}</span>` : ''}</span>
+    </button>`;
+}
+
+// Volle Detailansicht eines Befunds (rechts).
+function findingDetail(f) {
   const srcs = findingSources(f);
   const srcNames = srcs.map(sourceLabel).join(', ');
-  const badges = `${f.isNew && state.lastResult && state.lastResult.hasBaseline ? '<span class="badge-new" title="Seit dem letzten Lauf neu aufgetaucht">neu</span>' : ''}${f.inCisaKev ? '<span class="badge-kev" title="Steht im CISA-Katalog aktiv ausgenutzter Lücken – höchste Priorität">aktiv ausgenutzt</span>' : ''}${f.epssScore >= 0.1 ? `<span class="badge-epss" title="EPSS: Wahrscheinlichkeit einer Ausnutzung in den nächsten 30 Tagen">EPSS ${Math.round(f.epssScore * 100)} %</span>` : ''}${f.regression ? '<span class="badge-reg" title="War schon als behoben markiert und ist wieder da">wieder da</span>' : ''}${f.status && f.status !== 'OPEN' ? `<span class="badge-status st-${f.status}">${esc(STATUS_LABEL[f.status])}</span>` : ''}`;
-  const srcChip = srcs.length > 1
-    ? `<span class="src-chip" title="Gefunden von: ${esc(srcNames)}">${esc(srcs.map(sourceLabel).join(' + '))}</span>`
-    : `<span>${esc(srcNames)}</span>`;
-  const sub = [
-    f.location ? `<span class="f-loc" title="${esc(f.location)}">${esc(f.location)}</span>` : '',
-    `<span>${esc(f.category)}</span>`,
-    srcChip,
-  ].filter(Boolean).join('<span class="f-sep">·</span>') + badges;
   const ev = EVIDENCE[f.assurance];
-  // Feste Spalten: leere Platzhalter, damit Zeilen ohne Beleg/CVSS nicht verrutschen.
-  const evChip = ev ? `<span class="ev-chip ${ev.cls}" title="${esc(ev.help)}">${ev.label}</span>` : '<span class="col-empty"></span>';
+  const risk = riskOf(f);
+  const chips = [
+    `<span class="sev-tag sev-${f.severity}" title="${esc(SEV_HELP[f.severity])}">${SEV_LABEL[f.severity]}</span>`,
+    risk != null ? `<span class="risk risk-${riskCls(risk)}" title="Kontext-Risiko 0–100${f.cvss != null ? ' · CVSS ' + Number(f.cvss).toFixed(1) : ''}">Risiko ${Math.round(risk)}</span>` : '',
+    ev ? `<span class="chip ${ev.cls}" title="${esc(ev.help)}">${ev.label}</span>` : '',
+    f.inCisaKev ? '<span class="chip badge-kev" title="Steht im CISA-Katalog aktiv ausgenutzter Lücken">aktiv ausgenutzt</span>' : '',
+    f.epssScore >= 0.1 ? `<span class="chip badge-epss" title="Wahrscheinlichkeit einer Ausnutzung in 30 Tagen">EPSS ${Math.round(f.epssScore * 100)} %</span>` : '',
+    f.isNew && state.lastResult && state.lastResult.hasBaseline ? '<span class="chip badge-new">neu</span>' : '',
+    f.regression ? '<span class="chip badge-reg" title="War als behoben markiert und ist wieder da">wieder da</span>' : '',
+    `<span class="chip">${esc(f.category)}</span>`,
+  ].filter(Boolean).join('');
   const ctx = (f.context || []).filter((c) => CONTEXT[c]);
-  const ctxRow = ctx.length ? `<div class="ctx-row">${ctx.map((c) => `<span class="ctx-chip ctx-${c}">${CONTEXT[c]}</span>`).join('')}</div>` : '';
-  const check = f.validation && f.validation.reason
-    ? `<div class="f-sec check-sec"><h4>Gegenprüfung: ${f.validation.verdict === 'confirmed' ? 'bestätigt' : 'nicht eindeutig'}</h4><p>${esc(f.validation.reason)}</p></div>` : '';
   const danger = [f.impact, f.reachability].filter(Boolean).join(' ');
   const secs = [
     f.description && `<div class="f-sec${danger ? '' : ' full'}"><h4>Das Problem</h4><p>${esc(f.description)}</p></div>`,
     danger && `<div class="f-sec${f.description ? '' : ' full'}"><h4>Wie gefährlich ist das?</h4><p>${esc(danger)}</p></div>`,
   ].filter(Boolean).join('');
-  // Kontext-Risiko (0–100) statt reinem CVSS – beruecksichtigt KEV, EPSS und Exposition.
-  const risk = f.contextualRiskScore != null ? f.contextualRiskScore : (f.cvss != null ? f.cvss * 10 : null);
-  const cvss = risk != null ? `<span class="cvss risk-${risk >= 85 ? 'crit' : risk >= 65 ? 'high' : risk >= 40 ? 'med' : 'low'}" title="Kontext-Risiko 0–100${f.cvss != null ? ' · CVSS ' + Number(f.cvss).toFixed(1) : ''}${f.epssScore != null ? ' · EPSS ' + Math.round(f.epssScore * 100) + ' %' : ''}"><small>RISIKO</small>${Math.round(risk)}</span>` : '<span class="col-empty"></span>';
+  const check = f.validation && f.validation.reason
+    ? `<div class="f-sec check-sec"><h4>Gegenprüfung: ${f.validation.verdict === 'confirmed' ? 'bestätigt' : 'nicht eindeutig'}</h4><p>${esc(f.validation.reason)}</p></div>` : '';
   return `
-    <div class="card finding sev-${f.severity}${f.suppressed ? ' is-suppressed' : ''}">
-      <button class="card-head" aria-expanded="false">
-        <span class="sev-tag" title="${esc(SEV_HELP[f.severity])}">${SEV_LABEL[f.severity]}</span>
-        <span class="f-main"><span class="f-title">${esc(cleanTitle(f.title))}</span><span class="f-sub">${sub}</span></span>
-        ${evChip}${cvss}${CHEV}
-      </button>
-      <div class="card-body"><div class="inner"><div class="pad">
-        ${f.locationDetail ? `<p class="loc-detail"><span>Fundort</span> ${esc(f.locationDetail)}</p>` : ''}
-        ${ctxRow}
-        ${secs ? `<div class="f-cols">${secs}</div>` : ''}
-        ${check}
-        ${f.evidence ? `<div class="f-sec evidence"><h4>Fundstelle</h4><code>${esc(f.evidence)}</code></div>` : ''}
-        ${solutionBlock(f)}
-        <div class="f-foot">
-          <span class="muted">${srcs.length > 1 ? 'Gefunden von' : 'Quelle'}: ${esc(srcNames)}${f.confidence ? ' · Sicherheit: ' + esc(CONF_LABEL[f.confidence] || f.confidence) : ''}${f.ruleId ? ' · Regel: ' + esc(f.ruleId) : ''}</span>
-          ${f.id ? statusSelect(f.id, f.status || 'OPEN') : ''}
-        </div>
-      </div></div></div>
+    <header class="fd-head">
+      <div class="fd-top">${chips}</div>
+      <h2 class="fd-title">${esc(cleanTitle(f.title))}</h2>
+      ${f.location ? `<div class="fd-loc">${esc(f.location)}</div>` : ''}
+      <div class="fd-meta">
+        <span class="meta-text">${srcs.length > 1 ? 'Gefunden von' : 'Quelle'}: ${esc(srcNames)}${f.confidence ? ' · Sicherheit ' + esc(CONF_LABEL[f.confidence] || f.confidence) : ''}${f.ruleId ? ' · ' + esc(f.ruleId) : ''}</span>
+        ${f.id ? statusSelect(f.id, f.status || 'OPEN') : ''}
+      </div>
+    </header>
+    <div class="fd-body">
+      ${f.locationDetail ? `<p class="loc-detail"><span>Fundort</span>${esc(f.locationDetail)}</p>` : ''}
+      ${ctx.length ? `<div class="ctx-row">${ctx.map((c) => `<span class="ctx-chip ctx-${c}">${CONTEXT[c]}</span>`).join('')}</div>` : ''}
+      ${secs ? `<div class="f-cols">${secs}</div>` : ''}
+      ${check}
+      ${f.evidence ? `<div class="f-sec evidence"><h4>Fundstelle</h4><code>${esc(f.evidence)}</code></div>` : ''}
+      ${solutionBlock(f)}
     </div>`;
 }
 
@@ -433,7 +462,7 @@ function solutionBlock(f) {
   const parts = [];
   if (f.explanation) parts.push(`<div class="sol-why"><h4>Warum das wichtig ist</h4><p>${esc(f.explanation)}</p></div>`);
   const steps = f.steps && f.steps.length ? f.steps : (f.remediation ? [f.remediation] : []);
-  if (steps.length) parts.push(`<div class="sol-steps"><h4>✔ So behebst du es</h4><ol>${steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>${f.remediation && f.steps && f.steps.length && !f.steps.includes(f.remediation) && !/^Siehe /.test(f.remediation) ? `<p class="muted small">Konkret hier: ${esc(f.remediation)}</p>` : ''}</div>`);
+  if (steps.length) parts.push(`<div class="sol-steps"><h4>So behebst du es</h4><ol>${steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>${f.remediation && f.steps && f.steps.length && !f.steps.includes(f.remediation) && !/^Siehe /.test(f.remediation) ? `<p class="muted small">Konkret hier: ${esc(f.remediation)}</p>` : ''}</div>`);
   if (f.versionPatch) {
     const vp = f.versionPatch;
     const code = [vp.command, vp.manifest].filter(Boolean).join('\n\n');
@@ -447,7 +476,7 @@ function solutionBlock(f) {
   if (f.links && f.links.length) {
     parts.push(`<div class="sol-links"><h4>Mehr dazu</h4><div class="link-row">${f.links.slice(0, 10).map((l) => `<button type="button" class="link-chip kind-${esc(l.kind || 'doc')}" data-url="${esc(l.url)}" title="${esc(l.url)}">${LINK_ICON[l.kind] || '🔗'} ${esc(l.label)}</button>`).join('')}</div></div>`);
   }
-  return parts.length ? `<div class="solution">${parts.join('')}</div>` : '';
+  return parts.length ? `<div class="solution"><div class="sol-title">Lösung</div>${parts.join('')}</div>` : '';
 }
 function bindSolutionControls(root) {
   root.querySelectorAll('.copy-btn').forEach((b) => b.onclick = async (e) => {
@@ -473,35 +502,65 @@ function toxicBanner(list) {
   return `<div class="toxic-banner" role="alert"><div class="toxic-ico">⚠</div><div><b>${toxic.length} ${toxic.length === 1 ? 'Angriffspfad' : 'Angriffspfade'} erkannt</b><ul>${toxic.map((t) => `<li>${esc(t.title.replace(/^Angriffspfad:\s*/, ''))}</li>`).join('')}</ul><span class="muted small">Mehrere Schwächen ergeben zusammen einen vollständigen Angriffsweg. Ein Glied zu brechen genügt.</span></div></div>`;
 }
 
-function renderFindings() {
-  const box = $('findings');
+function visibleList() {
   const q = state.query.trim().toLowerCase();
   let list = state.filter === 'all' ? state.lastFindings : state.lastFindings.filter((f) => f.severity === state.filter);
   if (!state.showSuppressed) list = list.filter((f) => !f.suppressed);
   if (state.onlyNew) list = list.filter((f) => f.isNew);
   if (state.onlyProven) list = list.filter((f) => f.assurance !== 'unverified');
-  list = list.filter((f) => matchesQuery(f, q));
-  if (!list.length) {
+  return list.filter((f) => matchesQuery(f, q));
+}
+function renderFindings() {
+  const box = $('findings');
+  const list = visibleList();
+  const keyed = list.map((f) => ({ f, key: findingKey(f, state.lastFindings.indexOf(f)) }));
+  if (!keyed.length) {
     box.innerHTML = state.lastFindings.length
-      ? '<div class="empty"><b>Keine Treffer</b>Für diese Ansicht gibt es keine Befunde – Filter oder Suche anpassen.</div>'
+      ? '<div class="empty"><b>Keine Treffer</b>Filter oder Suche anpassen.</div>'
       : '<div class="empty"><b>Alles sauber</b>Vigil hat in diesem Lauf nichts gefunden.</div>';
+    state.selected = null;
+    renderDetail();
     return;
   }
-  box.innerHTML = SEV_ORDER.map((s) => {
-    const items = list.filter((f) => f.severity === s);
+  // Auswahl behalten, sonst den dringendsten Befund zeigen
+  if (!keyed.some((x) => x.key === state.selected)) state.selected = keyed[0].key;
+  box.innerHTML = toxicBanner(state.lastFindings) + SEV_ORDER.map((s) => {
+    const items = keyed.filter((x) => x.f.severity === s);
     if (!items.length) return '';
-    return `<div class="group-head sev-${s}">${SEV_LABEL[s]} <span class="gcount">${items.length}</span></div>` + items.map(findingCard).join('');
+    return `<div class="group-head sev-${s}">${SEV_LABEL[s]} <span class="gcount">${items.length}</span></div>` + items.map((x) => findingRow(x.f, x.key)).join('');
   }).join('');
-  box.insertAdjacentHTML('afterbegin', toxicBanner(state.lastFindings));
-  bindSolutionControls(box);
-  box.querySelectorAll('.card-head').forEach((h) => h.onclick = () => {
-    const open = h.parentElement.classList.toggle('open');
-    h.setAttribute('aria-expanded', open ? 'true' : 'false');
+  box.querySelectorAll('.frow').forEach((r) => r.onclick = () => selectFinding(r.dataset.key));
+  renderDetail();
+}
+function selectFinding(key, focus) {
+  state.selected = key;
+  $('findings').querySelectorAll('.frow').forEach((r) => {
+    const on = r.dataset.key === key;
+    r.classList.toggle('active', on); r.setAttribute('aria-selected', on ? 'true' : 'false');
+    if (on) { r.scrollIntoView({ block: 'nearest' }); if (focus) r.focus(); }
   });
-  bindStatusSelects(box, (id, status) => {
-    state.lastFindings.forEach((f) => { if (f.id === id) { f.status = status; f.suppressed = HIDDEN_STATUS.has(status); } });
+  renderDetail();
+}
+function renderDetail() {
+  const pane = $('findingDetail');
+  const f = state.lastFindings.find((x, i) => findingKey(x, i) === state.selected);
+  if (!f) { pane.innerHTML = '<div class="fd-empty">Wähle links einen Befund, um Details und Lösung zu sehen.</div>'; return; }
+  pane.innerHTML = findingDetail(f);
+  pane.scrollTop = 0;
+  bindSolutionControls(pane);
+  bindStatusSelects(pane, (id, status) => {
+    state.lastFindings.forEach((x) => { if (x.id === id) { x.status = status; x.suppressed = HIDDEN_STATUS.has(status); } });
+    toast(`Status: ${STATUS_LABEL[status]}`, 'ok');
     refreshResultView();
   });
+}
+// Pfeiltasten in der Befundliste
+function moveSelection(delta) {
+  const rows = [...$('findings').querySelectorAll('.frow')];
+  if (!rows.length) return;
+  const i = rows.findIndex((r) => r.dataset.key === state.selected);
+  const next = rows[Math.min(rows.length - 1, Math.max(0, (i < 0 ? 0 : i + delta)))];
+  selectFinding(next.dataset.key, true);
 }
 
 // --- Befund-Status (Lebenszyklus) ---------------------------------------
@@ -553,10 +612,8 @@ function renderViewToggles() {
 function sourceLabel(s) { return ({ osv: 'Schwachstellen-DB (OSV)', prescan: 'statische Prüfung', webscan: 'Server-Check', nmap: 'nmap', nuclei: 'nuclei', gitleaks: 'gitleaks', trufflehog: 'trufflehog', trivy: 'trivy', grype: 'grype', semgrep: 'semgrep', bandit: 'bandit', checkov: 'checkov', retire: 'retire.js', hadolint: 'hadolint', 'osv-scanner': 'osv-scanner', binary: 'Binary-Analyse', ai: 'KI', 'supply-chain-audit': 'Lieferkette', 'container-host-audit': 'Container-Prüfung', 'semgrep-custom-sast': 'Code-Regeln', 'llm-prompt-security': 'KI-Sicherheit', 'linux-host-audit': 'Server-Konfig', 'web-exposure-audit': 'Web-Exposure', 'web-tls-posture': 'Web/TLS', 'dns-mail-drift': 'DNS & Mail', 'headless-dom-audit': 'Browser-Prüfung', 'api-auth-matrix': 'API-Rechtematrix', correlator: 'Angriffspfad-Analyse' })[s] || s || 'KI'; }
 
 // --- Scan-Verlauf -------------------------------------------------------
-async function openHistory() {
-  const runs = await window.vigil.historyList();
-  renderHistory(runs);
-  $('historyOverlay').hidden = false;
+async function loadHistory() {
+  renderHistory(await window.vigil.historyList());
 }
 function renderHistory(runs) {
   const box = $('historyList');
@@ -573,7 +630,10 @@ function renderHistory(runs) {
   }).join('');
   box.querySelectorAll('.hist-row').forEach((b) => b.onclick = async () => {
     const res = await window.vigil.historyOpen(b.dataset.id);
-    if (res.ok) { $('historyOverlay').hidden = true; renderResult(res.result); $('resultPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    if (!res.ok) return;
+    $('progressPanel').hidden = true;
+    renderResult(res.result);
+    showView('results');
   });
 }
 
@@ -650,14 +710,14 @@ function aiReady() {
   if (ai.mode === 'local') {
     const s = ai.ollama;
     if (!s) return { ok: false, why: 'Prüfe Ollama …' };
-    if (!s.installed) return { ok: false, why: 'Installiere zuerst Ollama (Schritt 2) – oder wähle „Cloud“.' };
-    if (!s.running) return { ok: false, why: 'Starte Ollama in Schritt 2.' };
-    if (!s.models.length) return { ok: false, why: 'Lade in Schritt 2 ein Modell herunter, z. B. Qwen 2.5 Coder 7B.' };
+    if (!s.installed) return { ok: false, why: 'Installiere zuerst Ollama (unter „KI“) – oder wähle „Cloud“.' };
+    if (!s.running) return { ok: false, why: 'Starte Ollama unter „KI“.' };
+    if (!s.models.length) return { ok: false, why: 'Lade unter „KI“ ein Modell herunter, z. B. Qwen 2.5 Coder 7B.' };
     return { ok: true, label: pcfg('ollama').model || 'Ollama' };
   }
   const id = state.config.cloudProvider;
-  if (!cloudHasAccess(id)) return { ok: false, why: id === 'compat' ? 'Trage in den Einstellungen die Server-Adresse des Dienstes ein.' : 'Füge in Schritt 2 deinen API-Schlüssel ein.' };
-  if (!pcfg(id).model) return { ok: false, why: 'Wähle in Schritt 2 ein Modell.' };
+  if (!cloudHasAccess(id)) return { ok: false, why: id === 'compat' ? 'Trage in den Einstellungen die Server-Adresse des Dienstes ein.' : 'Füge unter „KI“ deinen API-Schlüssel ein.' };
+  if (!pcfg(id).model) return { ok: false, why: 'Wähle unter „KI“ ein Modell.' };
   return { ok: true, label: pcfg(id).model };
 }
 
@@ -879,14 +939,29 @@ const gradeOf = (score) => (score >= 92 ? 'A' : score >= 78 ? 'B' : score >= 60 
 const RUN_LABEL = { QUEUED: 'wartet', RUNNING: 'läuft', COMPLETED: 'fertig', FAILED: 'fehlgeschlagen' };
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '–');
 
+// Seiten: Neue Pruefung | Ergebnis | Uebersicht | Verlauf | Einstellungen
+const VIEWS = { scan: 'scanView', results: 'resultsView', dash: 'dashView', history: 'historyView', settings: 'settingsView' };
 function showView(v) {
-  $('checkView').hidden = v !== 'check';
-  $('dashView').hidden = v !== 'dash';
-  for (const [id, name] of [['tabCheck', 'check'], ['tabDash', 'dash']]) {
-    $(id).classList.toggle('active', v === name);
-    $(id).setAttribute('aria-selected', v === name ? 'true' : 'false');
-  }
+  if (!VIEWS[v]) return;
+  state.view = v;
+  for (const [name, id] of Object.entries(VIEWS)) $(id).hidden = name !== v;
+  document.querySelectorAll('.nav-item[data-view]').forEach((b) => {
+    const on = b.dataset.view === v;
+    b.classList.toggle('active', on);
+    if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+  closeMenus();
+  document.querySelector('.main').scrollTop = 0;
   if (v === 'dash') loadDashboard();
+  if (v === 'history') loadHistory();
+  if (v === 'settings') {
+    renderSettings();
+    $('setNav').querySelectorAll('a').forEach((a, i) => a.classList.toggle('active', i === 0));
+  }
+}
+function closeMenus() {
+  $('exportMenu').hidden = true;
+  $('exportBtn').setAttribute('aria-expanded', 'false');
 }
 
 async function loadDashboard() {
@@ -964,7 +1039,7 @@ function renderDashTargets(targets) {
     if (!t) return;
     state.targets = [{ type: t.type, value: t.identifier, authorized: t.verified }];
     renderTargets();
-    showView('check');
+    showView('scan');
     if ($('runBtn').disabled) { flash($('runHint').textContent || 'Ziel übernommen – wähle eine KI und starte.'); return; }
     runAudit();
   });
@@ -1072,8 +1147,7 @@ async function refreshApiInfo() {
   $('apiStatus').className = 'small ' + (info.running ? 'model-status ok' : 'muted');
   $('apiExample').textContent = `curl -H "Authorization: Bearer <Token>" http://127.0.0.1:${info.port || 7811}/api/findings?status=OPEN`;
 }
-function openSettings() { renderSettings(); $('settingsOverlay').hidden = false; }
-function closeSettings() { $('settingsOverlay').hidden = true; }
+function openSettings() { showView('settings'); }
 
 // --- Init ---------------------------------------------------------------
 async function init() {
@@ -1134,9 +1208,9 @@ async function init() {
   $('logToggle').onclick = () => {
     const log = $('log'); log.hidden = !log.hidden;
     $('logToggle').setAttribute('aria-expanded', log.hidden ? 'false' : 'true');
-    $('logToggle').textContent = (log.hidden ? '▸' : '▾') + ' Technische Details';
   };
   const exportAs = (fmt) => async () => {
+    closeMenus();
     if (fmt === 'pdf') flash('Erzeuge PDF …');
     const r = await window.vigil.saveReport(fmt);
     flash(r.ok ? 'Gespeichert: ' + r.path : (r.canceled ? '' : 'Fehler: ' + r.error));
@@ -1145,9 +1219,40 @@ async function init() {
   $('exportMdBtn').onclick = exportAs('md');
   $('exportSarifBtn').onclick = exportAs('sarif');
   $('exportPdfBtn').onclick = exportAs('pdf');
-  // Ansichten: Pruefen | Uebersicht
-  $('tabCheck').onclick = () => showView('check');
-  $('tabDash').onclick = () => showView('dash');
+  $('exportBtn').onclick = (e) => {
+    e.stopPropagation();
+    const open = $('exportMenu').hidden;
+    $('exportMenu').hidden = !open;
+    $('exportBtn').setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) $('exportMenu').querySelector('button').focus();
+  };
+  document.addEventListener('click', (e) => { if (!e.target.closest('.menu-wrap')) closeMenus(); });
+  $('findings').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); moveSelection(1); }
+    else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); moveSelection(-1); }
+  });
+
+  // Seitenleiste
+  document.querySelectorAll('.nav-item[data-view]').forEach((b) => b.onclick = () => showView(b.dataset.view));
+  $('aiPill').onclick = () => { showView('scan'); setTimeout(() => $('aiCard').scrollIntoView({ behavior: 'smooth', block: 'start' }), 30); };
+  $('newScanBtn').onclick = () => showView('scan');
+  $('emptyScanBtn').onclick = () => showView('scan');
+  $('sbMode').onclick = () => {
+    state.config.analysisDepth = state.config.analysisDepth === 'standard' ? 'thorough' : 'standard';
+    saveCfg(); updateRunState();
+    toast(state.config.analysisDepth === 'standard' ? 'Schnell-Modus aktiv' : 'Gründlich-Modus aktiv', 'ok');
+  };
+  // Einstellungen: Unternavigation folgt dem Scrollen
+  $('setNav').querySelectorAll('a').forEach((a) => a.onclick = (e) => {
+    e.preventDefault();
+    document.querySelector(a.getAttribute('href')).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  document.querySelector('.main').addEventListener('scroll', () => {
+    if (state.view !== 'settings') return;
+    let current = null;
+    document.querySelectorAll('.set-block').forEach((sec) => { if (sec.getBoundingClientRect().top < 140) current = sec.id; });
+    $('setNav').querySelectorAll('a').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === '#' + (current || 'set-analyse')));
+  }, { passive: true });
   $('dashStatus').querySelectorAll('.fbtn').forEach((b) => b.onclick = () => { dash.status = b.dataset.s; loadDashboard(); });
   $('dashSeverity').onchange = () => { dash.severity = $('dashSeverity').value; loadDashboard(); };
   let dashTimer = null;
@@ -1178,29 +1283,19 @@ async function init() {
   };
 
   // Verlauf + Einstellungen
-  $('historyBtn').onclick = openHistory;
-  $('historyClose').onclick = () => { $('historyOverlay').hidden = true; };
-  $('historyOverlay').addEventListener('click', (e) => { if (e.target === $('historyOverlay')) $('historyOverlay').hidden = true; });
   $('historyClearBtn').onclick = async () => { await window.vigil.historyClear(); renderHistory([]); $('historyStatus').textContent = 'Verlauf geleert.'; setTimeout(() => { $('historyStatus').textContent = ''; }, 1200); };
   $('addRuleBtn').onclick = () => { collectCustomRules(); state.config.customRules.push({ name: '', regex: '', severity: 'medium' }); renderCustomRules(); };
-  $('settingsBtn').onclick = openSettings;
-  $('settingsClose').onclick = closeSettings;
-  $('settingsOverlay').addEventListener('click', (e) => { if (e.target === $('settingsOverlay')) closeSettings(); });
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    if (!$('settingsOverlay').hidden) closeSettings();
-    if (!$('historyOverlay').hidden) $('historyOverlay').hidden = true;
-  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });
   $('tempRange').addEventListener('input', () => { $('tempVal').textContent = $('tempRange').value; $('tempDesc').textContent = tempText(parseFloat($('tempRange').value)); });
   $('settingsSave').onclick = async () => {
     collectSettings();
     const r = await saveCfg();
-    $('settingsStatus').textContent = r && r.ok ? 'Gespeichert.' : 'Fehler beim Speichern.';
+    toast(r && r.ok ? 'Einstellungen gespeichert' : 'Fehler beim Speichern', r && r.ok ? 'ok' : 'err');
     if (ai.mode === 'cloud') refreshCloud(); else refreshOllama();
     updateRunState();
-    setTimeout(() => { $('settingsStatus').textContent = ''; closeSettings(); }, 600);
   };
 
+  showView('scan');
   renderTargets();
 }
 // Meldungen als Toast (oben rechts) – nichts geht mehr in einer Statuszeile unter.
@@ -1220,12 +1315,18 @@ function flash(msg) {
   toast(msg, /^Fehler|nicht|✕/.test(msg) ? 'err' : /^Gespeichert|✓/.test(msg) ? 'ok' : 'info');
 }
 
-// Statusleiste: KI, Ziele, Threat-Intel, Version
+// Seitenleiste + Zusammenfassung: aktive KI, Ziele, Modus, Threat-Intel
 async function updateStatusBar() {
-  const sb = $('statusBar'); if (!sb || !state.config) return;
-  const ai = state.config.selected === 'ollama' ? `Lokal · ${pcfg('ollama').model || 'kein Modell'}` : `${providerMeta(state.config.selected).label || state.config.selected} · ${pcfg(state.config.selected).model || '–'}`;
-  $('sbAi').textContent = ai;
-  $('sbTargets').textContent = `${state.targets.length} ${state.targets.length === 1 ? 'Ziel' : 'Ziele'}`;
+  if (!state.config) return;
+  const sel = state.config.selected;
+  const name = sel === 'ollama' ? (pcfg('ollama').model || 'Ollama – kein Modell')
+    : (pcfg(sel).model || providerMeta(sel).label || sel);
+  const where = ai.mode === 'local' ? 'Lokal' : String(providerMeta(sel).label || 'Cloud').replace(/\s*\(.*\)/, '');
+  $('sbAi').textContent = name;
+  $('sumAi').textContent = !state.targets.length || needsAi() ? `${where} · ${name}` : 'nicht nötig';
+  $('sumAi').title = `${where} · ${name}`;
+  $('sbDot').className = 'dot ' + (aiReady().ok ? 'ok' : 'wait');
+  $('sbTargets').textContent = state.targets.length;
   $('sbMode').textContent = state.config.analysisDepth === 'standard' ? 'Schnell' : 'Gründlich';
   if (!updateStatusBar.intelLoaded) {
     updateStatusBar.intelLoaded = true;
@@ -1237,10 +1338,9 @@ async function updateStatusBar() {
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key === 'Enter') { e.preventDefault(); if (!$('runBtn').disabled) runAudit(); }
-  else if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); const s = $('dashView').hidden ? $('findingSearch') : $('dashSearch'); if (s && s.offsetParent) s.focus(); }
+  else if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); const s = state.view === 'dash' ? $('dashSearch') : $('findingSearch'); if (s && s.offsetParent) s.focus(); }
   else if (mod && e.key === ',') { e.preventDefault(); openSettings(); }
-  else if (mod && e.key === '1') { e.preventDefault(); showView('check'); }
-  else if (mod && e.key === '2') { e.preventDefault(); showView('dash'); }
+  else if (mod && ['1', '2', '3', '4'].includes(e.key)) { e.preventDefault(); showView(['scan', 'results', 'dash', 'history'][+e.key - 1]); }
 });
 
 init();
