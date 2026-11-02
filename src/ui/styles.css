@@ -772,3 +772,18 @@ button.stat:hover:not(:disabled) { border-color: var(--line-strong); }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 .t-kind.system { color: #8fd18a; background: rgba(143, 209, 138, .13); }
+
+/* Uebersicht: Befunde anklickbar, Details im seitlichen Fenster */
+.ftable tr.clickable { cursor: pointer; transition: background .12s; }
+.ftable tr.clickable:hover td { background: color-mix(in srgb, var(--panel-2) 70%, var(--accent) 6%); }
+.ftable tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ftable tr.clickable.active td { background: var(--accent-soft); }
+.ftable tr.clickable.active td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.drawer-bg { position: fixed; inset: 0; background: rgba(4, 7, 12, .45); z-index: 40; animation: fadeIn .15s ease; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 92vw); z-index: 41; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--line); box-shadow: -18px 0 40px rgba(0, 0, 0, .35); animation: drawerIn .2s ease; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+.drawer-nav { display: flex; gap: 6px; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 18px 22px 28px; max-height: none; border: 0; border-radius: 0; }
+.drawer-meta { margin-bottom: 10px; }
+@keyframes drawerIn { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }

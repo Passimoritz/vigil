@@ -403,6 +403,18 @@
       </div>
       <p id="dashTargetFilter" class="target-filter" hidden>Nur Ziel: <b id="dashTargetName"></b> <button id="dashTargetClear" class="btn ghost tiny">Filter entfernen</button></p>
       <div id="dashTable" class="ftable-wrap"></div>
+      <div id="dashDrawerBg" class="drawer-bg" hidden></div>
+      <aside id="dashDrawer" class="drawer" role="dialog" aria-modal="true" aria-label="Befund-Details" hidden>
+        <div class="drawer-head">
+          <span class="muted small" id="dashDrawerPos"></span>
+          <span class="drawer-nav">
+            <button type="button" class="btn tiny" id="dashDrawerPrev" aria-label="Vorheriger Befund">↑</button>
+            <button type="button" class="btn tiny" id="dashDrawerNext" aria-label="Nächster Befund">↓</button>
+            <button type="button" class="btn tiny" id="dashDrawerClose" aria-label="Schließen">✕ Schließen</button>
+          </span>
+        </div>
+        <div id="dashDrawerBody" class="fdetail drawer-body"></div>
+      </aside>
     </section>
 
     <section class="card">

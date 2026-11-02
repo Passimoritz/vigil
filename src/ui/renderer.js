@@ -1078,6 +1078,7 @@ const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyl
 const VIEWS = { scan: 'scanView', results: 'resultsView', dash: 'dashView', history: 'historyView', settings: 'settingsView' };
 function showView(v) {
   if (!VIEWS[v]) return;
+  if (v !== 'dash' && state.dashOpen) closeDashDetail();
   state.view = v;
   for (const [name, id] of Object.entries(VIEWS)) $(id).hidden = name !== v;
   document.querySelectorAll('.nav-item[data-view]').forEach((b) => {
@@ -1195,8 +1196,9 @@ function renderDashTable(findings, targets) {
   if (tgt) $('dashTargetName').textContent = tgt.name;
   const box = $('dashTable');
   if (!findings.length) { box.innerHTML = '<div class="empty"><b>Keine Befunde</b>In dieser Ansicht gibt es nichts – Filter anpassen.</div>'; return; }
-  box.innerHTML = `<table class="ftable"><thead><tr><th>Schwere</th><th>Befund</th><th>Ziel</th><th>Zuletzt gesehen</th><th>Status</th></tr></thead><tbody>${findings.map((f) => `
-    <tr class="sev-${f.severity}">
+  state.dashFindings = findings;
+  box.innerHTML = `<table class="ftable"><thead><tr><th>Schwere</th><th>Befund</th><th>Ziel</th><th>Zuletzt gesehen</th><th>Status</th></tr></thead><tbody>${findings.map((f, i) => `
+    <tr class="sev-${f.severity} clickable${state.dashOpen === f.id ? ' active' : ''}" data-i="${i}" tabindex="0" role="button" aria-label="Details zu ${esc(cleanTitle(f.title))}">
       <td><span class="sev-tag">${SEV_LABEL[f.severity]}</span></td>
       <td class="ft-main"><b title="${esc(f.title)}">${esc(cleanTitle(f.title))}</b><span class="f-loc" title="${esc(f.location)}">${esc(f.location)}</span>${f.statusNote ? `<span class="muted small">${esc(f.statusNote)}</span>` : ''}</td>
       <td class="ft-tgt" title="${esc(f.targetName)}">${esc(f.targetName)}</td>
@@ -1204,6 +1206,46 @@ function renderDashTable(findings, targets) {
       <td>${statusSelect(f.id, f.status)}</td>
     </tr>`).join('')}</tbody></table>`;
   bindStatusSelects(box, () => loadDashboard());
+  box.querySelectorAll('tr.clickable').forEach((tr) => {
+    tr.onclick = () => openDashDetail(Number(tr.dataset.i));
+    tr.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDashDetail(Number(tr.dataset.i)); } };
+  });
+  // Nach Statusaenderung o. ae. den offenen Befund weiter anzeigen
+  if (state.dashOpen) { const i = findings.findIndex((f) => f.id === state.dashOpen); if (i >= 0) openDashDetail(i, true); else closeDashDetail(); }
+}
+
+// Detail-Ansicht fuer einen gespeicherten Befund der Uebersicht (seitliches Fenster).
+// Gespeichert ist der vollstaendige Befund (Erklaerung, Loesung, Links) unter rec.finding.
+function dashFindingFull(rec) {
+  return { ...rec, ...(rec.finding || {}), id: rec.id, status: rec.status, severity: rec.severity, title: rec.title, location: rec.location, statusNote: rec.statusNote, firstSeenAt: rec.firstSeenAt, lastSeenAt: rec.lastSeenAt, contextualRiskScore: rec.contextualRiskScore ?? (rec.finding && rec.finding.contextualRiskScore), linkedKeys: [] };
+}
+function openDashDetail(i, keepScroll) {
+  const list = state.dashFindings || [];
+  const rec = list[i];
+  if (!rec) return;
+  state.dashOpen = rec.id; state.dashIndex = i;
+  const body = $('dashDrawerBody');
+  const top = body.scrollTop;
+  const f = dashFindingFull(rec);
+  const linked = (rec.linkedFindingIds || []).map((id) => list.findIndex((x) => x.id === id)).filter((k) => k >= 0);
+  body.innerHTML = `<div class="muted small drawer-meta">Ziel: <b>${esc(rec.targetName)}</b> · zuerst gesehen ${esc(fmtDate(rec.firstSeenAt))} · zuletzt ${esc(fmtDate(rec.lastSeenAt))}</div>`
+    + findingDetail(f)
+    + (linked.length ? `<div class="f-sec"><h4>Beteiligte Befunde</h4>${linked.map((k) => `<button type="button" class="linked-row" data-i="${k}"><span class="sev-tag sev-${list[k].severity}">${SEV_LABEL[list[k].severity]}</span> ${esc(cleanTitle(list[k].title))}</button>`).join('')}</div>` : '');
+  bindSolutionControls(body);
+  body.querySelectorAll('.linked-row').forEach((b) => b.onclick = () => openDashDetail(Number(b.dataset.i)));
+  bindStatusSelects(body, (id, status) => { toast(`Status: ${STATUS_LABEL[status]}`, 'ok'); loadDashboard(); });
+  $('dashDrawerPos').textContent = `Befund ${i + 1} von ${list.length}`;
+  $('dashDrawerPrev').disabled = i <= 0;
+  $('dashDrawerNext').disabled = i >= list.length - 1;
+  $('dashDrawer').hidden = false; $('dashDrawerBg').hidden = false;
+  body.scrollTop = keepScroll ? top : 0;
+  $('dashTable').querySelectorAll('tr.clickable').forEach((tr) => tr.classList.toggle('active', Number(tr.dataset.i) === i));
+  if (!keepScroll) $('dashDrawerClose').focus();
+}
+function closeDashDetail() {
+  state.dashOpen = null;
+  $('dashDrawer').hidden = true; $('dashDrawerBg').hidden = true;
+  $('dashTable').querySelectorAll('tr.clickable.active').forEach((tr) => tr.classList.remove('active'));
 }
 
 // --- Einstellungen ------------------------------------------------------
@@ -1449,7 +1491,17 @@ async function init() {
   // Verlauf + Einstellungen
   $('historyClearBtn').onclick = async () => { await window.vigil.historyClear(); renderHistory([]); $('historyStatus').textContent = 'Verlauf geleert.'; setTimeout(() => { $('historyStatus').textContent = ''; }, 1200); };
   $('addRuleBtn').onclick = () => { collectCustomRules(); state.config.customRules.push({ name: '', regex: '', severity: 'medium' }); renderCustomRules(); };
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { if (!$('dashDrawer').hidden) closeDashDetail(); closeMenus(); }
+    // Im offenen Detail-Fenster der Uebersicht mit Pfeiltasten blaettern
+    if (!$('dashDrawer').hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && !/SELECT|INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+      e.preventDefault(); openDashDetail((state.dashIndex || 0) + (e.key === 'ArrowDown' ? 1 : -1));
+    }
+  });
+  $('dashDrawerClose').onclick = closeDashDetail;
+  $('dashDrawerBg').onclick = closeDashDetail;
+  $('dashDrawerPrev').onclick = () => openDashDetail((state.dashIndex || 0) - 1);
+  $('dashDrawerNext').onclick = () => openDashDetail((state.dashIndex || 0) + 1);
   $('tempRange').addEventListener('input', () => { $('tempVal').textContent = $('tempRange').value; $('tempDesc').textContent = tempText(parseFloat($('tempRange').value)); });
   $('settingsSave').onclick = async () => {
     collectSettings();
