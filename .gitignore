@@ -9,3 +9,4 @@ vigil-report-*.md
 vigil-report-*.sarif
 vigil-report-*.json
 vigil-report-*.pdf
+bench/results/

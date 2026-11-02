@@ -1,0 +1,24 @@
+{
+  "project": "vulnerable-app",
+  "issues": [
+    { "id": "sqli", "label": "SQL-Injection über findUser()", "file": "src/db.js", "cats": ["Injection"], "rule": "sql|taint-sql" },
+    { "id": "cmdi-js", "label": "Befehls-Injection in /ping", "file": "src/routes.js", "cats": ["Injection"], "rule": "shell|exec|command" },
+    { "id": "xss", "label": "XSS in /hello", "file": "src/routes.js", "cats": ["XSS"], "rule": "xss|html" },
+    { "id": "jwt", "label": "jwt.decode ohne Signaturprüfung", "file": "src/routes.js", "cats": ["Auth"], "rule": "jwt" },
+    { "id": "rand", "label": "Math.random() für Token", "file": "src/routes.js", "cats": ["Crypto"], "rule": "random" },
+    { "id": "proto", "label": "Unsicheres Zusammenführen von req.body (Prototype Pollution / Mass Assignment)", "file": "src/routes.js", "cats": ["Injection", "AccessControl"], "rule": "prototype|merge|mass" },
+    { "id": "aws-key", "label": "AWS-Schlüssel im Code", "file": "src/config.js", "cats": ["Secrets"], "rule": "aws" },
+    { "id": "password", "label": "Passwort im Klartext", "file": "src/config.js", "cats": ["Secrets"], "rule": "passwort|password|secret" },
+    { "id": "cors", "label": "CORS erlaubt jede Herkunft", "file": "src/config.js", "cats": ["AccessControl", "Config"], "rule": "cors" },
+    { "id": "path", "label": "Path Traversal in /download", "file": "src/files.py", "cats": ["PathTraversal"], "rule": "path" },
+    { "id": "pickle", "label": "pickle.loads mit fremden Daten", "file": "src/files.py", "cats": ["Deserialization"], "rule": "deserial|pickle" },
+    { "id": "md5", "label": "Passwort mit MD5", "file": "src/files.py", "cats": ["Crypto"], "rule": "md5|hash" },
+    { "id": "cmdi-py", "label": "Befehls-Injection mit os.system", "file": "src/files.py", "cats": ["Injection"], "rule": "shell|system|command" },
+    { "id": "docker-latest", "label": "Basis-Image node:latest", "file": "Dockerfile", "cats": ["Config"], "rule": "latest|unpinned" },
+    { "id": "docker-root", "label": "Container läuft als root", "file": "Dockerfile", "cats": ["Config"], "rule": "root" },
+    { "id": "s3", "label": "Öffentlicher S3-Bucket", "file": "infra/main.tf", "cats": ["AccessControl", "Config"], "rule": "s3" },
+    { "id": "ssh", "label": "SSH für das ganze Internet offen", "file": "infra/main.tf", "cats": ["Config"], "rule": "sg-open|firewall" },
+    { "id": "k8s-priv", "label": "Privilegierter Kubernetes-Container", "file": "k8s/deploy.yaml", "cats": ["Config"], "rule": "privileged" },
+    { "id": "k8s-latest", "label": "Kubernetes-Image ohne feste Version", "file": "k8s/deploy.yaml", "cats": ["Config"], "rule": "latest" }
+  ]
+}

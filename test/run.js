@@ -832,6 +832,19 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('sarif: CWE- und OWASP-Tags', sarif.runs[0].results[0].properties.tags.includes('CWE-89') && sarif.runs[0].results[0].properties.tags.includes('OWASP-A03'));
   }
 
+  // --- Trefferquote am Uebungsprojekt (nur Regeln) darf nicht sinken ---
+  {
+    const path = require('path');
+    const { ingestTargets } = require('../src/core/ingest');
+    const { runStaticModules } = require('../src/core/modules/static');
+    const { scoreBench } = require('../src/core/bench');
+    const exp = require('../bench/expected.json');
+    const ing = await ingestTargets([{ type: 'path', value: path.join(__dirname, '..', 'bench', exp.project) }]);
+    const pre = prescan(ing.units, {});
+    const s = scoreBench(dedupeFindings([...pre.findings, ...runStaticModules(ing.units).findings]), exp);
+    check(`bench: Regeln finden ${s.found}/${s.total}, Genauigkeit ${Math.round(s.precision * 100)} %`, s.recall >= 0.95 && s.precision >= 0.85);
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

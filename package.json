@@ -10,7 +10,8 @@
     "test": "node test/run.js",
     "make-icon": "node tools/make-icon.js",
     "dist": "electron-builder --win",
-    "dist:portable": "electron-builder --win portable"
+    "dist:portable": "electron-builder --win portable",
+    "bench": "node tools/bench.js"
   },
   "license": "MIT",
   "devDependencies": {
@@ -34,6 +35,7 @@
       "electron/**/*",
       "src/**/*",
       "assets/**/*",
+      "bench/vulnerable-app/**/*",
       "package.json",
       "!test/**",
       "!tools/**",
