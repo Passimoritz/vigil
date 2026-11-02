@@ -1,17 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- Vereinfachte Fassung fuer 16–32 px: ein Radarring, groesseres Schild -->
-  <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#14385a"/>
-      <stop offset="1" stop-color="#0a0f1f"/>
-    </linearGradient>
-    <linearGradient id="shield" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2ee6c8"/>
-      <stop offset="1" stop-color="#6a70ff"/>
-    </linearGradient>
-  </defs>
-  <rect x="16" y="16" width="992" height="992" rx="220" fill="url(#tile)"/>
-  <circle cx="512" cy="530" r="330" fill="none" stroke="#2ee6c8" stroke-opacity=".45" stroke-width="40"/>
-  <path fill="url(#shield)" d="M512 230 C578 266 656 290 736 300 V490 C736 640 636 750 512 816 C388 750 288 640 288 490 V300 C368 290 446 266 512 230 Z"/>
-  <circle cx="512" cy="500" r="72" fill="#fff"/>
+  <!-- Fassung fuer 16–32 px: Schild etwas groesser, V-Ausschnitt breiter, damit er bei 16 px offen bleibt -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="#0f1b2d"/>
+  <path fill="#f2b23a" d="M216 208 L380 208 L512 540 L644 208 L808 208 L808 492 C808 676 692 808 512 892 C332 808 216 676 216 492 Z"/>
 </svg>

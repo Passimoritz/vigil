@@ -13,12 +13,7 @@
   <!-- ===================== Seitenleiste ===================== -->
   <aside class="sidebar" aria-label="Navigation">
     <div class="brand">
-      <span class="logo-tile"><svg viewBox="0 0 24 24" aria-hidden="true">
-        <defs><linearGradient id="logoShield" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2ee6c8"/><stop offset="1" stop-color="#6a70ff"/></linearGradient></defs>
-        <circle cx="12" cy="12.4" r="8.6" fill="none" stroke="#2ee6c8" stroke-opacity=".45" stroke-width="1.1"/>
-        <path d="M12 5.2c1.7.95 3.6 1.55 5.5 1.8v4.6c0 3.5-2.3 6-5.5 7.6-3.2-1.6-5.5-4.1-5.5-7.6V7c1.9-.25 3.8-.85 5.5-1.8z" fill="url(#logoShield)"/>
-        <circle cx="12" cy="11.6" r="1.7" fill="#fff"/>
-      </svg></span>
+      <span class="logo-tile"><svg viewBox="0 0 1024 1024" aria-hidden="true"><path fill="#f2b23a" d="M216 208 L380 208 L512 540 L644 208 L808 208 L808 492 C808 676 692 808 512 892 C332 808 216 676 216 492 Z"/></svg></span>
       <span class="brand-name">Vigil</span>
       <span class="brand-tag">Security Audit</span>
     </div>
@@ -61,35 +56,47 @@
 
   <!-- ===================== Neue Prüfung ===================== -->
   <section id="scanView" class="view" aria-labelledby="scanTitle">
-    <header class="page-head">
+    <header class="page-head scan-hero">
       <div>
-        <h1 id="scanTitle">Neue Prüfung</h1>
-        <p class="page-sub">Ziel hinzufügen, KI wählen, Kosten prüfen, starten.</p>
+        <span class="eyebrow">Neue Prüfung</span>
+        <h1 id="scanTitle">Was soll Vigil prüfen?</h1>
+        <p class="page-sub">Ordner hineinziehen, Adresse eintippen oder unten eine Art wählen. Vigil prüft nur, was dir gehört – zerstörungsfrei.</p>
       </div>
     </header>
 
     <div class="scan-grid">
       <div class="scan-main">
 
-        <!-- 1 · Ziele -->
-        <section class="card">
-          <header class="card-title"><span class="step">1</span><div><h2>Ziele</h2><p>Projektordner, Dateien, Webadressen, Server oder Container-Images</p></div></header>
+        <!-- 1 · Ziele: die ganze Karte ist Ablagefläche -->
+        <section class="card target-card" id="dropzone" aria-label="Ziele – Dateien oder Ordner hierher ziehen">
+          <div class="drop-overlay" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15V4m0 0L8 8m4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><b>Loslassen zum Hinzufügen</b></div>
 
-          <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Dateien hierher ziehen oder zum Auswählen aktivieren">
-            <svg viewBox="0 0 24 24" class="dz-icon" aria-hidden="true"><path d="M12 15V4m0 0L8 8m4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-            <div class="dz-text"><b>Dateien oder Ordner hierher ziehen</b><span>Projekte, Skripte, ZIP, JAR oder EXE</span></div>
-            <div class="dz-buttons">
-              <button id="pickFolderBtn" class="btn">Ordner wählen</button>
-              <button id="pickFilesBtn" class="btn ghost">Dateien</button>
+          <div class="omni">
+            <div class="omni-field">
+              <svg class="omni-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              <input id="targetInput" type="text" placeholder="https://meine-seite.de · 192.168.1.20:22 · nginx:1.25 · C:\Projekte\app" aria-label="Ziel eingeben: Webadresse, Server, Container-Image oder Pfad" autocomplete="off" spellcheck="false" />
+              <span class="omni-kind" id="targetKind" hidden></span>
+              <button id="addTargetBtn" class="btn primary">Hinzufügen</button>
             </div>
           </div>
 
-          <div class="add-row">
-            <div class="input-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.5 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.5-3.5-8.5s1-5.9 3.5-8.5z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-              <input id="targetInput" type="text" placeholder="https://meine-seite.example · 192.168.1.20:22 · nginx:1.25" aria-label="Webadresse, Server oder Container-Image" />
-            </div>
-            <button id="addTargetBtn" class="btn">Hinzufügen</button>
+          <div class="quick" role="group" aria-label="Art des Ziels">
+            <button id="pickFolderBtn" class="quick-tile" type="button">
+              <span class="q-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
+              <b>Projektordner</b><span>Code, Abhängigkeiten, Zugangsdaten</span>
+            </button>
+            <button id="pickFilesBtn" class="quick-tile" type="button">
+              <span class="q-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h7l4.5 4.5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-15.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 3.5V8h4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
+              <b>Einzelne Dateien</b><span>Skripte, ZIP, JAR oder EXE</span>
+            </button>
+            <button class="quick-tile" type="button" data-fill="https://" data-hint="Webadresse eingeben, z. B. https://meine-seite.de">
+              <span class="q-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.5 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.5-3.5-8.5s1-5.9 3.5-8.5z" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></span>
+              <b>Webseite</b><span>Zertifikat, Header, Cookies</span>
+            </button>
+            <button class="quick-tile" type="button" data-fill="image:" data-hint="Image-Name eingeben, z. B. nginx:1.25">
+              <span class="q-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 20 8v8l-8 4.5L4 16V8z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4 8l8 4.5L20 8M12 12.5v8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
+              <b>Container-Image</b><span>Pakete und bekannte Lücken</span>
+            </button>
           </div>
           <label id="authRow" class="check confirm" hidden><input type="checkbox" id="authChk" /> <span id="authLabel">Ich bin berechtigt, diesen Server zu prüfen.</span></label>
           <p id="webNote" class="note" hidden>Webadressen und Server prüft Vigil nur zerstörungsfrei: Zertifikat, Sicherheits-Header, Cookies, CORS und offen liegende Pfade. Keine Angriffe, keine Last-Tests.</p>
@@ -195,7 +202,12 @@
       <!-- 3 · Zusammenfassung, Kosten, Start -->
       <aside class="scan-side">
         <section class="card summary">
-          <header class="card-title"><span class="step">3</span><div><h2>Starten</h2><p>Vorschau vor dem ersten Token</p></div></header>
+          <header class="card-title"><span class="step">3</span><div><h2>Startklar?</h2><p>Kosten und Dauer siehst du vor dem ersten Token</p></div></header>
+          <ul class="ready" id="readyList" aria-label="Checkliste vor dem Start">
+            <li id="readyTarget"><span class="ready-dot" aria-hidden="true"></span><span class="ready-text">Ziel hinzufügen</span></li>
+            <li id="readyAi"><span class="ready-dot" aria-hidden="true"></span><span class="ready-text">KI wählen</span></li>
+            <li id="readyCost"><span class="ready-dot" aria-hidden="true"></span><span class="ready-text">Kosten und Dauer prüfen</span></li>
+          </ul>
           <dl class="sum-list">
             <div><dt>Ziele</dt><dd id="sbTargets">0</dd></div>
             <div><dt>KI</dt><dd id="sumAi">–</dd></div>
@@ -260,21 +272,20 @@
         <div class="radar">
           <svg viewBox="0 0 200 200">
             <defs>
-              <radialGradient id="radarBg" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#12304a"/><stop offset="1" stop-color="#0a0f1f"/></radialGradient>
-              <linearGradient id="radarShield" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2ee6c8"/><stop offset="1" stop-color="#6a70ff"/></linearGradient>
-              <radialGradient id="radarSweep" cx="0" cy="1" r="1"><stop offset="0" stop-color="#2ee6c8" stop-opacity=".55"/><stop offset="1" stop-color="#2ee6c8" stop-opacity="0"/></radialGradient>
+              <radialGradient id="radarBg" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#16243a"/><stop offset="1" stop-color="#0b111c"/></radialGradient>
+              <linearGradient id="radarShield" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f2b23a"/><stop offset="1" stop-color="#f2b23a"/></linearGradient>
+              <radialGradient id="radarSweep" cx="0" cy="1" r="1"><stop offset="0" stop-color="#f2b23a" stop-opacity=".45"/><stop offset="1" stop-color="#f2b23a" stop-opacity="0"/></radialGradient>
             </defs>
             <circle cx="100" cy="100" r="98" fill="url(#radarBg)"/>
-            <g fill="none" stroke="#2ee6c8">
+            <g fill="none" stroke="#f2b23a">
               <circle cx="100" cy="100" r="34" stroke-opacity=".35"/>
               <circle cx="100" cy="100" r="60" stroke-opacity=".22"/>
               <circle cx="100" cy="100" r="86" stroke-opacity=".12"/>
               <path d="M100 6v188M6 100h188" stroke-opacity=".08"/>
             </g>
-            <g class="radar-sweep"><path d="M100 100 L100 6 A94 94 0 0 1 181 53 Z" fill="url(#radarSweep)"/><path d="M100 100 L181 53" stroke="#2ee6c8" stroke-width="1.5" stroke-opacity=".8"/></g>
+            <g class="radar-sweep"><path d="M100 100 L100 6 A94 94 0 0 1 181 53 Z" fill="url(#radarSweep)"/><path d="M100 100 L181 53" stroke="#f2b23a" stroke-width="1.5" stroke-opacity=".8"/></g>
             <g id="radarBlips"></g>
-            <path class="radar-shield" d="M100 72c6 3.4 12.6 5.4 19.4 6.3v16.2c0 12.3-8.2 21.1-19.4 26.8-11.2-5.7-19.4-14.5-19.4-26.8V78.3C87.4 77.4 94 75.4 100 72z" fill="url(#radarShield)"/>
-            <circle cx="100" cy="94" r="5.5" fill="#fff"/>
+            <g class="radar-shield"><path transform="translate(100 97) scale(.075) translate(-512 -550)" d="M216 208 L380 208 L512 540 L644 208 L808 208 L808 492 C808 676 692 808 512 892 C332 808 216 676 216 492 Z" fill="#f2b23a"/></g>
           </svg>
           <span class="radar-ping"></span>
         </div>
@@ -427,20 +438,38 @@
 
     <div class="settings-layout">
       <nav class="set-nav" id="setNav" aria-label="Einstellungsbereiche">
-        <a href="#set-analyse">Analyse</a>
-        <a href="#set-privacy">Datenschutz</a>
-        <a href="#set-scope">Freigaben</a>
-        <a href="#set-deep">Tiefe Prüfungen</a>
-        <a href="#set-matrix">API-Rechtematrix</a>
-        <a href="#set-tools">Externe Tools</a>
-        <a href="#set-rules">Eigene Regeln</a>
-        <a href="#set-network">Netzwerk</a>
-        <a href="#set-providers">KI-Server</a>
-        <a href="#set-rest">REST-API</a>
-        <a href="#set-data">Daten</a>
+        <a href="#set-analyse"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m5 10V5m5 14v-7m5 7V8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Analyse</a>
+        <a href="#set-privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>Datenschutz</a>
+        <a href="#set-scope"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17 19 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Freigaben</a>
+        <a href="#set-deep"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m20 20-4.2-4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Tiefe Prüfungen</a>
+        <a href="#set-matrix"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>API-Rechtematrix</a>
+        <a href="#set-tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5a4 4 0 0 0-5 5L4 16l4 4 5.5-5.5a4 4 0 0 0 5-5l-2.5 2.5-2.5-.5-.5-2.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Externe Tools</a>
+        <a href="#set-rules"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h11M8 12h11M8 18h11M4 6h.01M4 12h.01M4 18h.01" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>Eigene Regeln</a>
+        <a href="#set-network"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.5 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.5-3.5-8.5s1-5.9 3.5-8.5z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Netzwerk</a>
+        <a href="#set-providers"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="14" width="16" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 7h.01M8 17h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>KI-Server</a>
+        <a href="#set-rest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>REST-API</a>
+        <a href="#set-data"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Daten</a>
       </nav>
 
       <div class="set-body">
+        <section class="presets" aria-labelledby="presetTitle">
+          <div class="presets-head"><h2 id="presetTitle">Profil</h2><p class="hint">Ein Klick stellt alles Wichtige passend ein. Feinheiten darunter.</p></div>
+          <div class="preset-grid" id="presetGrid">
+            <button type="button" class="preset" data-preset="fast">
+              <span class="p-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
+              <b>Schnell &amp; günstig</b><span>Ein KI-Durchgang, ohne Zusatz-Tools. Für den schnellen Überblick.</span>
+            </button>
+            <button type="button" class="preset" data-preset="balanced">
+              <span class="p-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M5 8h14M7 8l-3 7h6zM17 8l-3 7h6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
+              <b>Ausgewogen</b><span>Fünf KI-Durchgänge mit Gegenprüfung. Empfohlen für die meisten Projekte.</span>
+            </button>
+            <button type="button" class="preset" data-preset="max">
+              <span class="p-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 4.5 5.5v6c0 4.6 3.2 7.9 7.5 10 4.3-2.1 7.5-5.4 7.5-10v-6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m8.8 12 2.2 2.2 4.3-4.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <b>Maximal gründlich</b><span>Alles an: externe Tools, Browser-Prüfung, Schwachstellen-Datenbank.</span>
+            </button>
+          </div>
+        </section>
+
         <section class="card set-block" id="set-analyse">
           <h2>Analyse</h2>
           <div class="set-row">

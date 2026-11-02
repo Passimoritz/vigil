@@ -79,7 +79,9 @@ const needsConfirm = (t) => (t.type === 'url' || t.type === 'endpoint') && !isAl
 
 function onTargetInput() {
   const v = $('targetInput').value.trim();
-  const t = v ? classifyInput(v) : null;
+  const t = v && !/^(https?:\/\/|image:)$/i.test(v) ? classifyInput(v) : null;
+  $('targetKind').hidden = !t;
+  if (t) $('targetKind').textContent = 'Erkannt: ' + KIND_LABEL[t.type];
   $('authRow').hidden = !(t && needsConfirm(t));
   $('authLabel').textContent = t && t.type === 'url' ? 'Diese Webseite gehört mir bzw. ich darf sie prüfen.' : 'Ich bin berechtigt, diesen Server zu prüfen.';
   $('webNote').hidden = !(t && (t.type === 'url' || t.type === 'endpoint'));
@@ -106,6 +108,7 @@ function updateRunState() {
   else $('runHint').textContent = `Bereit – ${state.targets.length} ${state.targets.length === 1 ? 'Ziel' : 'Ziele'} mit ${ready.label}.`;
   scheduleEstimate(ready.ok && needsAi());
   setRunEta();
+  updateReady(ready);
   updateStatusBar();
 }
 
@@ -122,8 +125,14 @@ function setupDropzone() {
     }
     if (!added) flash('Konnte die Pfade nicht lesen – nutze die Auswahl-Buttons.');
   });
-  dz.addEventListener('click', (e) => { if (!e.target.closest('button')) $('pickFilesBtn').click(); });
-  dz.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('pickFilesBtn').click(); } });
+  // Schnellstart-Kacheln fuer Webseite/Image: Eingabefeld mit passendem Anfang fuellen
+  dz.querySelectorAll('.quick-tile[data-fill]').forEach((b) => b.addEventListener('click', () => {
+    const inp = $('targetInput');
+    if (!inp.value.trim()) inp.value = b.dataset.fill;
+    inp.placeholder = b.dataset.hint;
+    inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);
+    onTargetInput();
+  }));
   window.addEventListener('dragover', (e) => e.preventDefault());
   window.addEventListener('drop', (e) => e.preventDefault());
 }
@@ -153,6 +162,19 @@ function expectedSeconds() {
   if (needsAi()) return state.estimate ? state.estimate.seconds + passive : null;
   return state.targets.length ? Math.max(15, passive) : null;
 }
+// Checkliste "Startklar?" neben dem Start-Button
+function updateReady(ready) {
+  const n = state.targets.length;
+  const set = (id, ok, text) => { const li = $(id); li.classList.toggle('ok', ok); li.querySelector('.ready-text').textContent = text; };
+  set('readyTarget', n > 0, n ? `${n} ${n === 1 ? 'Ziel' : 'Ziele'} in der Prüfliste` : 'Ziel hinzufügen');
+  set('readyAi', ready.ok, !needsAi() && n ? 'Keine KI nötig für diese Ziele' : ready.ok ? `KI bereit: ${ready.label}` : (ready.why || 'KI wählen'));
+  const s = expectedSeconds();
+  const est = state.estimate;
+  const costText = !n ? 'Kosten und Dauer prüfen'
+    : !needsAi() ? `Kostenlos · ${s ? fmtDur(s) : 'kurz'}`
+      : est ? `${est.local ? 'Kostenlos' : est.priced ? '≈ ' + fmtUsd(est.usd) : 'Preis unbekannt'} · ${fmtDur(s)}` : 'Schätzung wird berechnet …';
+  set('readyCost', n > 0 && (!needsAi() || !!est), costText);
+}
 // Voraussichtliche Zeit direkt im Start-Button
 function setRunEta() {
   const s = state.running ? null : expectedSeconds();
@@ -173,6 +195,7 @@ async function refreshEstimate() {
   const c = r.current, o = r.other;
   state.estimate = c;
   setRunEta();
+  updateReady(needsAi() ? aiReady() : { ok: true });
   const total = c.inputTokens + c.outputTokens;
   const price = c.local ? '<b class="est-price free">Kostenlos</b><span class="muted small">läuft lokal auf deinem Rechner</span>'
     : c.priced ? `<b class="est-price">≈ ${esc(fmtUsd(c.usd))}</b><span class="muted small">${esc(r.model || '')}</span>`
@@ -297,7 +320,7 @@ function updateStage(p) {
   c.setAttribute('cx', (100 + Math.cos(a) * r).toFixed(1));
   c.setAttribute('cy', (100 + Math.sin(a) * r).toFixed(1));
   c.setAttribute('r', '3');
-  c.setAttribute('fill', Math.random() < 0.2 ? '#ff8a3d' : '#2ee6c8');
+  c.setAttribute('fill', Math.random() < 0.2 ? '#f4f1ea' : '#f2b23a');
   c.setAttribute('class', 'blip');
   box.appendChild(c);
   while (box.childNodes.length > 14) box.firstChild.remove();
@@ -1168,6 +1191,7 @@ function renderSettings() {
   $('redactChk').checked = state.config.redactSecrets !== false;
   $('domChk').checked = state.config.domAudit !== false;
   $('costWarnInput').value = state.config.costWarnUsd ?? 2;
+  renderPresets();
   window.vigil.intelStatus().then((it) => { $('intelSettings').textContent = it.updatedAt ? `Stand ${fmtDate(it.updatedAt)} · ${it.kev} aktiv ausgenutzte CVEs · ${it.epss} EPSS-Werte` : 'Noch nicht geladen – wird automatisch täglich aktualisiert.'; }).catch(() => {});
   window.vigil.apiMatrixGet().then((list) => {
     const m = list[0] || {};
@@ -1229,6 +1253,31 @@ async function refreshApiInfo() {
   $('apiExample').textContent = `curl -H "Authorization: Bearer <Token>" http://127.0.0.1:${info.port || 7811}/api/findings?status=OPEN`;
 }
 function openSettings() { showView('settings'); }
+
+// Profile: setzen die wichtigsten Schalter auf einmal und speichern sofort.
+const PRESETS = {
+  fast: { analysisDepth: 'standard', aiValidation: false, cveLookup: true, activeScan: false, domAudit: false },
+  balanced: { analysisDepth: 'thorough', aiValidation: true, cveLookup: true, activeScan: false, domAudit: true },
+  max: { analysisDepth: 'thorough', aiValidation: true, cveLookup: true, activeScan: true, domAudit: true },
+};
+const PRESET_NAME = { fast: 'Schnell & günstig', balanced: 'Ausgewogen', max: 'Maximal gründlich' };
+function currentPreset() {
+  const c = state.config;
+  const val = { analysisDepth: c.analysisDepth === 'standard' ? 'standard' : 'thorough', aiValidation: c.aiValidation !== false, cveLookup: c.cveLookup !== false, activeScan: !!c.activeScan, domAudit: c.domAudit !== false };
+  return Object.keys(PRESETS).find((k) => Object.entries(PRESETS[k]).every(([key, v]) => val[key] === v)) || null;
+}
+function renderPresets() {
+  const cur = currentPreset();
+  document.querySelectorAll('#presetGrid .preset').forEach((b) => { b.classList.toggle('active', b.dataset.preset === cur); b.setAttribute('aria-pressed', String(b.dataset.preset === cur)); });
+}
+async function applyPreset(name) {
+  collectSettings();
+  Object.assign(state.config, PRESETS[name]);
+  await saveCfg();
+  renderSettings();
+  updateRunState();
+  toast(`Profil „${PRESET_NAME[name]}“ übernommen und gespeichert`, 'ok');
+}
 
 // --- Init ---------------------------------------------------------------
 async function init() {
@@ -1323,6 +1372,9 @@ async function init() {
     saveCfg(); updateRunState();
     toast(state.config.analysisDepth === 'standard' ? 'Schnell-Modus aktiv' : 'Gründlich-Modus aktiv', 'ok');
   };
+  document.querySelectorAll('#presetGrid .preset').forEach((b) => b.onclick = () => applyPreset(b.dataset.preset));
+  // Schalter, die zu einem Profil gehoeren: Profil-Markierung sofort mitziehen
+  ['depthSelect', 'validateChk', 'cveChk', 'activeChk', 'domChk'].forEach((id) => $(id).addEventListener('change', () => { collectSettings(); renderPresets(); }));
   // Einstellungen: Unternavigation folgt dem Scrollen
   $('setNav').querySelectorAll('a').forEach((a) => a.onclick = (e) => {
     e.preventDefault();
