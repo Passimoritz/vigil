@@ -78,6 +78,12 @@
               <span class="omni-kind" id="targetKind" hidden></span>
               <button id="addTargetBtn" class="btn primary">Hinzufügen</button>
             </div>
+            <div id="authRow" class="auth-bar" hidden>
+              <label class="check"><input type="checkbox" id="authChk" /> <span id="authLabel">Ich bin berechtigt, diesen Server zu prüfen.</span></label>
+              <button type="button" id="authYes" class="btn tiny primary">Ja – hinzufügen</button>
+            </div>
+            <p id="webNote" class="note" hidden>Webadressen und Server prüft Vigil nur zerstörungsfrei: Zertifikat, Sicherheits-Header, Cookies, CORS und offen liegende Pfade. Keine Angriffe, keine Last-Tests.</p>
+            <p id="imageNote" class="note" hidden>Container-Images prüft Vigil mit <b>trivy</b> (Pakete, CVEs, Fehlkonfigurationen). trivy muss installiert sein; mit Präfix <code>image:</code> wird immer als Image erkannt.</p>
           </div>
 
           <div class="quick" role="group" aria-label="Art des Ziels">
@@ -125,9 +131,6 @@
               <p class="muted small known-foot">„Vertraut“ heißt: Vigil prüft diese Webadresse bzw. diesen Server ohne erneute Rückfrage. Mit „Vertrauen entziehen“ fragt Vigil beim nächsten Mal wieder nach. „Ausblenden“ entfernt ein Ziel nur aus dieser Liste – Befunde und Verlauf bleiben erhalten.</p>
             </div>
           </div>
-          <label id="authRow" class="check confirm" hidden><input type="checkbox" id="authChk" /> <span id="authLabel">Ich bin berechtigt, diesen Server zu prüfen.</span></label>
-          <p id="webNote" class="note" hidden>Webadressen und Server prüft Vigil nur zerstörungsfrei: Zertifikat, Sicherheits-Header, Cookies, CORS und offen liegende Pfade. Keine Angriffe, keine Last-Tests.</p>
-          <p id="imageNote" class="note" hidden>Container-Images prüft Vigil mit <b>trivy</b> (Pakete, CVEs, Fehlkonfigurationen). trivy muss installiert sein; mit Präfix <code>image:</code> wird immer als Image erkannt.</p>
 
           <div id="targets" class="targets" hidden>
             <div class="targets-head"><span>Prüfliste <span class="count" id="targetCount">0</span></span><button id="clearBtn" class="btn ghost tiny">Alle entfernen</button></div>
@@ -532,22 +535,11 @@
     </header>
 
     <div class="settings-layout">
-      <nav class="set-nav" id="setNav" aria-label="Einstellungsbereiche">
-        <a href="#set-analyse"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m5 10V5m5 14v-7m5 7V8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Analyse</a>
-        <a href="#set-privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>Datenschutz</a>
-        <a href="#set-scope"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17 19 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Freigaben</a>
-        <a href="#set-deep"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m20 20-4.2-4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Tiefe Prüfungen</a>
-        <a href="#set-feeds"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 9M20 4v5h-5M20 12a8 8 0 0 1-13.7 5.6L4 15M4 20v-5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Erkennungsdaten</a>
-        <a href="#set-login"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>Login-Prüfung</a>
-        <a href="#set-malware"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v5.5c0 4.3-2.9 7.6-7 9-4.1-1.4-7-4.7-7-9V6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>Schadsoftware</a>
-        <a href="#set-matrix"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>API-Rechtematrix</a>
-        <a href="#set-tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5a4 4 0 0 0-5 5L4 16l4 4 5.5-5.5a4 4 0 0 0 5-5l-2.5 2.5-2.5-.5-.5-2.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Externe Tools</a>
-        <a href="#set-rules"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h11M8 12h11M8 18h11M4 6h.01M4 12h.01M4 18h.01" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>Eigene Regeln</a>
-        <a href="#set-network"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.5 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.5-3.5-8.5s1-5.9 3.5-8.5z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Netzwerk</a>
-        <a href="#set-providers"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="14" width="16" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 7h.01M8 17h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>KI-Server</a>
-        <a href="#set-app"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/></svg>Darstellung</a>
-        <a href="#set-rest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>REST-API</a>
-        <a href="#set-data"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Daten</a>
+      <nav class="set-nav" id="setNav" role="tablist" aria-label="Einstellungsbereiche">
+        <button type="button" role="tab" data-group="general" aria-selected="true" class="active"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 2.8v2.4M12 18.8v2.4M4.2 7.5l2.1 1.2M17.7 15.3l2.1 1.2M4.2 16.5l2.1-1.2M17.7 8.7l2.1-1.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span><b>Allgemein</b><small>Profil, Darstellung, Sprache, Bericht</small></span></button>
+        <button type="button" role="tab" data-group="checks" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v5.5c0 4.3-2.9 7.6-7 9-4.1-1.4-7-4.7-7-9V6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span><b>Prüfungen</b><small>KI, Schadsoftware, Erkennungsdaten</small></span></button>
+        <button type="button" role="tab" data-group="web" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.5 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.5-3.5-8.5s1-5.9 3.5-8.5z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span><b>Web &amp; Login</b><small>Freigaben, Testkonto, API-Rechte</small></span></button>
+        <button type="button" role="tab" data-group="advanced" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>Erweitert</b><small>Eigene Regeln, Netzwerk, REST-API, Daten</small></span></button>
       </nav>
 
       <div class="set-body">

@@ -183,7 +183,7 @@ function defaultConfig() {
   for (const [id, p] of Object.entries(PROVIDERS)) {
     providers[id] = { model: p.defaultModel, apiKey: '', baseUrl: p.defaultBaseUrl };
   }
-  return { selected: 'ollama', temperature: 0.1, maxTokens: 8192, cveLookup: true, analysisDepth: 'thorough', aiValidation: true, redactSecrets: true, activeScan: false, proxyUrl: '', customRules: [], disabledRules: [], allowlist: [], apiEnabled: false, apiPort: 7811, apiToken: '', providers };
+  return { selected: 'ollama', lang: 'en', temperature: 0.1, maxTokens: 8192, cveLookup: true, analysisDepth: 'thorough', aiValidation: true, redactSecrets: true, activeScan: false, proxyUrl: '', customRules: [], disabledRules: [], allowlist: [], apiEnabled: false, apiPort: 7811, apiToken: '', providers };
 }
 
 function loadConfig() {

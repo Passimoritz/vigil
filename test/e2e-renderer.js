@@ -10,6 +10,9 @@
   const visible = (el) => !!el && el.offsetParent !== null;
 
   await until(() => window.state && state.config && $('runBtn'));
+  await t('Start: Englisch ist die Standardsprache', async () => { await wait(300); return (document.documentElement.lang === 'en' && /Settings/.test(document.querySelector('.sidebar').textContent)) || document.documentElement.lang; });
+  // Die folgenden Klickwege pruefen deutsche Texte – dafuer auf Deutsch umschalten
+  state.config.lang = 'de'; window.applyLanguage('de'); await wait(100);
   await t('Start: Einführung erscheint beim ersten Start', async () => (await until(() => !$('onboard').hidden, 3000)) || 'nicht angezeigt');
   await t('Einführung: weiter und überspringen', async () => { $('obNext').click(); await wait(50); const two = !document.querySelector('#onboard [data-step="1"]').hidden; $('obSkip').click(); await wait(50); return (two && $('onboard').hidden && state.config.onboarded === true) || 'Ablauf gestört'; });
 

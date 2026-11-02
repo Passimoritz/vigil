@@ -177,7 +177,13 @@ function addTypedTarget() {
   const v = $('targetInput').value.trim();
   if (!v) return;
   const t = classifyInput(v);
-  if (needsConfirm(t) && !$('authChk').checked) { flash('Bitte bestätige zuerst, dass du dieses Ziel prüfen darfst.'); $('authChk').focus(); return; }
+  if (needsConfirm(t) && !$('authChk').checked) {
+    // Bestaetigung direkt unter dem Feld hervorheben – ein Klick auf „Ja – hinzufügen“ genuegt
+    const bar = $('authRow'); bar.hidden = false;
+    bar.classList.remove('attention'); void bar.offsetWidth; bar.classList.add('attention');
+    $('authYes').focus();
+    return;
+  }
   addTarget(t.type, t.value, t.type === 'url' || t.type === 'endpoint');
   $('targetInput').value = ''; $('authChk').checked = false; onTargetInput();
 }
@@ -1264,7 +1270,7 @@ function showView(v) {
   if (v === 'history') loadHistory();
   if (v === 'settings') {
     renderSettings();
-    $('setNav').querySelectorAll('a').forEach((a, i) => a.classList.toggle('active', i === 0));
+    setGroup(state.setGroup || 'general');
   }
 }
 function closeMenus() {
@@ -1622,7 +1628,7 @@ function applyAppearance() {
   const mark = (id, attr, val) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset[attr] === String(val))));
   mark('themeSeg', 'theme', t === 'light' || t === 'dark' ? t : 'system');
   mark('scaleSeg', 'scale', z);
-  mark('langSeg', 'lang', state.config.lang === 'en' ? 'en' : 'de');
+  mark('langSeg', 'lang', state.config.lang === 'de' ? 'de' : 'en');
 }
 function setScale(z) { state.config.uiScale = z; saveCfg(); applyAppearance(); }
 function setupAppearance() {
@@ -1638,7 +1644,8 @@ function setupAppearance() {
   });
   $('crashOpenBtn').onclick = () => window.vigil.crashOpen();
   applyAppearance();
-  if (state.config.lang === 'en' && window.applyLanguage) window.applyLanguage('en');
+  // Englisch ist Standard; Deutsch nur, wenn ausdruecklich gewaehlt
+  if (state.config.lang !== 'de' && window.applyLanguage) window.applyLanguage('en');
 }
 // Erkennungsquellen: was ist wie aktuell? (live, taeglich, von Windows)
 function renderFeeds() {
@@ -1656,6 +1663,23 @@ function renderFeeds() {
     ];
     $('feedList').innerHTML = rows.join('');
   }).catch(() => {});
+}
+// Einstellungs-Bereiche: welche Karten gehoeren wohin (Reihenfolge = Anzeige)
+const SET_GROUPS = {
+  general: ['presets', 'set-app', 'set-report'],
+  checks: ['set-analyse', 'set-privacy', 'set-malware', 'set-feeds', 'set-tools'],
+  web: ['set-scope', 'set-deep', 'set-login', 'set-matrix'],
+  advanced: ['set-rules', 'set-network', 'set-providers', 'set-rest', 'set-data'],
+};
+function setGroup(name) {
+  state.setGroup = SET_GROUPS[name] ? name : 'general';
+  const body = document.querySelector('#settingsView .set-body');
+  const show = new Set(SET_GROUPS[state.setGroup]);
+  body.querySelectorAll(':scope > section').forEach((sec) => { const id = sec.id || (sec.classList.contains('presets') ? 'presets' : ''); sec.hidden = !show.has(id); });
+  // Karten in der festgelegten Reihenfolge anordnen
+  for (const id of SET_GROUPS[state.setGroup]) { const el = id === 'presets' ? body.querySelector(':scope > .presets') : $(id); if (el) body.appendChild(el); }
+  $('setNav').querySelectorAll('[data-group]').forEach((b) => { const on = b.dataset.group === state.setGroup; b.classList.toggle('active', on); b.setAttribute('aria-selected', String(on)); });
+  document.querySelector('.main').scrollTop = 0;
 }
 function renderLoginStatus() {
   if (!window.vigil.webLoginGet) return;
@@ -1819,6 +1843,7 @@ async function init() {
   $('targetInput').addEventListener('input', onTargetInput);
   $('targetInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTypedTarget(); });
   $('addTargetBtn').onclick = addTypedTarget;
+  $('authYes').onclick = () => { $('authChk').checked = true; addTypedTarget(); };
   $('clearBtn').onclick = () => { state.targets = []; renderTargets(); };
   setupKnown();
   setupAppearance();
@@ -1910,17 +1935,8 @@ async function init() {
   };
   $('cacheClearBtn').onclick = async () => { await window.vigil.aiCacheClear(); $('cacheInfo').textContent = ''; toast('KI-Zwischenspeicher geleert – der nächste Lauf prüft alles neu', 'ok'); };
   ['depthSelect', 'validateChk', 'cveChk', 'activeChk', 'domChk', 'malwareChk', 'crawlChk'].forEach((id) => $(id).addEventListener('change', () => { collectSettings(); renderPresets(); }));
-  // Einstellungen: Unternavigation folgt dem Scrollen
-  $('setNav').querySelectorAll('a').forEach((a) => a.onclick = (e) => {
-    e.preventDefault();
-    document.querySelector(a.getAttribute('href')).scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-  document.querySelector('.main').addEventListener('scroll', () => {
-    if (state.view !== 'settings') return;
-    let current = null;
-    document.querySelectorAll('.set-block').forEach((sec) => { if (sec.getBoundingClientRect().top < 140) current = sec.id; });
-    $('setNav').querySelectorAll('a').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === '#' + (current || 'set-analyse')));
-  }, { passive: true });
+  // Einstellungen: vier Bereiche statt einer langen Seite
+  $('setNav').querySelectorAll('[data-group]').forEach((b) => b.onclick = () => setGroup(b.dataset.group));
   $('exportJsonBtn').onclick = exportAs('json');
   $('exportExecBtn').onclick = exportAs('execpdf');
   $('reportCompanyInput').addEventListener('change', () => { state.config.reportCompany = $('reportCompanyInput').value.trim(); saveCfg(); });

@@ -96,6 +96,12 @@
     'Alle bisher geprüften Ziele. „Löschen“ entfernt das Ziel mit allen seinen Befunden aus der Übersicht – die Prüfung selbst lässt sich jederzeit wiederholen.': 'All targets checked so far. “Delete” removes the target and all its findings from the overview – you can scan it again any time.',
     'Sehr gut aufgestellt': 'In very good shape', 'Gut – kleinere Baustellen': 'Good – minor issues', 'Ordentlich, aber mit Lücken': 'Decent, but with gaps', 'Deutlicher Handlungsbedarf': 'Clear need for action', 'Dringend handeln': 'Act urgently', 'Noch nichts geprüft': 'Nothing checked yet',
     'Befund löschen?': 'Delete finding?', 'Ziel löschen?': 'Delete target?', 'Lauf löschen?': 'Delete run?', 'Behobene Befunde löschen?': 'Delete resolved findings?', 'Noch keine Ziele': 'No targets yet', 'Noch keine Läufe.': 'No runs yet.',
+    // Einstellungs-Bereiche, Bestaetigung, Detail-Fenster
+    'Allgemein': 'General', 'Profil, Darstellung, Sprache, Bericht': 'Profile, appearance, language, report', 'Prüfungen': 'Checks', 'KI, Schadsoftware, Erkennungsdaten': 'AI, malware, detection data',
+    'Freigaben, Testkonto, API-Rechte': 'Allowed targets, test account, API access', 'Erweitert': 'Advanced', 'Eigene Regeln, Netzwerk, REST-API, Daten': 'Custom rules, network, REST API, data',
+    'Ja – hinzufügen': 'Yes – add', 'Erkennungsdaten': 'Detection data', 'Erkennungsdaten – automatisch aktuell': 'Detection data – updated automatically', 'Jetzt alles aktualisieren': 'Update everything now',
+    'So behebst du es': 'How to fix it', 'Warum das wichtig ist': 'Why it matters', 'Mehr dazu': 'Learn more', 'Zuerst beheben': 'Fix first',
+    'Konfiguration': 'Configuration', 'Eingabe-Lücke': 'Injection', 'Anmeldung': 'Authentication', 'Zugriffsrechte': 'Access control', 'Verschlüsselung': 'Cryptography', 'Dateipfade': 'File paths',
     // Einstellungen (neu)
     'Login-Prüfung': 'Login check', 'Schadsoftware': 'Malware', 'Schadsoftware & Webseiten-Durchgang': 'Malware & website crawl', 'Programme und Dateien auf Schadsoftware prüfen': 'Check programs and files for malware',
     'Abgleich mit bekannten Schadprogrammen': 'Match against known malware', 'Unterseiten und Formulare durchgehen': 'Crawl subpages and forms', 'Darstellung & App': 'Appearance & app',
