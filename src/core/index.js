@@ -89,6 +89,15 @@ async function runAudit(targets, config, onProgress = () => {}) {
       webFindings.push(...wm.findings); webNotes.push(...wm.notes);
       if (wm.throttled) throttled = true;
       else for (const id of wm.ran) scannersRun.push({ target: t.value, source: id });
+      // Unterseiten, Formulare, Schwachstellen-Proben und Login (Proben/Login nur verifiziert/intern)
+      if (!throttled && !aborted() && t.type === 'url' && config.webCrawl !== false) {
+        const { runDeepWeb } = require('./modules/webdeep');
+        const login = deep && typeof config.webLogin === 'function' ? config.webLogin(t.value) : null;
+        const dw = await runDeepWeb(t.value, { deep, login, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress });
+        webFindings.push(...dw.findings); webNotes.push(...dw.notes);
+        if (dw.throttled) throttled = true;
+        else for (const id of dw.ran) scannersRun.push({ target: t.value, source: id });
+      }
       // Browser-Laufzeitpruefung (nur in der App verfuegbar, nur verifiziert/intern)
       if (deep && t.type === 'url' && typeof config.domAudit === 'function' && !throttled && !aborted()) {
         try {
@@ -152,6 +161,17 @@ async function runAudit(targets, config, onProgress = () => {}) {
           if (completed(r.notes)) scannersRun.push({ target: t.value, source: nm === 'retire' ? 'retire' : nm });
         } catch (e) { webNotes.push(`${nm} ${t.value}: ${e.message}`); }
       }
+    }
+  }
+  // Schadsoftware: Defender (ohne Loeschen), Signaturen, Abgleich bekannter Schadprogramme
+  if (config.malwareScan !== false && !aborted()) {
+    const { scanMalware } = require('./malware');
+    for (const t of targets.filter((x) => x.type === 'path')) {
+      try {
+        const m = await scanMalware(t.value, { signal: config.signal, onProgress, malwareBazaarKey: config.malwareBazaarKey });
+        webFindings.push(...m.findings); moduleNotes.push(...m.notes);
+        for (const src of m.ran) scannersRun.push({ target: t.value, source: src });
+      } catch (e) { moduleNotes.push('Schadsoftware-Prüfung: ' + e.message); }
     }
   }
   // Zugangsdaten, die in alten Git-Versionen stehen (nur Ordner, die ein Git-Repository sind)

@@ -487,6 +487,8 @@
         <a href="#set-privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>Datenschutz</a>
         <a href="#set-scope"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17 19 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Freigaben</a>
         <a href="#set-deep"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m20 20-4.2-4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Tiefe Prüfungen</a>
+        <a href="#set-login"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>Login-Prüfung</a>
+        <a href="#set-malware"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v5.5c0 4.3-2.9 7.6-7 9-4.1-1.4-7-4.7-7-9V6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>Schadsoftware</a>
         <a href="#set-matrix"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>API-Rechtematrix</a>
         <a href="#set-tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5a4 4 0 0 0-5 5L4 16l4 4 5.5-5.5a4 4 0 0 0 5-5l-2.5 2.5-2.5-.5-.5-2.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Externe Tools</a>
         <a href="#set-rules"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h11M8 12h11M8 18h11M4 6h.01M4 12h.01M4 18h.01" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>Eigene Regeln</a>
@@ -582,6 +584,35 @@
           <div class="set-row">
             <div class="set-label"><b>Threat-Intel (CISA KEV, EPSS)</b><span id="intelSettings"></span></div>
             <button id="intelSyncBtn" type="button" class="btn">Jetzt aktualisieren</button>
+          </div>
+        </section>
+
+        <section class="card set-block" id="set-login">
+          <h2>Login-Prüfung</h2>
+          <p class="hint">Vigil meldet sich mit einem <b>Testkonto deiner eigenen Webseite</b> an und prüft: Anmeldung nur über HTTPS, neue Sitzung nach dem Login, geschützte Cookies, ob die Anmeldung existierende Konten verrät und ob Abmelden die Sitzung wirklich beendet. Danach geht es den angemeldeten Bereich durch. Nur für nachgewiesene eigene Domains, keine Passwort-Rateversuche. Nutze nie ein echtes Kunden- oder Admin-Konto.</p>
+          <div class="api-row">
+            <input id="wlUrl" type="text" placeholder="Anmelde-Adresse, z. B. https://meine-seite.de/login" aria-label="Anmelde-Adresse" />
+            <input id="wlUser" type="text" placeholder="Benutzername oder E-Mail des Testkontos" aria-label="Benutzername des Testkontos" autocomplete="off" />
+            <input id="wlPass" type="password" placeholder="Passwort des Testkontos (leer = unverändert)" aria-label="Passwort des Testkontos" autocomplete="new-password" />
+            <input id="wlUserField" type="text" placeholder="Feldname Benutzer (optional, sonst automatisch)" aria-label="Feldname Benutzer" />
+            <input id="wlPassField" type="text" placeholder="Feldname Passwort (optional)" aria-label="Feldname Passwort" />
+          </div>
+          <p id="wlStatus" class="hint"></p>
+        </section>
+
+        <section class="card set-block" id="set-malware">
+          <h2>Schadsoftware &amp; Webseiten-Durchgang</h2>
+          <div class="set-row">
+            <div class="set-label"><b>Programme und Dateien auf Schadsoftware prüfen</b><span>Microsoft Defender prüft das Ziel, ohne etwas zu löschen. Dazu prüft Vigil die digitale Signatur jeder Programmdatei. Makros in Office-Dateien und Skripte in PDFs erkennt Vigil immer.</span></div>
+            <label class="switch"><input type="checkbox" id="malwareChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Abgleich mit bekannten Schadprogrammen</b><span>Optional: Fingerabdrücke (SHA-256) gegen MalwareBazaar abgleichen – nur der Fingerabdruck verlässt den Rechner, nie die Datei. Den kostenlosen Schlüssel gibt es bei auth.abuse.ch. <span id="mbStatus"></span></span></div>
+            <input id="mbKey" type="password" class="set-input" placeholder="Auth-Key (leer = unverändert)" autocomplete="off" />
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Unterseiten und Formulare durchgehen</b><span>Folgt Links derselben Domain (bis 40 Seiten) und prüft Formulare. Bei nachgewiesenen Domains zusätzlich harmlose Testwerte in Parametern: XSS, SQL-Fehler, offene Weiterleitung, Pfad-Ausbruch – nur Seiten abrufen, nie Formulare abschicken.</span></div>
+            <label class="switch"><input type="checkbox" id="crawlChk" /><span></span></label>
           </div>
         </section>
 

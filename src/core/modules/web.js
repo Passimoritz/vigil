@@ -208,4 +208,4 @@ async function runWebModules(targetUrl, { deep = false, rps = 4, signal, onProgr
   return { findings, ran, notes, throttled };
 }
 
-module.exports = { runWebModules, WafGuard, Throttled, dnsMail, registrableDomain, TAKEOVER };
+module.exports = { runWebModules, WafGuard, Throttled, dnsMail, registrableDomain, TAKEOVER, request };

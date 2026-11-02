@@ -15,8 +15,8 @@ const { analyzeBinary } = require('./binaryaudit');
 // --- Grenzen, damit nichts ausufert -------------------------------------
 const MAX_TEXT_BYTES = 400 * 1024;      // groesste Textdatei, die voll gelesen wird
 const MAX_STRINGS_BYTES = 200 * 1024;   // wieviel aus einem Binary als "strings" extrahiert wird
-const MAX_FILES = 600;                   // Dateianzahl pro Lauf
-const MAX_TOTAL_BYTES = 12 * 1024 * 1024; // Gesamt-Textbudget
+const MAX_FILES = 2500;                  // Dateianzahl pro Lauf
+const MAX_TOTAL_BYTES = 40 * 1024 * 1024; // Gesamt-Textbudget
 const MAX_HTTP_BYTES = 256 * 1024;       // wieviel von einem Link/Endpoint gelesen wird
 
 const TEXT_EXT = new Set([
@@ -35,6 +35,7 @@ const SKIP_DIR = new Set(['node_modules', '.git', '.svn', '.hg', 'dist', 'build'
 const BINARY_EXE_EXT = new Set(['.exe', '.dll', '.so', '.dylib', '.bin', '.msi', '.app']);
 const ARCHIVE_EXT = new Set(['.zip', '.jar', '.war', '.ear', '.apk', '.aar', '.nupkg', '.ipa', '.xapk']);
 const { decodeAxml, decodeBplist } = require('./modules/mobile');
+const { analyzeDocument, DOC_EXT } = require('./docaudit');
 
 function extname(p) {
   const e = path.extname(p).toLowerCase();
@@ -158,6 +159,11 @@ function ingestFile(col, full, root) {
     ingestArchive(col, full, rel);
     return;
   }
+  // Dokumente mit moeglichem aktivem Inhalt (Makros, PDF-JavaScript, eingebettete Objekte)
+  if (DOC_EXT.has(ext) && stat.size < 60 * 1024 * 1024) {
+    try { for (const f of analyzeDocument(fs.readFileSync(full), rel.replace(/\\/g, '/'))) col.findings.push(f); } catch (e) { col.notes.push(`Dokument nicht lesbar: ${rel}`); }
+    if (ext !== '.pdf' && ext !== '.rtf') return; // Office-Binaerformate liefern keinen sinnvollen Text
+  }
   if (BINARY_EXE_EXT.has(ext)) {
     try {
       const buf = fs.readFileSync(full);
@@ -205,6 +211,7 @@ function ingestArchive(col, archivePath, label) {
       const xml = /plist$/i.test(name) ? decodeBplist(buf) : decodeAxml(buf);
       if (xml) { col.add({ label: `${label}!/${name}`, kind: 'archive-entry', language: 'xml', path: name, content: xml, meta: { note: 'aus dem Binärformat der App zurückgewandelt' } }); continue; }
     }
+    if (DOC_EXT.has(ext)) { for (const f of analyzeDocument(buf, `${label}!/${name}`)) col.findings.push(f); if (ext !== '.pdf' && ext !== '.rtf') continue; }
     addTextBuffer(col, `${label}!/${name}`, 'archive-entry', buf, name);
   }
 }

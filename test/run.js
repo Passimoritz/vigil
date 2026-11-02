@@ -846,6 +846,72 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check(`bench: Regeln finden ${s.found}/${s.total}, Genauigkeit ${Math.round(s.precision * 100)} %`, s.recall >= 0.95 && s.precision >= 0.85);
   }
 
+  // --- Schadsoftware, Dokumente, Webseiten-Durchgang, Proben, Login ---
+  {
+    const fs = require('fs'); const os = require('os'); const path = require('path');
+    const AdmZip = require('adm-zip');
+    const { analyzeDocument } = require('../src/core/docaudit');
+    const { parseDefender, parseSignatures, hashLookup } = require('../src/core/malware');
+    const z = new AdmZip(); z.addFile('word/document.xml', Buffer.from('<w:document/>')); z.addFile('word/vbaProject.bin', Buffer.from('Attribute VB_Name AutoOpen Shell powershell URLDownloadToFile'));
+    const docm = analyzeDocument(z.toBuffer(), 'rechnung.docx');
+    check('dokument: Makro mit verdächtigen Befehlen, getarnte Endung', docm.some((f) => f.ruleId === 'doc-macro-suspicious' && f.severity === 'high') && docm.some((f) => f.ruleId === 'doc-macro-wrong-extension'));
+    const z2 = new AdmZip(); z2.addFile('word/document.xml', Buffer.from('<w:document/>')); z2.addFile('word/_rels/settings.xml.rels', Buffer.from('<Relationship Type="http://x/attachedTemplate" Target="https://evil.example/t.dotm" TargetMode="External"/>'));
+    check('dokument: Vorlage aus dem Internet erkannt', analyzeDocument(z2.toBuffer(), 'a.docx').some((f) => f.ruleId === 'doc-remote-template'));
+    const pdf = Buffer.from('%PDF-1.7\n1 0 obj << /OpenAction 2 0 R >> endobj 2 0 obj << /S /JavaScript /JS (app.alert(1)) >> endobj');
+    check('dokument: PDF mit JavaScript beim Öffnen', analyzeDocument(pdf, 'x.pdf').some((f) => f.ruleId === 'pdf-active-suspicious'));
+    check('dokument: harmloses PDF ohne Befund', analyzeDocument(Buffer.from('%PDF-1.7\n1 0 obj << /Type /Page >> endobj'), 'ok.pdf').length === 0);
+    const dout = 'Scan starting...\r\nScan finished.\r\nScanning C:\\x found 1 threats.\r\n\r\nThreat                  : Trojan:Win32/Wacatac.B!ml\r\nResources               : 1 total\r\n    file                : C:\\x\\setup.exe\r\n';
+    const th = parseDefender(dout);
+    check('defender: Bedrohung und Datei aus der Ausgabe gelesen', th.length === 1 && th[0].name === 'Trojan:Win32/Wacatac.B!ml' && /setup\.exe$/.test(th[0].file));
+    const sig = parseSignatures([{ p: 'C:\\x\\a.exe', s: 'HashMismatch', n: 'CN=Firma' }, { p: 'C:\\x\\b.exe', s: 'NotSigned' }, { p: 'C:\\x\\c.dll', s: 'Valid' }], 'C:\\x');
+    check('signatur: manipuliert = kritisch, unsigniert gesammelt, gültig still', sig.some((f) => f.ruleId === 'binary-signature-tampered' && f.severity === 'critical') && sig.some((f) => f.ruleId === 'binary-unsigned') && sig.length === 2);
+    const tmpExe = path.join(os.tmpdir(), `vigil-test-${Date.now()}.exe`); fs.writeFileSync(tmpExe, 'MZ test');
+    const hl = await hashLookup([{ file: tmpExe, size: 7 }], os.tmpdir(), { key: 'k', fetchImpl: async (u, o) => ({ json: async () => (/query=get_info&hash=[0-9a-f]{64}$/.test(o.body) && o.headers['Auth-Key'] === 'k' ? { query_status: 'ok', data: [{ signature: 'AgentTesla' }] } : { query_status: 'no_results' }) }) });
+    fs.unlinkSync(tmpExe);
+    check('malwarebazaar: nur Fingerabdruck gesendet, Treffer gemeldet', hl.findings.length === 1 && /AgentTesla/.test(hl.findings[0].title));
+    check('malwarebazaar: ohne Schlüssel übersprungen', /übersprungen/.test((await hashLookup([{ file: 'x', size: 1 }], '.', {})).notes[0]));
+
+    // Absichtlich unsichere Test-Webseite
+    const http = require('http');
+    const sessions = new Map();
+    const site = http.createServer((req, res) => {
+      const u = new URL(req.url, 'http://x');
+      const sid = ((req.headers.cookie || '').match(/sid=(\w+)/) || [])[1];
+      const html = (b, h = {}) => { res.writeHead(200, { 'Content-Type': 'text/html', ...h }); res.end(`<html><body>${b}</body></html>`); };
+      let body = ''; req.on('data', (d) => { body += d; }); req.on('end', () => {
+        if (u.pathname === '/') return html('<a href="/search?q=hallo">Suche</a> <a href="/item?id=1">Artikel</a> <a href="/go?next=/">Weiter</a> <a href="/view?file=a.txt">Datei</a> <a href="/login">Login</a> <form method="post" action="/newsletter"><input name="mail"><input type="password" name="pw"></form>');
+        if (u.pathname === '/search') return html(`Ergebnisse für ${u.searchParams.get('q')}`);
+        if (u.pathname === '/item') return /'/.test(u.searchParams.get('id')) ? html('Fehler: You have an error in your SQL syntax near') : html('Artikel 1');
+        if (u.pathname === '/go') { res.writeHead(302, { Location: u.searchParams.get('next') }); return res.end(); }
+        if (u.pathname === '/view') return /passwd/.test(u.searchParams.get('file')) ? html('root:x:0:0:root:/root:/bin/bash') : html('Datei-Inhalt');
+        if (u.pathname === '/login' && req.method === 'GET') { const id = sid || Math.random().toString(36).slice(2, 10); if (!sessions.has(id)) sessions.set(id, null); return html('<form method="post" action="/login"><input name="email"><input type="password" name="password"></form>', sid ? {} : { 'Set-Cookie': `sid=${id}; Path=/` }); }
+        if (u.pathname === '/login' && req.method === 'POST') {
+          const p = new URLSearchParams(body);
+          if (p.get('email') === 'test@example.org' && p.get('password') === 'Geheim1') { sessions.set(sid, 'test'); res.writeHead(302, { Location: '/konto' }); return res.end(); }
+          return html(p.get('email') === 'test@example.org' ? 'Falsches Passwort.' : 'Dieses Konto gibt es nicht, bitte registrieren Sie sich zuerst.');
+        }
+        if (u.pathname === '/konto') return sessions.get(sid) ? html('Willkommen im Konto <a href="/profil?tab=1">Profil</a> <a href="/logout">Abmelden</a> <form method="post" action="/email"><input name="email"></form>') : html('<form><input type="password" name="password"></form>');
+        if (u.pathname === '/profil') return sessions.get(sid) ? html(`Profil ${u.searchParams.get('tab')}`) : html('<input type="password">');
+        if (u.pathname === '/logout') { res.writeHead(302, { Location: '/', 'Set-Cookie': 'sid=; Max-Age=0' }); return res.end(); }
+        res.writeHead(404); res.end('nein');
+      });
+    });
+    await new Promise((r) => site.listen(0, '127.0.0.1', r));
+    const baseUrl = `http://127.0.0.1:${site.address().port}/`;
+    const { runDeepWeb } = require('../src/core/modules/webdeep');
+    const shallow = await runDeepWeb(baseUrl, { deep: false, rps: 200 });
+    check('web: Durchgang findet Passwort über HTTP; ohne Nachweis keine Proben', shallow.findings.some((f) => f.ruleId === 'form-password-http') && !shallow.findings.some((f) => /^probe-/.test(f.ruleId)) && /nur für nachgewiesene/.test(shallow.notes.join(' ')));
+    const deepRun = await runDeepWeb(baseUrl, { deep: true, rps: 200, login: { loginUrl: baseUrl + 'login', username: 'test@example.org', password: 'Geheim1' } });
+    const ids = deepRun.findings.map((f) => f.ruleId);
+    check('proben: XSS, SQL-Fehler, offene Weiterleitung, Path Traversal', ['probe-xss-reflected', 'probe-sql-error', 'probe-open-redirect', 'probe-path-traversal'].every((x) => ids.includes(x)));
+    check('login: Session Fixation, Cookie-Schutz, Konto-Verrat, Abmelden', /erfolgreich/.test(deepRun.notes.join(' ')) && ['login-session-fixation', 'login-session-cookie-flags', 'login-user-enumeration', 'login-logout-not-invalidated'].every((x) => ids.includes(x)));
+    check('login: angemeldeter Bereich – Formular ohne CSRF-Schutz', deepRun.findings.some((f) => f.ruleId === 'form-no-csrf' && /angemeldeten/.test(f.title)));
+    const bad = await runDeepWeb(baseUrl, { deep: true, rps: 200, login: { loginUrl: baseUrl + 'login', username: 'test@example.org', password: 'falsch' } });
+    check('login: falsches Testpasswort wird gemeldet, nicht als Befund', /nicht geklappt/.test(bad.notes.join(' ')) && !bad.findings.some((f) => f.ruleId === 'login-session-fixation'));
+    if (ids.length < 9) console.log('    Hinweise:', deepRun.notes.join(' | '), '| IDs:', ids.join(','));
+    site.close();
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

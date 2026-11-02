@@ -1458,6 +1458,19 @@ function setupAppearance() {
   applyAppearance();
   if (state.config.lang === 'en' && window.applyLanguage) window.applyLanguage('en');
 }
+function renderLoginStatus() {
+  if (!window.vigil.webLoginGet) return;
+  window.vigil.webLoginGet().then((list) => {
+    const m = list[0] || {};
+    state.hadLogin = !!m.host;
+    $('wlUrl').value = m.loginUrl || ''; $('wlUser').value = m.username || ''; $('wlUserField').value = m.userField || ''; $('wlPassField').value = m.passField || '';
+    $('wlStatus').textContent = m.host ? `Gespeichert für ${m.host}: Passwort ${m.hasPassword ? '✓ verschlüsselt hinterlegt' : 'fehlt'}. Zum Entfernen die Anmelde-Adresse leeren und speichern.` : 'Noch kein Testkonto hinterlegt.';
+  }).catch(() => {});
+}
+function renderMalwareStatus() {
+  if (!window.vigil.malwareKeyInfo) return;
+  window.vigil.malwareKeyInfo().then((k) => { $('mbStatus').textContent = k.hasKey ? 'Schlüssel ✓ hinterlegt.' : 'Kein Schlüssel hinterlegt – dieser Abgleich wird übersprungen.'; }).catch(() => {});
+}
 function renderReportLogo() {
   const has = /^data:image\//.test(state.config.reportLogo || '');
   $('reportLogoPreview').hidden = !has; $('reportLogoClear').hidden = !has;
@@ -1484,6 +1497,9 @@ function renderSettings() {
   $('domChk').checked = state.config.domAudit !== false;
   $('costWarnInput').value = state.config.costWarnUsd ?? 2;
   $('reportCompanyInput').value = state.config.reportCompany || '';
+  $('malwareChk').checked = state.config.malwareScan !== false;
+  $('crawlChk').checked = state.config.webCrawl !== false;
+  renderLoginStatus(); renderMalwareStatus();
   applyAppearance();
   if (window.vigil.crashInfo) window.vigil.crashInfo().then((c) => { $('crashInfo').textContent = c.count ? `Bisher ${c.count} Bericht(e) gespeichert.` : 'Bisher keine Abstürze.'; }).catch(() => {});
   renderReportLogo();
@@ -1533,6 +1549,13 @@ function collectSettings() {
   state.config.redactSecrets = $('redactChk').checked;
   state.config.domAudit = $('domChk').checked;
   state.config.costWarnUsd = Math.max(0, parseFloat($('costWarnInput').value) || 0);
+  state.config.malwareScan = $('malwareChk').checked;
+  state.config.webCrawl = $('crawlChk').checked;
+  // Testkonto und Schadsoftware-Schluessel separat – Geheimnisse gehen verschluesselt in den Main-Prozess
+  if ($('wlUrl').value.trim()) {
+    window.vigil.webLoginSave([{ loginUrl: $('wlUrl').value, username: $('wlUser').value, password: $('wlPass').value, userField: $('wlUserField').value, passField: $('wlPassField').value }]).then(() => { $('wlPass').value = ''; renderLoginStatus(); });
+  } else if (state.hadLogin) window.vigil.webLoginSave([]).then(renderLoginStatus);
+  if ($('mbKey').value.trim()) window.vigil.malwareSetKey($('mbKey').value.trim()).then(() => { $('mbKey').value = ''; renderMalwareStatus(); });
   // API-Rechtematrix separat speichern – Tokens gehen verschluesselt in den Main-Prozess
   if ($('amHost').value.trim() || $('amEndpoints').value.trim()) {
     window.vigil.apiMatrixSave([{ host: $('amHost').value, resourceIdA: $('amResource').value, endpoints: $('amEndpoints').value, tokenA: $('amTokenA').value, tokenB: $('amTokenB').value }]);
@@ -1679,7 +1702,7 @@ async function init() {
   document.querySelectorAll('#presetGrid .preset').forEach((b) => b.onclick = () => applyPreset(b.dataset.preset));
   // Schalter, die zu einem Profil gehoeren: Profil-Markierung sofort mitziehen
   $('cacheClearBtn').onclick = async () => { await window.vigil.aiCacheClear(); $('cacheInfo').textContent = ''; toast('KI-Zwischenspeicher geleert – der nächste Lauf prüft alles neu', 'ok'); };
-  ['depthSelect', 'validateChk', 'cveChk', 'activeChk', 'domChk'].forEach((id) => $(id).addEventListener('change', () => { collectSettings(); renderPresets(); }));
+  ['depthSelect', 'validateChk', 'cveChk', 'activeChk', 'domChk', 'malwareChk', 'crawlChk'].forEach((id) => $(id).addEventListener('change', () => { collectSettings(); renderPresets(); }));
   // Einstellungen: Unternavigation folgt dem Scrollen
   $('setNav').querySelectorAll('a').forEach((a) => a.onclick = (e) => {
     e.preventDefault();

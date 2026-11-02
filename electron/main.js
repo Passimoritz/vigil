@@ -70,6 +70,15 @@ function apiMatrixFor(cfg) {
     return runApiMatrix(targetUrl, { endpoints: entry.endpoints, resourceIdA: entry.resourceIdA, tokenA: dec(entry.tokenAEnc), tokenB: dec(entry.tokenBEnc) }, { ...opts, rps: cfg.maxRequestsPerSecond || 3 });
   };
 }
+// Login-Pruefung: Testkonto je Host (Passwort verschluesselt), nur fuer nachgewiesene Domains genutzt
+function webLoginFor(cfg) {
+  return (targetUrl) => {
+    const host = (scopeHost({ type: 'url', value: targetUrl }) || '').replace(/^www\./, '');
+    const e = (cfg.webLogins || []).find((m) => String(m.host || '').toLowerCase().replace(/^www\./, '') === host);
+    if (!e || !e.loginUrl || !e.username || !e.passwordEnc) return null;
+    return { loginUrl: e.loginUrl, username: e.username, password: dec(e.passwordEnc), userField: e.userField || '', passField: e.passField || '' };
+  };
+}
 const { applyProxy, testProxy } = require('./proxy');
 const ollama = require('./ollama');
 
@@ -279,7 +288,7 @@ app.whenReady().then(() => {
     runAudit,
     buildConfig: (providerId) => {
       const c = loadConfig(); applyProxySafe(c);
-      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), maxRequestsPerSecond: c.maxRequestsPerSecond || 4 };
+      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), webCrawl: c.webCrawl !== false, malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4 };
     },
   });
   api = createApi({ orchestrator, getConfig: loadConfig, enforceScope });
@@ -532,6 +541,22 @@ ipcMain.handle('apimatrix:save', (_e, list) => {
   }).filter((m) => m.host);
   return { ok: saveConfig(c), encrypted: safeStorage.isEncryptionAvailable() };
 });
+
+// --- Login-Pruefung & Schadsoftware-Schluessel (Geheimnisse verschluesselt, nie zurueck an die UI) ---
+ipcMain.handle('weblogin:get', () => (loadConfig().webLogins || []).map((m) => ({ host: m.host, loginUrl: m.loginUrl, username: m.username, userField: m.userField, passField: m.passField, hasPassword: !!m.passwordEnc })));
+ipcMain.handle('weblogin:save', (_e, list) => {
+  const c = loadConfig();
+  const prev = c.webLogins || [];
+  c.webLogins = (Array.isArray(list) ? list : []).slice(0, 10).map((m) => {
+    let host = '';
+    try { host = new URL(String(m.loginUrl || '')).hostname.toLowerCase(); } catch { /* ungueltig */ }
+    const old = prev.find((p) => p.host === host) || {};
+    return { host, loginUrl: String(m.loginUrl || '').trim().slice(0, 500), username: String(m.username || '').trim().slice(0, 200), userField: String(m.userField || '').trim().slice(0, 80), passField: String(m.passField || '').trim().slice(0, 80), passwordEnc: m.password ? enc(String(m.password)) : old.passwordEnc || '' };
+  }).filter((m) => m.host && /^https?:/i.test(m.loginUrl));
+  return { ok: saveConfig(c), encrypted: safeStorage.isEncryptionAvailable() };
+});
+ipcMain.handle('malware:keyInfo', () => ({ hasKey: !!loadConfig().malwareBazaarKeyEnc }));
+ipcMain.handle('malware:setKey', (_e, key) => { const c = loadConfig(); c.malwareBazaarKeyEnc = key ? enc(String(key).trim().slice(0, 200)) : ''; return { ok: saveConfig(c) }; });
 
 ipcMain.handle('api:regenerateToken', () => { const c = loadConfig(); c.apiToken = crypto.randomBytes(24).toString('base64url'); saveConfig(c); return { token: c.apiToken }; });
 
