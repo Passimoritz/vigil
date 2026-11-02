@@ -34,8 +34,10 @@ function clampScore(v) {
 function redactSecret(s) {
   const v = String(s || '').trim();
   if (!v) return '';
-  if (v.length <= 8) return '****';
-  return `${v.slice(0, 3)}****…**${v.slice(-2)}`;
+  if (v.length <= 8) return '****REDACTED****';
+  // ~70 % maskiert: je Seite hoechstens 15 % (2–4 Zeichen) sichtbar
+  const keep = Math.min(4, Math.max(2, Math.floor(v.length * 0.15)));
+  return `${v.slice(0, keep)}****REDACTED****${v.slice(-keep)}`;
 }
 
 // Stabile Regel-ID: explizit gesetzt, sonst CVE/GHSA aus dem Titel, sonst Kurzform des Titels.
@@ -87,6 +89,15 @@ function normalizeFinding(raw, source) {
       : 'medium',
     source: source || f.source || 'ai',
   };
+  // Optionale Zusatzfelder der Audit-Module (nur uebernehmen, wenn vorhanden).
+  if (f.package && f.package.name) out.package = { ecosystem: String(f.package.ecosystem || ''), name: String(f.package.name), version: String(f.package.version || ''), fixed: f.package.fixed ? String(f.package.fixed) : '' };
+  if (Array.isArray(f.links)) out.links = f.links.filter((l) => l && l.url).slice(0, 12);
+  if (f.snippets && typeof f.snippets === 'object') out.snippets = f.snippets;
+  if (Array.isArray(f.steps)) out.steps = f.steps.map(String).slice(0, 8);
+  if (f.explanation) out.explanation = String(f.explanation);
+  if (f.sourceModule) out.sourceModule = String(f.sourceModule);
+  if (Array.isArray(f.linkedKeys)) out.linkedKeys = f.linkedKeys.slice(0, 10);
+  if (f.devOnly) out.devOnly = true;
   // Zod-Pruefung als letzte Sicherung: was hier durchfaellt, ist ein Programmierfehler.
   const v = check(UnifiedFindingSchema, out);
   if (!v.ok) throw new Error('Ungueltiger Befund: ' + v.error);
@@ -223,6 +234,8 @@ function mergeGroup(group) {
     remediation: longest(group.map((f) => f.remediation)),
     patch: longest(group.map((f) => f.patch)),
     ...((group.find((f) => f.evidence) || {}).evidence ? { evidence: group.find((f) => f.evidence).evidence } : {}),
+    ...(!primary.package && group.find((f) => f.package) ? { package: group.find((f) => f.package).package } : {}),
+    links: [...new Map(group.flatMap((f) => f.links || []).map((l) => [l.url, l])).values()],
     sources: [...new Set(group.map((f) => f.source))],
     mergedCount: group.length,
   };
@@ -303,7 +316,8 @@ function sortFindings(findings) {
   return [...findings].sort((a, b) => {
     const s = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
     if (s !== 0) return s;
-    return (b.cvss || 0) - (a.cvss || 0);
+    // Innerhalb einer Stufe: hoeheres Kontext-Risiko (KEV, EPSS, Exposition) zuerst
+    return ((b.contextualRiskScore ?? (b.cvss || 0) * 10) - (a.contextualRiskScore ?? (a.cvss || 0) * 10));
   });
 }
 

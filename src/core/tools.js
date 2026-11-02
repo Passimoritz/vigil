@@ -214,6 +214,7 @@ function parseTrivy(stdout, fallbackTarget) {
       ruleId: x.VulnerabilityID,
       title: `trivy: ${x.PkgName}@${x.InstalledVersion} (${x.VulnerabilityID})`,
       severity: mapSev(x.Severity), category: 'Dependencies', location: where,
+      package: { ecosystem: r.Type || '', name: x.PkgName || '', version: x.InstalledVersion || '', fixed: String(x.FixedVersion || '').split(/[ ,]/)[0] },
       description: `${x.Title || x.VulnerabilityID}. ${(x.Description || '').slice(0, 300)}`.trim(),
       impact: `Bekannte Schwachstelle ${x.VulnerabilityID}.`,
       remediation: x.FixedVersion ? `Auf ${x.FixedVersion} aktualisieren.` : 'Auf eine gepatchte Version aktualisieren.',
@@ -424,6 +425,7 @@ function parseOsv(data, sourcePath) {
         findings.push(normalizeFinding({
           title: `osv-scanner: ${pkg.name || '?'}@${pkg.version || '?'} (${v.id}${cve.length ? ', ' + cve.join(', ') : ''})`,
           severity, cvss, category: 'Dependencies', location: where,
+          package: { ecosystem: pkg.ecosystem || '', name: pkg.name || '', version: pkg.version || '', fixed: fixed[0] || '' },
           description: `${summary} – Paket ${pkg.name || '?'} ${pkg.version || '?'}${pkg.ecosystem ? ' (' + pkg.ecosystem + ')' : ''}.`.trim(),
           reachability: 'In einer eingebundenen Abhaengigkeit laut Lockfile.',
           impact: `Bekannte Schwachstelle ${v.id}${cve.length ? ' / ' + cve.join(', ') : ''}.`,
@@ -466,6 +468,7 @@ function parseGrype(data, sourcePath) {
     findings.push(normalizeFinding({
       title: `grype: ${a.name || '?'}@${a.version || '?'} (${v.id || '?'})`,
       severity: mapSev(v.severity), category: 'Dependencies', location: loc,
+      package: { ecosystem: a.language || a.type || '', name: a.name || '', version: a.version || '', fixed: (v.fix && v.fix.versions && v.fix.versions[0]) || '' },
       description: `${v.description || v.id || 'Bekannte Schwachstelle'}`.slice(0, 400),
       reachability: 'In einem installierten Paket/einer Abhaengigkeit gefunden.',
       impact: `Bekannte Schwachstelle ${v.id || ''}${related.length ? ' / ' + related.join(', ') : ''}${a.type ? ' (' + a.type + ')' : ''}.`,

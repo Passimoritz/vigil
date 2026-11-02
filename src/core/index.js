@@ -12,6 +12,20 @@ const { enrich } = require('./harness');
 const report = require('./report');
 const { fingerprint, atOrAbove, dedupeFindings, sortFindings, summarize } = require('./schema');
 const { PROVIDERS, callProvider, pingProvider, fetchModels } = require('./providers');
+const { runStaticModules } = require('./modules/static');
+const { runWebModules } = require('./modules/web');
+const { applyIntel, contextualRisk, correlate } = require('./intel');
+const { enrichRemedy } = require('./remedies');
+const { hostOf, isInternalHost } = require('./scope');
+
+// Gemeinsamer Abschluss: Threat-Intel, Kontext-Risiko, Angriffspfade, Loesungswissen.
+function finalize(findings, targets, config) {
+  const exposed = targets.some((t) => (t.type === 'url' || t.type === 'endpoint') && !isInternalHost(hostOf(t)));
+  let list = applyIntel(findings, config.intel);
+  list = list.map((f) => ({ ...f, contextualRiskScore: f.contextualRiskScore ?? contextualRisk(f, { internetExposed: exposed || f.source === 'webscan' }) }));
+  list = [...list, ...correlate(list)];
+  return sortFindings(list.map(enrichRemedy));
+}
 
 // Hat ein Tool-Lauf wirklich stattgefunden? (Nur dann duerfen fehlende Befunde als behoben gelten.)
 const DID_NOT_RUN = /nicht ausgefuehrt|nicht installiert|abgebrochen|nicht lesbar|unerwartet|nicht erreichbar|uebersprungen|fehlgeschlagen|konnte nicht/i;
@@ -27,6 +41,13 @@ async function runAudit(targets, config, onProgress = () => {}) {
 
   onProgress({ phase: 'prescan', message: 'Statische Vorpruefung (Secrets, Deps, Muster) …' });
   const pre = prescan(ing.units, { customSecrets: config.customRules, disabledRules: config.disabledRules });
+  // Native Audit-Module (Lieferkette, Container, Code-Regeln, KI, Server-Konfiguration)
+  const mods = runStaticModules(ing.units, onProgress);
+  for (const t of targets) if (t.type === 'path') for (const id of mods.ran) scannersRun.push({ target: t.value, source: id });
+  const moduleNotes = [...mods.errors];
+  let throttled = false;
+  // Paket-Inventar (SBOM) fuer die globale Suche nach betroffenen Versionen
+  const sbom = pre.deps.map((d) => ({ ecosystem: d.ecosystem, name: d.name, version: d.version }));
 
   // CVE-Abgleich der erkannten Abhaengigkeiten (OSV.dev), optional.
   let cveFindings = [];
@@ -55,7 +76,34 @@ async function runAudit(targets, config, onProgress = () => {}) {
       webFindings.push(...w.findings);
       webNotes.push(...w.notes);
       if (authorized && completed(w.notes)) scannersRun.push({ target: t.value, source: 'webscan' });
-    } catch (e) { webNotes.push(`Server-Pruefung ${t.value} fehlgeschlagen: ${e.message}`); }
+    } catch (e) {
+      if (e.throttled) throttled = true;
+      webNotes.push(e.throttled ? e.message : `Server-Pruefung ${t.value} fehlgeschlagen: ${e.message}`);
+    }
+    // Weitere Web-Module; tiefe Pruefung nur fuer verifizierte oder interne Ziele.
+    if (authorized && !throttled && !aborted()) {
+      const deep = !!t.verified || isInternalHost(hostOf(t));
+      const wm = await runWebModules(t.value, { deep, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress });
+      webFindings.push(...wm.findings); webNotes.push(...wm.notes);
+      if (wm.throttled) throttled = true;
+      else for (const id of wm.ran) scannersRun.push({ target: t.value, source: id });
+      // Browser-Laufzeitpruefung (nur in der App verfuegbar, nur verifiziert/intern)
+      if (deep && t.type === 'url' && typeof config.domAudit === 'function' && !throttled && !aborted()) {
+        try {
+          const d = await config.domAudit(t.value, { signal: config.signal, onProgress });
+          webFindings.push(...d.findings); webNotes.push(...d.notes);
+          if (d.ok) scannersRun.push({ target: t.value, source: 'headless-dom-audit' });
+        } catch (e) { webNotes.push('Browser-Prüfung: ' + e.message); }
+      }
+      // API-Rechtematrix (BOLA/IDOR) fuer konfigurierte Endpunkte dieses Hosts
+      if (deep && typeof config.apiMatrix === 'function' && !aborted()) {
+        try {
+          const a = await config.apiMatrix(t.value, { signal: config.signal, onProgress });
+          webFindings.push(...a.findings); webNotes.push(...a.notes);
+          if (a.ran) scannersRun.push({ target: t.value, source: 'api-auth-matrix' });
+        } catch (e) { webNotes.push('API-Rechtematrix: ' + e.message); }
+      }
+    }
 
     // Aktive Pruefung ueber nmap/nuclei - nur mit Opt-in und bestaetigter Berechtigung.
     if (config.activeScan && authorized && !aborted()) {
@@ -95,15 +143,16 @@ async function runAudit(targets, config, onProgress = () => {}) {
       }
     }
   }
-  const staticFindings = [...pre.findings, ...cveFindings, ...webFindings, ...(ing.findings || [])];
+  const staticFindings = [...pre.findings, ...mods.findings, ...cveFindings, ...webFindings, ...(ing.findings || [])];
+  const extraMeta = { scannersRun, throttled, sbom, modulesRun: [...new Set(scannersRun.map((s) => s.source))] };
 
   if (!ing.units.length) {
-    const findings = sortFindings(enrich(dedupeFindings(staticFindings)));
+    const findings = finalize(enrich(dedupeFindings(staticFindings)), targets, config);
     const empty = {
       findings,
       summary: summarize(findings),
-      errors: [...(webTargets.length || targets.some((t) => t.type === 'image') ? [] : ['Kein lesbares Pruefmaterial gefunden.']), ...webNotes, ...cveNotes, ...ing.notes],
-      meta: { provider: config.provider, model: config.model, at: new Date().toISOString(), units: 0, batches: 0, scannersRun },
+      errors: [...(webTargets.length || targets.some((t) => t.type === 'image') ? [] : ['Kein lesbares Pruefmaterial gefunden.']), ...webNotes, ...cveNotes, ...moduleNotes, ...ing.notes],
+      meta: { provider: config.provider, model: config.model, at: new Date().toISOString(), units: 0, batches: 0, ...extraMeta },
     };
     return { result: empty, ingest: ing, prescan: pre };
   }
@@ -115,8 +164,10 @@ async function runAudit(targets, config, onProgress = () => {}) {
     config,
     onProgress,
   });
-  result.errors = [...result.errors, ...webNotes, ...cveNotes, ...ing.notes];
-  result.meta.scannersRun = scannersRun;
+  result.findings = finalize(result.findings, targets, config);
+  result.summary = summarize(result.findings);
+  result.errors = [...result.errors, ...webNotes, ...cveNotes, ...moduleNotes, ...ing.notes];
+  Object.assign(result.meta, extraMeta);
   onProgress({ phase: 'done', message: `Fertig: ${result.summary.total} Befund(e).` });
   return { result, ingest: ing, prescan: pre };
 }

@@ -7,6 +7,8 @@
 //   PATCH  /api/findings/:id/status     { status, note? }
 //   POST   /api/scans                   { targets:[{type,value}], providerId? }  -> 202 { scanId }
 //   GET    /api/scans/:id               Status eines Laufs
+//   POST   /api/targets/:id/baseline    aktuellen Stand als Baseline setzen
+//   GET    /api/sbom?q=lodash@4.17      wo ist ein Paket (in welcher Version) im Einsatz?
 
 const http = require('http');
 const crypto = require('crypto');
@@ -60,6 +62,14 @@ function createApi({ orchestrator, getConfig, enforceScope }) {
     try {
       if (req.method === 'GET' && res1 === 'stats' && !id) return send(res, 200, orchestrator.stats());
       if (req.method === 'GET' && res1 === 'targets' && !id) return send(res, 200, { targets: orchestrator.targets() });
+      if (req.method === 'POST' && res1 === 'targets' && id && sub === 'baseline') {
+        const r = orchestrator.setBaseline(id);
+        return r.ok ? send(res, 200, r) : send(res, 404, { error: r.error });
+      }
+      if (req.method === 'GET' && res1 === 'sbom' && !id) {
+        const q = String(url.searchParams.get('q') || '').slice(0, 120);
+        return q ? send(res, 200, { query: q, matches: orchestrator.searchSbom(q) }) : send(res, 400, { error: 'Parameter q fehlt (z. B. ?q=lodash@4.17).' });
+      }
       if (req.method === 'GET' && res1 === 'findings' && !id) {
         const q = Object.fromEntries(url.searchParams);
         return send(res, 200, { findings: orchestrator.listFindings(q) });

@@ -38,23 +38,35 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
     store.updateRun(db, job.id, { status: 'RUNNING', startedAt: new Date().toISOString() });
     persist();
     let outcome;
+    const t0 = Date.now();
     try {
       const cfg = buildConfig(job.providerId);
       cfg.signal = ctrl.signal;
-      const { result } = await runAudit(job.targets, cfg, (p) => { try { if (job.onProgress) job.onProgress(p); } catch { /* Fenster weg */ } });
+      // Domain-Nachweis aus dem Speicher mitgeben – entscheidet ueber tiefe Web-Pruefungen.
+      const targets = job.targets.map((t) => { const rec = db.targets[store.targetIdOf(t)]; return { ...t, verified: !!(rec && rec.ownershipVerified) }; });
+      const { result } = await runAudit(targets, cfg, (p) => { try { if (job.onProgress) job.onProgress(p); } catch { /* Fenster weg */ } });
       const scannersRun = (result.meta && result.meta.scannersRun) || [];
-      // Abgebrochene Laeufe sind unvollstaendig: nichts automatisch schliessen.
-      const applied = store.applyRun(db, { targets: job.targets, findings: result.findings, scannersRun: ctrl.signal.aborted ? [] : scannersRun });
+      // Abgebrochene oder gedrosselte Laeufe sind unvollstaendig: nichts automatisch schliessen.
+      const complete = !ctrl.signal.aborted && !(result.meta && result.meta.throttled);
+      const applied = store.applyRun(db, { targets: job.targets, findings: result.findings, scannersRun: complete ? scannersRun : [], sbom: result.meta && result.meta.sbom });
       result.findings = applied.findings;
       result.lifecycle = { ...applied.counters, resolved: applied.resolved, runId: job.id };
       result.hasBaseline = applied.counters.updated + applied.counters.reopened > 0;
       result.suppressedCount = applied.findings.filter((f) => f.suppressed).length;
+      const partial = (result.errors || []).some((e) => /fehlgeschlagen|nicht ausgefuehrt|Fehler/i.test(e));
+      const status = ctrl.signal.aborted ? 'FAILED' : result.meta && result.meta.throttled ? 'THROTTLED_ABORTED' : partial ? 'PARTIAL_FAILURE' : 'COMPLETED';
+      const st = store.stats(db);
       store.updateRun(db, job.id, {
-        status: ctrl.signal.aborted ? 'FAILED' : 'COMPLETED',
+        status,
         finishedAt: new Date().toISOString(),
+        durationMs: Date.now() - t0,
         scannersUsed: [...new Set(scannersRun.map((s) => s.source).concat(result.meta && result.meta.batches ? ['ai'] : []))],
+        newFindingsCount: applied.counters.created,
+        resolvedCount: applied.counters.resolved,
+        totalOpenCount: st.targets.filter((t) => applied.targetIds.includes(t.id)).reduce((n, t) => n + t.open.total, 0),
+        toxicChainsCount: applied.counters.toxic,
         summary: { ...result.summary, ...applied.counters },
-        errorLog: ctrl.signal.aborted ? 'Abgebrochen.' : null,
+        errorLog: ctrl.signal.aborted ? 'Abgebrochen.' : status === 'THROTTLED_ABORTED' ? 'Ziel hat Anfragen gedrosselt – Web-Prüfung abgebrochen.' : null,
       });
       outcome = { ok: true, result, canceled: ctrl.signal.aborted, runId: job.id };
     } catch (e) {
@@ -76,6 +88,10 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
     stats: () => store.stats(db),
     targets: () => store.stats(db).targets,
     setStatus(id, status, note) { const r = store.setStatus(db, id, status, note); if (r.ok) persist(); return r; },
+    setBaseline(targetId) { const r = store.setBaseline(db, targetId); if (r.ok) persist(); return r; },
+    searchSbom: (q) => store.searchSbom(db, q),
+    getTarget: (id) => db.targets[id] || null,
+    setTargetMeta(id, patch) { const r = store.setTargetMeta(db, id, patch); if (r.ok) persist(); return r; },
     clear() { db = store.emptyStore(); persist(); },
   };
 }

@@ -142,6 +142,7 @@ async function lookupCves(deps, onProgress = () => {}, signal) {
         cvss,
         category: 'Dependencies',
         location: `${dep.ecosystem}: ${dep.name}@${dep.version}`,
+        package: { ecosystem: dep.ecosystem, name: dep.name, version: dep.version, fixed: fixes[0] || '' },
         description: `${vuln.summary || id}. ${(vuln.details || '').slice(0, 500)}`.trim(),
         reachability: 'Abhaengig davon, ob die verwundbare Funktion des Pakets im Projekt tatsaechlich genutzt wird. Transitive/ungenutzte Pfade haben geringeres reales Risiko.',
         impact: `Bekannte Schwachstelle laut ${vuln.id}${vuln.aliases?.length ? ' / ' + vuln.aliases.join(', ') : ''}.`,

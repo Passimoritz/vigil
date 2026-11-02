@@ -55,4 +55,27 @@ function enforceScope(targets, allowlist, { interactive = false } = {}) {
   return { ok: errors.length === 0, targets: out, allow: [...new Set(allow)], errors };
 }
 
-module.exports = { hostOf, isInternalHost, isAllowlisted, normalizeAllowlist, enforceScope };
+// Domain-Nachweis: Token als DNS-TXT unter _sec-audit-verify.<domain> oder unter
+// https://<host>/.well-known/sec-audit.txt. Interne Adressen gelten ohne Nachweis.
+async function verifyOwnership(t, token, { fetchImpl = fetch, resolveTxt } = {}) {
+  const host = hostOf(t);
+  if (!host) return { ok: false, error: 'Adresse nicht lesbar.' };
+  if (isInternalHost(host)) return { ok: true, method: 'internal' };
+  const dns = require('dns').promises;
+  const rt = resolveTxt || dns.resolveTxt.bind(dns);
+  const parts = host.split('.');
+  const candidates = [...new Set([host, parts.slice(-2).join('.')])];
+  for (const d of candidates) {
+    try {
+      const recs = (await rt('_sec-audit-verify.' + d)).map((r) => r.join(''));
+      if (recs.some((r) => r.trim() === token)) return { ok: true, method: 'dns', domain: d };
+    } catch { /* kein Eintrag */ }
+  }
+  try {
+    const res = await fetchImpl(`https://${host}/.well-known/sec-audit.txt`, { redirect: 'manual', signal: AbortSignal.timeout(8000) });
+    if (res.ok && (await res.text()).split(/\s+/).includes(token)) return { ok: true, method: 'well-known' };
+  } catch { /* nicht erreichbar */ }
+  return { ok: false, error: `Kein Nachweis gefunden. Lege einen TXT-Eintrag „_sec-audit-verify.${candidates[candidates.length - 1]}“ mit dem Token an – oder die Datei /.well-known/sec-audit.txt.` };
+}
+
+module.exports = { hostOf, isInternalHost, isAllowlisted, normalizeAllowlist, enforceScope, verifyOwnership };

@@ -26,6 +26,16 @@ function toMarkdown(result, title = 'Vigil Sicherheits-Audit') {
   const L = [];
   L.push(`# ${title}`, '');
   L.push(`_Erstellt: ${meta?.at || new Date().toISOString()} · Anbieter: ${meta?.provider || '-'} / ${meta?.model || '-'}_`, '');
+  // Executive Summary: Lage auf einen Blick
+  const toxic = findings.filter((f) => /^toxic-/.test(f.ruleId || ''));
+  const kev = findings.filter((f) => f.inCisaKev);
+  const lc = result.lifecycle;
+  L.push('## Executive Summary', '');
+  L.push(`- **Offene Befunde:** ${summary.total} (kritisch ${summary.counts.critical || 0}, hoch ${summary.counts.high || 0})`);
+  if (toxic.length) L.push(`- **Angriffspfade:** ${toxic.length} – ${toxic.map((t) => t.title.replace(/^Angriffspfad:\s*/, '')).join('; ')}`);
+  if (kev.length) L.push(`- **Aktiv ausgenutzt (CISA KEV):** ${kev.length} – ${kev.map((f) => (f.cves || [f.ruleId]).join('/')).join(', ')}`);
+  if (lc) L.push(`- **Seit dem letzten Lauf:** ${lc.created} neu, ${lc.resolved} behoben, ${lc.reopened} wieder aufgetaucht`);
+  L.push('');
   L.push('## Zusammenfassung', '');
   L.push(`Befunde gesamt: **${summary.total}**`, '');
   L.push('| Schweregrad | Anzahl |', '| --- | --- |');
@@ -48,6 +58,11 @@ function toMarkdown(result, title = 'Vigil Sicherheits-Audit') {
     if (f.impact) L.push(`**Auswirkung:** ${f.impact}`, '');
     if (f.remediation) L.push(`**Behebung:** ${f.remediation}`, '');
     if (f.patch) L.push('**Patch:**', '```', f.patch, '```', '');
+    if (f.explanation) L.push(`**Warum das wichtig ist:** ${f.explanation}`, '');
+    if (f.steps && f.steps.length) { L.push('**Schritte:**'); f.steps.forEach((s, j) => L.push(`${j + 1}. ${s}`)); L.push(''); }
+    if (f.versionPatch) { L.push(`**Versions-Patch (${f.versionPatch.title}):**`, '```', [f.versionPatch.command, f.versionPatch.manifest].filter(Boolean).join('\n\n'), '```', ''); }
+    for (const [k, v] of Object.entries(f.snippets || {}).slice(0, 3)) L.push(`**${k}:**`, '```', v, '```', '');
+    if (f.links && f.links.length) L.push('**Mehr dazu:** ' + f.links.map((l) => `[${l.label}](${l.url})`).join(' · '), '');
     L.push('---', '');
   });
   return L.join('\n');
@@ -71,6 +86,11 @@ function toHtml(result, title = 'Vigil Sicherheits-Audit') {
       ${f.reachability ? `<p><b>Erreichbarkeit/Risiko:</b> ${esc(f.reachability)}</p>` : ''}
       ${f.impact ? `<p><b>Auswirkung:</b> ${esc(f.impact)}</p>` : ''}
       ${f.remediation ? `<p class="fix"><b>Behebung:</b> ${esc(f.remediation)}</p>` : ''}
+      ${f.explanation ? `<p><b>Warum das wichtig ist:</b> ${esc(f.explanation)}</p>` : ''}
+      ${f.steps && f.steps.length ? `<ol>${f.steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}
+      ${f.versionPatch ? `<p><b>Versions-Patch (${esc(f.versionPatch.title)}):</b></p><pre>${esc([f.versionPatch.command, f.versionPatch.manifest].filter(Boolean).join('\n\n'))}</pre>` : ''}
+      ${Object.entries(f.snippets || {}).slice(0, 3).map(([k, v]) => `<p><b>${esc(k)}:</b></p><pre>${esc(v)}</pre>`).join('')}
+      ${f.links && f.links.length ? `<p><b>Mehr dazu:</b> ${f.links.map((l) => `<a href="${esc(l.url)}">${esc(l.label)}</a>`).join(' · ')}</p>` : ''}
       ${f.patch ? `<pre class="patch">${esc(f.patch)}</pre>` : ''}
     </div>`).join('\n');
 
@@ -182,4 +202,14 @@ function toSarif(result, toolVersion = '0.1.0') {
   return JSON.stringify(sarif, null, 2);
 }
 
-module.exports = { toMarkdown, toHtml, toSarif, sevToLevel, SEV_LABEL, SEV_COLOR };
+// Maschinenlesbarer Bericht inkl. Gesamtlage aus dem Befund-Speicher.
+function toJson(result, posture) {
+  return JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    posture: posture ? { score: posture.posture, open: posture.open, toxic: posture.toxic, kev: posture.kev, newSinceBaseline: posture.newSinceBaseline } : null,
+    summary: result.summary, lifecycle: result.lifecycle || null, meta: { ...(result.meta || {}), sbom: undefined },
+    findings: (result.findings || []).map((f) => ({ id: f.id, ruleId: f.ruleId, title: f.title, severity: f.severity, status: f.status, cvss: f.cvss, epssScore: f.epssScore, inCisaKev: !!f.inCisaKev, contextualRiskScore: f.contextualRiskScore, category: f.category, location: f.location, evidence: f.evidence, sources: f.sources, remediation: f.remediation, steps: f.steps, versionPatch: f.versionPatch, links: f.links, linkedFindingIds: f.linkedFindingIds })),
+  }, null, 2);
+}
+
+module.exports = { toMarkdown, toHtml, toSarif, toJson, sevToLevel, SEV_LABEL, SEV_COLOR };

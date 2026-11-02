@@ -400,20 +400,20 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('zod: Steuerzeichen abgelehnt', !zcheck(TargetSchema, { type: 'path', value: 'a\nb' }).ok);
     check('zod: leere Zielliste abgelehnt', !zcheck(ScanRequestSchema, { targets: [] }).ok);
     check('zod: unbekannter Status abgelehnt', !zcheck(StatusUpdateSchema, { status: 'DONE' }).ok);
-    check('redact: 3 vorne + 2 hinten', redactSecret('sk_live_abcdef1234567890') === 'sk_****…**90');
-    check('redact: kurz -> komplett', redactSecret('abc123') === '****');
+    check('redact: 70 % maskiert', redactSecret('sk_live_abcdef1234567890') === 'sk_****REDACTED****890');
+    check('redact: kurz -> komplett', redactSecret('abc123') === '****REDACTED****');
     const nf = normalizeFinding({ title: 'trivy: x (CVE-2024-1234)', severity: 'high', category: 'Dependencies' }, 'trivy');
     check('ruleId: CVE aus Titel', nf.ruleId === 'CVE-2024-1234');
     const gl = parseGitleaks(JSON.stringify([{ RuleID: 'aws-access-token', File: 'a.js', StartLine: 3, Secret: 'AKIAIOSFODNN7EXAMPLE' }]));
     check('gitleaks: geparst + Regel-ID', gl.length === 1 && gl[0].ruleId === 'aws-access-token');
-    check('gitleaks: Klartext-Secret nie gespeichert', !JSON.stringify(gl).includes('IOSFODNN7EXAMP') && gl[0].evidence === 'AKI****…**LE');
+    check('gitleaks: Klartext-Secret nie gespeichert', !JSON.stringify(gl).includes('IOSFODNN7EXAMP') && gl[0].evidence === 'AKI****REDACTED****PLE');
     check('gitleaks: kaputte Ausgabe -> null', parseGitleaks('{"oops":1}') === null);
     const tv = parseTrivy(JSON.stringify({ Results: [{ Target: 'nginx:1.25 (debian 12)', Vulnerabilities: [{ VulnerabilityID: 'CVE-2023-44487', PkgName: 'libnghttp2', InstalledVersion: '1.52', Severity: 'HIGH' }], Misconfigurations: [{ ID: 'DS002', Title: 'Image user should not be root', Severity: 'HIGH' }] }] }), 'nginx:1.25');
     check('trivy: Vuln + Misconfig', tv.length === 2 && tv[0].ruleId === 'CVE-2023-44487' && tv[1].ruleId === 'DS002');
     const { enrich: enrich2 } = require('../src/core/harness');
     const { dedupeFindings: dd } = require('../src/core/schema');
     const kept = enrich2(dd([{ ...gl[0], location: 'a.js:3' }, normalizeFinding({ title: 'Secret im Code', severity: 'critical', category: 'Secrets', location: 'a.js:3' }, 'ai')]));
-    check('evidence: Fundstelle bleibt nach Merge + Anreicherung erhalten', kept.length === 1 && kept[0].evidence === 'AKI****…**LE' && kept[0].assurance === 'confirmed-multi');
+    check('evidence: Fundstelle bleibt nach Merge + Anreicherung erhalten', kept.length === 1 && kept[0].evidence === 'AKI****REDACTED****PLE' && kept[0].assurance === 'confirmed-multi');
   }
 
   console.log('Scope-Durchsetzung:');
@@ -456,6 +456,100 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const st = store.stats(db);
     check('stats: offene nach Schweregrad', st.open.high === 2 && st.targets.length === 1);
     check('list: Statusfilter', store.listFindings(db, { status: 'FALSE_POSITIVE' }).length === 1);
+  }
+
+  console.log('Audit-Module (statisch):');
+  {
+    const { runStaticModules, lev1 } = require('../src/core/modules/static');
+    const U = (label, content) => ({ label, content });
+    const r = runStaticModules([
+      U('app/package.json', JSON.stringify({ dependencies: { lodahs: '1.0.0', express: '4.17.1' }, scripts: { postinstall: 'node x.js' } })),
+      U('app/docker-compose.yml', 'services:\n  db:\n    image: postgres\n    ports:\n      - "5432:5432"\n  app:\n    image: app\n    privileged: true\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n'),
+      U('app/Dockerfile', 'FROM node:latest\nRUN npm ci\n'),
+      U('app/.github/workflows/ci.yml', 'on: pull_request_target\npermissions: write-all\njobs:\n  b:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af\n'),
+      U('app/src/pay.js', 'const resetToken = Math.random().toString(36);\nif (req.headers.signature === expected) {}\nconst p = jwt.decode(t);\nawait prisma.user.update({ data: req.body });\nawait fetch(req.query.url);\nconst sys = `Du bist hilfreich. ${req.body.msg}`;\neval(completion.text);\n'),
+      U('etc/ssh/sshd_config', 'PermitRootLogin yes\nPasswordAuthentication no\n'),
+      U('app/safe.js', 'const t = crypto.randomBytes(32);\nif (timingSafeEqual(a, b)) {}\njwt.verify(t, k);\n'),
+    ]);
+    const ids = new Set(r.findings.map((f) => f.ruleId));
+    check('static: alle 5 Module gelaufen', r.ran.length === 5 && !r.errors.length);
+    check('static: Typosquat (vertauscht) erkannt', ids.has('typosquat-suspect') && lev1('lodahs', 'lodash') && !lev1('react', 'redux'));
+    check('static: Compose privileged + Socket + DB-Port', ['container-privileged', 'container-docker-sock', 'container-db-port-public'].every((x) => ids.has(x)));
+    check('static: Dockerfile latest + root', ids.has('docker-latest-tag') && ids.has('dockerfile-root-user'));
+    check('static: GHA unpinned/write-all/pwn-request', ['gha-unpinned-action', 'gha-write-all', 'gha-pull-request-target'].every((x) => ids.has(x)));
+    check('static: SHA-gepinnte Action nicht gemeldet', r.findings.filter((f) => f.ruleId === 'gha-unpinned-action').length === 1);
+    check('static: SAST-Regeln', ['sast-insecure-random', 'sast-timing-compare', 'sast-jwt-decode-no-verify', 'sast-mass-assignment', 'sast-ssrf'].every((x) => ids.has(x)));
+    check('static: sicherer Code ohne SAST-Befund', !r.findings.some((f) => /safe\.js/.test(f.location)));
+    check('static: LLM Prompt-Injection + Senke', ids.has('llm-prompt-injection-concat') && ids.has('llm-output-to-sink'));
+    check('static: sshd Root-Login, aber nicht Passwort', ids.has('ssh-root-login') && !ids.has('ssh-password-auth'));
+  }
+
+  console.log('Lösungswissen & Links:');
+  {
+    const { enrichRemedy, versionPatch, isAllowedLink } = require('../src/core/remedies');
+    const { normalizeFinding: nf } = require('../src/core/schema');
+    const vp = versionPatch({ ecosystem: 'npm', name: 'lodash', version: '4.17.15', fixed: '4.17.21' });
+    check('remedy: npm-Versions-Patch', vp.command === 'npm install lodash@^4.17.21' && /"\^4\.17\.21"/.test(vp.manifest));
+    check('remedy: pip (trivy-Typ) -> PyPI', /pip install --upgrade "django>=4.2.8"/.test(versionPatch({ ecosystem: 'pip', name: 'django', version: '4.2.1', fixed: '4.2.8' }).command));
+    const cve = enrichRemedy(nf({ title: 'Verwundbare Abhaengigkeit: lodash 4.17.15 (CVE-2020-8203)', severity: 'high', category: 'Dependencies', package: { ecosystem: 'npm', name: 'lodash', version: '4.17.15', fixed: '4.17.21' } }, 'osv'));
+    check('remedy: CVE mit NVD/heise/Video-Links + Patch', cve.versionPatch && ['nvd.nist.gov', 'heise.de', 'youtube.com'].every((h) => cve.links.some((l) => l.url.includes(h))));
+    const hsts = enrichRemedy(nf({ ruleId: 'missing-hsts-header', title: 'HSTS-Header fehlt', category: 'Transport' }, 'webscan'));
+    check('remedy: HSTS mit Erklärung, Schritten, nginx-Schnipsel', !!hsts.explanation && hsts.steps.length >= 2 && /add_header Strict-Transport-Security/.test(hsts.snippets.nginx));
+    check('remedy: alle Links erlaubt', [...cve.links, ...hsts.links].every((l) => isAllowedLink(l.url)));
+    check('remedy: fremder Link blockiert', !isAllowedLink('https://evil.example/x') && !isAllowedLink('http://heise.de/'));
+    const unknown = ['container-privileged', 'gha-write-all', 'sast-ssrf', 'llm-server-exposed', 'dns-dangling-cname', 'dom-token-in-storage', 'api-bola-cross-tenant', 'toxic-db-breach', 'cookie-missing-httponly-session', 'web-sourcemap-exposed', 'exposed-env']
+      .filter((id) => !enrichRemedy(nf({ ruleId: id, title: id, category: 'Config' }, 'x')).explanation);
+    check('remedy: Wissensbasis deckt alle Modul-Regeln ab', unknown.length === 0);
+  }
+
+  console.log('Threat-Intel, Risiko, Angriffspfade:');
+  {
+    const { applyIntel, contextualRisk, correlate } = require('../src/core/intel');
+    const { normalizeFinding: nf } = require('../src/core/schema');
+    const intel = { kev: new Set(['CVE-2021-44228']), epss: new Map([['CVE-2021-44228', [0.97, 0.999]], ['CVE-2020-8203', [0.02, 0.8]]]) };
+    const [log4j, lodash] = applyIntel([nf({ title: 'log4j (CVE-2021-44228)', severity: 'critical', cvss: 10, category: 'Dependencies' }, 'osv'), nf({ title: 'lodash (CVE-2020-8203)', severity: 'high', cvss: 7.4, category: 'Dependencies' }, 'osv')], intel);
+    check('intel: KEV + EPSS übernommen', log4j.inCisaKev && log4j.epssScore === 0.97 && !lodash.inCisaKev);
+    check('risk: KEV mind. 95', contextualRisk(log4j) === 100 && contextualRisk({ ...lodash, cvss: 3, inCisaKev: true }) === 95);
+    check('risk: intern x0.75, Testcode x0.4', contextualRisk(lodash, { internetExposed: false }) === 55.5 && contextualRisk({ ...lodash, devOnly: true }) === 29.6);
+    const T = (ruleId, extra = {}) => nf({ ruleId, title: ruleId, severity: 'high', category: 'Config', location: 'x:' + ruleId.length, ...extra }, 'container-host-audit');
+    const chains = correlate([T('container-root-user'), T('container-docker-sock'), T('sast-ssrf', { category: 'SSRF' }), T('container-db-port-public')]);
+    check('correlate: Container-Ausbruch erkannt (100)', chains.some((c) => c.ruleId === 'toxic-container-escape' && c.contextualRiskScore === 100 && c.linkedKeys.length >= 3));
+    check('correlate: DB-Kette ohne Firewall-Befund nicht', !chains.some((c) => c.ruleId === 'toxic-db-breach'));
+  }
+
+  console.log('Baseline, SBOM, Verifizierung, Backoff:');
+  {
+    const store = require('../src/core/store');
+    const { normalizeFinding: nf } = require('../src/core/schema');
+    const db = store.emptyStore();
+    const tgt = [{ type: 'path', value: 'C:\\shop' }];
+    const ran = [{ target: 'C:\\shop', source: 'prescan' }];
+    const A = nf({ ruleId: 'a', title: 'A', location: 'shop/a.js:1', severity: 'high', category: 'Secrets' }, 'prescan');
+    const B = nf({ ruleId: 'b', title: 'B', location: 'shop/b.js:1', severity: 'low', category: 'Secrets' }, 'prescan');
+    const r1 = store.applyRun(db, { targets: tgt, findings: [A], scannersRun: ran, sbom: [{ ecosystem: 'npm', name: 'lodash', version: '4.17.15' }] });
+    const bl = store.setBaseline(db, r1.targetIds[0]);
+    store.applyRun(db, { targets: tgt, findings: [A, B], scannersRun: ran });
+    check('baseline: Altlast markiert, Neues nicht', bl.count === 1 && store.listFindings(db, { newSinceBaseline: true }).map((f) => f.ruleId).join() === 'b');
+    check('sbom: Paket + Version gefunden', store.searchSbom(db, 'lodash@4.17').length === 1 && store.searchSbom(db, 'lodash@5').length === 0);
+    check('store: Ziel hat Verifizierungs-Token', /^[a-f0-9]{24}$/.test(db.targets[r1.targetIds[0]].verificationToken));
+    check('stats: Sicherheitswert berechnet', typeof store.stats(db).posture === 'number');
+
+    const { verifyOwnership } = require('../src/core/scope');
+    const okDns = await verifyOwnership({ type: 'url', value: 'https://shop.example.com' }, 'tok123', { resolveTxt: async (n) => (n === '_sec-audit-verify.example.com' ? [['tok123']] : []), fetchImpl: async () => ({ ok: false }) });
+    const bad = await verifyOwnership({ type: 'url', value: 'https://shop.example.com' }, 'tok123', { resolveTxt: async () => [['falsch']], fetchImpl: async () => ({ ok: true, text: async () => 'anderes' }) });
+    const wk = await verifyOwnership({ type: 'url', value: 'https://x.example' }, 'tok9', { resolveTxt: async () => { throw new Error('nx'); }, fetchImpl: async () => ({ ok: true, text: async () => 'tok9\n' }) });
+    check('verify: DNS-TXT, .well-known, Ablehnung', okDns.ok && okDns.method === 'dns' && wk.ok && wk.method === 'well-known' && !bad.ok);
+    check('verify: interne Adresse ohne Nachweis', (await verifyOwnership({ type: 'endpoint', value: '192.168.1.4' }, 'x')).ok);
+
+    const { WafGuard } = require('../src/core/modules/web');
+    const g = new WafGuard(1000);
+    let threw = false;
+    try { g.after('h', 429); g.after('h', 200); g.after('h', 503); g.after('h', 403); g.after('h', 429); } catch (e) { threw = e.throttled; }
+    check('backoff: erst bei 3 Sperren in Folge', threw === true);
+
+    const report = require('../src/core/report');
+    const j = JSON.parse(report.toJson({ summary: { total: 1, counts: {} }, findings: [{ ...A, contextualRiskScore: 80 }], meta: {} }, { posture: 70, open: {}, toxic: [], kev: 0, newSinceBaseline: 1 }));
+    check('report: JSON mit Sicherheitswert', j.posture.score === 70 && j.findings[0].contextualRiskScore === 80);
   }
 
   console.log('REST-API:');

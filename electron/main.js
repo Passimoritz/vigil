@@ -13,6 +13,36 @@ const { enforceScope, normalizeAllowlist } = require('../src/core/scope');
 const { check, ScanRequestSchema, StatusUpdateSchema } = require('../src/core/validation');
 const { createOrchestrator } = require('./orchestrator');
 const { createApi } = require('./api');
+const { safeStorage } = require('electron');
+const { domAudit } = require('./domaudit');
+const { loadIntel, syncIntel, needsSync } = require('../src/core/intel');
+const { isAllowedLink } = require('../src/core/remedies');
+const { runApiMatrix } = require('../src/core/modules/apimatrix');
+const { verifyOwnership, hostOf: scopeHost } = require('../src/core/scope');
+
+// --- Threat-Intel (CISA KEV + EPSS), taeglich im Hintergrund aktualisiert ---
+const INTEL_PATH = () => path.join(app.getPath('userData'), 'threat-intel.json');
+let intel = null;
+let intelSyncing = null;
+function syncIntelInBackground(force = false) {
+  if (intelSyncing) return intelSyncing;
+  if (!force && intel && !needsSync(intel)) return Promise.resolve({ ok: true, skipped: true });
+  intelSyncing = syncIntel(INTEL_PATH()).then((r) => { intel = loadIntel(INTEL_PATH()); return r; })
+    .catch((e) => ({ ok: false, error: e.message })).finally(() => { intelSyncing = null; });
+  return intelSyncing;
+}
+
+// --- API-Rechtematrix: Tokens nur verschluesselt (Windows DPAPI / Keychain) speichern ---
+const enc = (s) => (s && safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(s).toString('base64') : '');
+const dec = (b) => { try { return b ? safeStorage.decryptString(Buffer.from(b, 'base64')) : ''; } catch { return ''; } };
+function apiMatrixFor(cfg) {
+  return async (targetUrl, opts) => {
+    const host = (scopeHost({ type: 'url', value: targetUrl }) || '').replace(/^www\./, '');
+    const entry = (cfg.apiMatrix || []).find((m) => String(m.host || '').toLowerCase().replace(/^www\./, '') === host);
+    if (!entry) return { ran: false, findings: [], notes: [] };
+    return runApiMatrix(targetUrl, { endpoints: entry.endpoints, resourceIdA: entry.resourceIdA, tokenA: dec(entry.tokenAEnc), tokenB: dec(entry.tokenBEnc) }, { ...opts, rps: cfg.maxRequestsPerSecond || 3 });
+  };
+}
 const { applyProxy, testProxy } = require('./proxy');
 const ollama = require('./ollama');
 
@@ -154,6 +184,9 @@ function createWindow() {
     },
   });
   win.setMenuBarVisibility(false);
+  // Das App-Fenster navigiert nie weg und oeffnet keine Fenster – Links laufen ueber link:open.
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.loadFile(path.join(__dirname, '..', 'src', 'ui', 'index.html'));
 }
 
@@ -179,10 +212,16 @@ app.whenReady().then(() => {
   orchestrator = createOrchestrator({
     storeFile: STORE_PATH(),
     runAudit,
-    buildConfig: (providerId) => { const c = loadConfig(); applyProxySafe(c); return effectiveConfig(c, providerId || c.selected); },
+    buildConfig: (providerId) => {
+      const c = loadConfig(); applyProxySafe(c);
+      return { ...effectiveConfig(c, providerId || c.selected), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), maxRequestsPerSecond: c.maxRequestsPerSecond || 4 };
+    },
   });
   api = createApi({ orchestrator, getConfig: loadConfig, enforceScope });
   applyApi(cfg);
+  intel = loadIntel(INTEL_PATH());
+  setTimeout(() => syncIntelInBackground(), 5000); // nach dem Start, ohne ihn zu bremsen
+  setInterval(() => syncIntelInBackground(), 6 * 60 * 60 * 1000);
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -272,6 +311,49 @@ ipcMain.handle('finding:setStatus', (_e, id, body) => {
 ipcMain.handle('dashboard:get', (_e, filter) => ({ stats: orchestrator.stats(), findings: orchestrator.listFindings(filter || {}) }));
 ipcMain.handle('store:clear', () => { orchestrator.clear(); return { ok: true }; });
 ipcMain.handle('api:info', () => { const c = loadConfig(); return { enabled: !!c.apiEnabled, port: c.apiPort, token: c.apiToken, running: !!(api && api.running()) }; });
+// --- Ziele: Verifizierung, Baseline, Einstellungen -------------------------
+ipcMain.handle('target:verify', async (_e, id) => {
+  const t = orchestrator.getTarget(String(id || ''));
+  if (!t) return { ok: false, error: 'Ziel nicht gefunden.' };
+  const r = await verifyOwnership({ type: t.type, value: t.identifier }, t.verificationToken);
+  if (r.ok) orchestrator.setTargetMeta(t.id, { ownershipVerified: true });
+  return { ...r, token: t.verificationToken };
+});
+ipcMain.handle('target:info', (_e, id) => { const t = orchestrator.getTarget(String(id || '')); return t ? { ok: true, target: t } : { ok: false }; });
+ipcMain.handle('target:baseline', (_e, id) => orchestrator.setBaseline(String(id || '')));
+ipcMain.handle('target:meta', (_e, id, patch) => {
+  const p = {};
+  if (patch && typeof patch.internetExposed === 'boolean') p.internetExposed = patch.internetExposed;
+  if (patch && ['PRODUCTION', 'STAGING', 'INTERNAL'].includes(patch.environment)) p.environment = patch.environment;
+  return orchestrator.setTargetMeta(String(id || ''), p);
+});
+ipcMain.handle('sbom:search', (_e, q) => orchestrator.searchSbom(String(q || '').slice(0, 120)));
+
+// --- Threat-Intel -------------------------------------------------------------
+ipcMain.handle('intel:status', () => ({ updatedAt: intel && intel.updatedAt, kev: intel ? intel.kev.size : 0, epss: intel ? intel.epss.size : 0, syncing: !!intelSyncing }));
+ipcMain.handle('intel:sync', () => syncIntelInBackground(true));
+
+// --- Links: nur geprüfte Ziele im Standardbrowser öffnen --------------------
+ipcMain.handle('link:open', (_e, url) => (isAllowedLink(String(url || '')) ? shell.openExternal(String(url)).then(() => ({ ok: true })) : { ok: false, error: 'Link nicht erlaubt.' }));
+
+// --- API-Rechtematrix: Konfiguration (Tokens verschluesselt, nie zurueck an die UI) ---
+ipcMain.handle('apimatrix:get', () => (loadConfig().apiMatrix || []).map((m) => ({ host: m.host, endpoints: m.endpoints, resourceIdA: m.resourceIdA, hasTokenA: !!m.tokenAEnc, hasTokenB: !!m.tokenBEnc })));
+ipcMain.handle('apimatrix:save', (_e, list) => {
+  const c = loadConfig();
+  const prev = c.apiMatrix || [];
+  c.apiMatrix = (Array.isArray(list) ? list : []).slice(0, 10).map((m) => {
+    const old = prev.find((p) => p.host === m.host) || {};
+    return {
+      host: String(m.host || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
+      endpoints: String(m.endpoints || '').split(/\n/).map((x) => x.trim()).filter((x) => x.startsWith('/')).slice(0, 20),
+      resourceIdA: String(m.resourceIdA || '').trim().slice(0, 200),
+      tokenAEnc: m.tokenA ? enc(String(m.tokenA)) : old.tokenAEnc || '',
+      tokenBEnc: m.tokenB ? enc(String(m.tokenB)) : old.tokenBEnc || '',
+    };
+  }).filter((m) => m.host);
+  return { ok: saveConfig(c), encrypted: safeStorage.isEncryptionAvailable() };
+});
+
 ipcMain.handle('api:regenerateToken', () => { const c = loadConfig(); c.apiToken = crypto.randomBytes(24).toString('base64url'); saveConfig(c); return { token: c.apiToken }; });
 
 // --- Ollama-Verwaltung --------------------------------------------------
@@ -322,7 +404,7 @@ ipcMain.handle('meta:rules', () => ruleNames());
 
 ipcMain.handle('report:save', async (_e, { format }) => {
   if (!lastResult) return { ok: false, error: 'Noch kein Ergebnis vorhanden.' };
-  const ext = format === 'md' ? 'md' : format === 'sarif' ? 'sarif' : format === 'pdf' ? 'pdf' : 'html';
+  const ext = format === 'md' ? 'md' : format === 'sarif' ? 'sarif' : format === 'pdf' ? 'pdf' : format === 'json' ? 'json' : 'html';
   const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
   const r = await dialog.showSaveDialog(win, {
     defaultPath: path.join(app.getPath('documents'), `vigil-report-${stamp}.${ext}`),
@@ -334,7 +416,7 @@ ipcMain.handle('report:save', async (_e, { format }) => {
     catch (err) { return { ok: false, error: err.message }; }
   }
   const content = ext === 'md' ? report.toMarkdown(lastResult)
-    : ext === 'sarif' ? report.toSarif(lastResult) : report.toHtml(lastResult);
+    : ext === 'sarif' ? report.toSarif(lastResult) : ext === 'json' ? report.toJson(lastResult, orchestrator.stats()) : report.toHtml(lastResult);
   try { fs.writeFileSync(r.filePath, content, 'utf8'); return { ok: true, path: r.filePath }; }
   catch (err) { return { ok: false, error: err.message }; }
 });

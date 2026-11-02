@@ -189,6 +189,7 @@
               <button id="exportMdBtn" class="btn small">Markdown</button>
               <button id="exportSarifBtn" class="btn small" title="SARIF 2.1.0 – lädt direkt in VS Code, GitHub Code Scanning, CI u. a.">SARIF</button>
               <button id="exportPdfBtn" class="btn small" title="Bericht als PDF – gut zum Teilen oder Archivieren.">PDF</button>
+              <button id="exportJsonBtn" class="btn small" title="Maschinenlesbar inkl. Sicherheitswert, Angriffspfaden und Lösungen.">JSON</button>
             </div>
           </div>
         </div>
@@ -210,8 +211,15 @@
    <!-- Übersicht: alle Ziele und Befunde über alle Läufe -->
    <div id="dashView" hidden>
     <section class="intro">
-      <h1>Übersicht</h1>
-      <p class="lede" id="dashSummary"></p>
+      <div class="posture-row">
+        <div id="dashScore" class="score" role="img" aria-label="Sicherheitswert"><div class="score-inner"><span class="score-grade" id="dashGrade">–</span><span class="score-label" id="dashScoreLabel">Sicherheitswert</span></div></div>
+        <div>
+          <h1>Übersicht</h1>
+          <p class="lede" id="dashSummary"></p>
+          <p class="intel-line" id="intelLine"></p>
+        </div>
+      </div>
+      <div id="dashToxic"></div>
     </section>
     <div class="stats dash-stats" id="dashStats"></div>
 
@@ -251,7 +259,21 @@
         </select>
       </div>
       <p id="dashTargetFilter" class="target-filter" hidden>Nur Ziel: <b id="dashTargetName"></b> <button id="dashTargetClear" class="btn ghost tiny">✕ Filter entfernen</button></p>
+      <div class="dash-toggles" id="dashToggles">
+        <button class="fbtn toggle" data-t="newSinceBaseline" title="Nur Befunde, die nach dem Setzen der Baseline neu aufgetaucht sind">Nur neu seit Baseline</button>
+        <button class="fbtn toggle" data-t="toxic">Nur Angriffspfade</button>
+      </div>
       <div id="dashTable" class="ftable-wrap"></div>
+    </section>
+
+    <section class="panel">
+      <header class="panel-head"><h2>Paketsuche (SBOM)</h2></header>
+      <p class="muted small">Neue Lücke in einem Paket gemeldet? Hier siehst du sofort, in welchen geprüften Projekten es steckt – auch in welcher Version.</p>
+      <label class="search" style="margin-top:10px">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input id="sbomSearch" type="search" placeholder="Paket suchen, z. B. lodash oder lodash@4.17" aria-label="Paket suchen" />
+      </label>
+      <div id="sbomResults" class="sbom-results"></div>
     </section>
 
    </div>
@@ -310,6 +332,24 @@
         <div class="set-block">
           <h3>Freigegebene Ziele <span class="infotip" tabindex="0" role="note" data-tip="Webadressen und Server prüft Vigil nur, wenn sie hier stehen oder du sie beim Hinzufügen ausdrücklich bestätigst (dann landen sie automatisch hier). Ein Eintrag example.com gilt auch für Subdomains; *.example.com nur für Subdomains. Die REST-API darf ausschließlich Ziele von dieser Liste prüfen.">i</span></h3>
           <textarea id="allowlistInput" rows="4" spellcheck="false" placeholder="eine Domain oder IP pro Zeile, z. B.&#10;meine-seite.example&#10;192.168.1.20"></textarea>
+        </div>
+        <div class="set-block">
+          <h3>Tiefe Prüfungen &amp; Threat-Intel <span class="infotip" tabindex="0" role="note" data-tip="Für verifizierte Domains (oder interne Adressen) prüft Vigil zusätzlich offene Dateien, SourceMaps, GraphQL, Subdomains aus Zertifikats-Logs und – im Browser – Tokens im Speicher, Drittskripte ohne SRI und unverschlüsselte Aufrufe. KEV/EPSS werden täglich lokal zwischengespeichert.">i</span></h3>
+          <label class="check big"><input type="checkbox" id="domChk" /> Browser-Laufzeitprüfung für verifizierte Webseiten</label>
+          <p class="intel-line" id="intelSettings"></p>
+          <button id="intelSyncBtn" type="button" class="btn small">Threat-Intel jetzt aktualisieren</button>
+        </div>
+        <div class="set-block">
+          <h3>API-Rechtematrix (BOLA/IDOR) <span class="infotip" tabindex="0" role="note" data-tip="Vigil holt mit dem Token von Nutzer A dessen Objekt und versucht denselben GET-Aufruf ohne Anmeldung und mit dem Token von Nutzer B. Bekommt B die Daten von A, fehlt die Rechteprüfung. Nur GET, nur für verifizierte Domains. Tokens werden verschlüsselt gespeichert und nie angezeigt.">i</span></h3>
+          <p class="muted small">Nur mit Test-Konten deiner eigenen Anwendung verwenden.</p>
+          <div class="api-row">
+            <input id="amHost" type="text" placeholder="Host, z. B. app.example.com" />
+            <input id="amResource" type="text" placeholder="Objekt-ID von Nutzer A, z. B. 1042" />
+            <input id="amTokenA" type="password" placeholder="Token Nutzer A (leer = unverändert)" autocomplete="off" />
+            <input id="amTokenB" type="password" placeholder="Token Nutzer B (leer = unverändert)" autocomplete="off" />
+            <textarea id="amEndpoints" spellcheck="false" placeholder="GET-Endpunkte, einer pro Zeile:&#10;/api/invoices/{id}&#10;/api/users/{id}/profile"></textarea>
+          </div>
+          <p id="amStatus" class="muted small"></p>
         </div>
         <div class="set-block">
           <h3>Lokale REST-API <span class="infotip" tabindex="0" role="note" data-tip="Für Skripte und CI auf diesem Rechner: GET /api/stats, /api/targets, /api/findings · PATCH /api/findings/:id/status · POST /api/scans · GET /api/scans/:id. Lauscht nur auf 127.0.0.1, verlangt das Token und prüft nur freigegebene Ziele.">i</span></h3>

@@ -326,7 +326,7 @@ const CHEV = '<svg class="chev" viewBox="0 0 24 24" width="18" height="18" aria-
 function findingCard(f) {
   const srcs = findingSources(f);
   const srcNames = srcs.map(sourceLabel).join(', ');
-  const badges = `${f.isNew && state.lastResult && state.lastResult.hasBaseline ? '<span class="badge-new" title="Seit dem letzten Lauf neu aufgetaucht">neu</span>' : ''}${f.regression ? '<span class="badge-reg" title="War schon als behoben markiert und ist wieder da">wieder da</span>' : ''}${f.status && f.status !== 'OPEN' ? `<span class="badge-status st-${f.status}">${esc(STATUS_LABEL[f.status])}</span>` : ''}`;
+  const badges = `${f.isNew && state.lastResult && state.lastResult.hasBaseline ? '<span class="badge-new" title="Seit dem letzten Lauf neu aufgetaucht">neu</span>' : ''}${f.inCisaKev ? '<span class="badge-kev" title="Steht im CISA-Katalog aktiv ausgenutzter Lücken – höchste Priorität">aktiv ausgenutzt</span>' : ''}${f.epssScore >= 0.1 ? `<span class="badge-epss" title="EPSS: Wahrscheinlichkeit einer Ausnutzung in den nächsten 30 Tagen">EPSS ${Math.round(f.epssScore * 100)} %</span>` : ''}${f.regression ? '<span class="badge-reg" title="War schon als behoben markiert und ist wieder da">wieder da</span>' : ''}${f.status && f.status !== 'OPEN' ? `<span class="badge-status st-${f.status}">${esc(STATUS_LABEL[f.status])}</span>` : ''}`;
   const srcChip = srcs.length > 1
     ? `<span class="src-chip" title="Gefunden von: ${esc(srcNames)}">${esc(srcs.map(sourceLabel).join(' + '))}</span>`
     : `<span>${esc(srcNames)}</span>`;
@@ -347,7 +347,9 @@ function findingCard(f) {
     f.description && `<div class="f-sec${danger ? '' : ' full'}"><h4>Das Problem</h4><p>${esc(f.description)}</p></div>`,
     danger && `<div class="f-sec${f.description ? '' : ' full'}"><h4>Wie gefährlich ist das?</h4><p>${esc(danger)}</p></div>`,
   ].filter(Boolean).join('');
-  const cvss = f.cvss != null ? `<span class="cvss" title="CVSS: standardisierter Schweregrad 0–10"><small>CVSS</small>${esc(Number(f.cvss).toFixed(1))}</span>` : '<span class="col-empty"></span>';
+  // Kontext-Risiko (0–100) statt reinem CVSS – beruecksichtigt KEV, EPSS und Exposition.
+  const risk = f.contextualRiskScore != null ? f.contextualRiskScore : (f.cvss != null ? f.cvss * 10 : null);
+  const cvss = risk != null ? `<span class="cvss risk-${risk >= 85 ? 'crit' : risk >= 65 ? 'high' : risk >= 40 ? 'med' : 'low'}" title="Kontext-Risiko 0–100${f.cvss != null ? ' · CVSS ' + Number(f.cvss).toFixed(1) : ''}${f.epssScore != null ? ' · EPSS ' + Math.round(f.epssScore * 100) + ' %' : ''}"><small>RISIKO</small>${Math.round(risk)}</span>` : '<span class="col-empty"></span>';
   return `
     <div class="card finding sev-${f.severity}${f.suppressed ? ' is-suppressed' : ''}">
       <button class="card-head" aria-expanded="false">
@@ -360,15 +362,62 @@ function findingCard(f) {
         ${ctxRow}
         ${secs ? `<div class="f-cols">${secs}</div>` : ''}
         ${check}
-        ${f.remediation ? `<div class="f-sec fix"><h4>✔ So behebst du es</h4><p>${esc(f.remediation)}</p></div>` : ''}
-        ${f.patch ? `<pre>${esc(f.patch)}</pre>` : ''}
         ${f.evidence ? `<div class="f-sec evidence"><h4>Fundstelle</h4><code>${esc(f.evidence)}</code></div>` : ''}
+        ${solutionBlock(f)}
         <div class="f-foot">
           <span class="muted">${srcs.length > 1 ? 'Gefunden von' : 'Quelle'}: ${esc(srcNames)}${f.confidence ? ' · Sicherheit: ' + esc(CONF_LABEL[f.confidence] || f.confidence) : ''}${f.ruleId ? ' · Regel: ' + esc(f.ruleId) : ''}</span>
           ${f.id ? statusSelect(f.id, f.status || 'OPEN') : ''}
         </div>
       </div></div></div>
     </div>`;
+}
+
+// --- Loesungsteil: Warum, Schritte, Versions-Patch, Schnipsel, Links -------
+const LINK_ICON = { doc: '📘', news: '📰', video: '▶' };
+const SNIP_LABEL = { nginx: 'nginx', apache: 'Apache', caddy: 'Caddy', express: 'Node/Express', node: 'Node.js', php: 'PHP', compose: 'docker-compose', dockerfile: 'Dockerfile', yaml: 'GitHub Actions', sshd_config: 'sshd_config', shell: 'Shell', ufw: 'ufw', fail2ban: 'fail2ban', dns: 'DNS-Eintrag', prisma: 'Prisma', sql: 'SQL', html: 'HTML', vite: 'Vite', webpack: 'webpack', npmrc: '.npmrc', ci: 'CI', certbot: 'certbot', csp: 'CSP', http: 'HTTP', apollo: 'Apollo', yoga: 'GraphQL Yoga', terser: 'terser' };
+function copyBtn(text) { return `<button type="button" class="btn tiny copy-btn" data-copy="${esc(text)}">Kopieren</button>`; }
+function solutionBlock(f) {
+  const parts = [];
+  if (f.explanation) parts.push(`<div class="sol-why"><h4>Warum das wichtig ist</h4><p>${esc(f.explanation)}</p></div>`);
+  const steps = f.steps && f.steps.length ? f.steps : (f.remediation ? [f.remediation] : []);
+  if (steps.length) parts.push(`<div class="sol-steps"><h4>✔ So behebst du es</h4><ol>${steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>${f.remediation && f.steps && f.steps.length && !f.steps.includes(f.remediation) && !/^Siehe /.test(f.remediation) ? `<p class="muted small">Konkret hier: ${esc(f.remediation)}</p>` : ''}</div>`);
+  if (f.versionPatch) {
+    const vp = f.versionPatch;
+    const code = [vp.command, vp.manifest].filter(Boolean).join('\n\n');
+    parts.push(`<div class="sol-patch"><div class="sol-head"><h4>⬆ Versions-Patch · ${esc(vp.title)}</h4>${copyBtn(vp.command || code)}</div><pre>${esc(code)}</pre>${vp.note ? `<p class="muted small">${esc(vp.note)}</p>` : ''}</div>`);
+  }
+  const snips = Object.entries(f.snippets || {});
+  if (f.patch) snips.unshift(['patch', f.patch]);
+  if (snips.length) {
+    parts.push(`<div class="sol-snips"><div class="snip-tabs" role="tablist">${snips.map(([k], i) => `<button type="button" class="snip-tab${i ? '' : ' active'}" data-i="${i}">${esc(k === 'patch' ? 'Vorschlag' : SNIP_LABEL[k] || k)}</button>`).join('')}</div>${snips.map(([, v], i) => `<div class="snip-pane"${i ? ' hidden' : ''}>${copyBtn(v)}<pre>${esc(v)}</pre></div>`).join('')}</div>`);
+  }
+  if (f.links && f.links.length) {
+    parts.push(`<div class="sol-links"><h4>Mehr dazu</h4><div class="link-row">${f.links.slice(0, 10).map((l) => `<button type="button" class="link-chip kind-${esc(l.kind || 'doc')}" data-url="${esc(l.url)}" title="${esc(l.url)}">${LINK_ICON[l.kind] || '🔗'} ${esc(l.label)}</button>`).join('')}</div></div>`);
+  }
+  return parts.length ? `<div class="solution">${parts.join('')}</div>` : '';
+}
+function bindSolutionControls(root) {
+  root.querySelectorAll('.copy-btn').forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Kopiert ✓'; setTimeout(() => { b.textContent = 'Kopieren'; }, 1400); } catch { b.textContent = 'Nicht möglich'; }
+  });
+  root.querySelectorAll('.snip-tabs').forEach((tabs) => tabs.querySelectorAll('.snip-tab').forEach((t) => t.onclick = (e) => {
+    e.stopPropagation();
+    tabs.querySelectorAll('.snip-tab').forEach((x) => x.classList.toggle('active', x === t));
+    tabs.parentElement.querySelectorAll('.snip-pane').forEach((p, i) => { p.hidden = String(i) !== t.dataset.i; });
+  }));
+  root.querySelectorAll('.link-chip').forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    const r = await window.vigil.openLink(b.dataset.url);
+    if (r && r.ok === false) flash(r.error || 'Link nicht erlaubt.');
+  });
+}
+
+// Banner fuer Angriffspfade (Toxic Combinations) – ganz oben, weil am dringendsten.
+function toxicBanner(list) {
+  const toxic = list.filter((f) => /^toxic-/.test(f.ruleId || '') && !f.suppressed);
+  if (!toxic.length) return '';
+  return `<div class="toxic-banner" role="alert"><div class="toxic-ico">⚠</div><div><b>${toxic.length} ${toxic.length === 1 ? 'Angriffspfad' : 'Angriffspfade'} erkannt</b><ul>${toxic.map((t) => `<li>${esc(t.title.replace(/^Angriffspfad:\s*/, ''))}</li>`).join('')}</ul><span class="muted small">Mehrere Schwächen ergeben zusammen einen vollständigen Angriffsweg. Ein Glied zu brechen genügt.</span></div></div>`;
 }
 
 function renderFindings() {
@@ -390,6 +439,8 @@ function renderFindings() {
     if (!items.length) return '';
     return `<div class="group-head sev-${s}">${SEV_LABEL[s]} <span class="gcount">${items.length}</span></div>` + items.map(findingCard).join('');
   }).join('');
+  box.insertAdjacentHTML('afterbegin', toxicBanner(state.lastFindings));
+  bindSolutionControls(box);
   box.querySelectorAll('.card-head').forEach((h) => h.onclick = () => {
     const open = h.parentElement.classList.toggle('open');
     h.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -446,7 +497,7 @@ function renderViewToggles() {
     renderViewToggles(); renderFindings();
   });
 }
-function sourceLabel(s) { return ({ osv: 'Schwachstellen-DB (OSV)', prescan: 'statische Prüfung', webscan: 'Server-Check', nmap: 'nmap', nuclei: 'nuclei', gitleaks: 'gitleaks', trufflehog: 'trufflehog', trivy: 'trivy', grype: 'grype', semgrep: 'semgrep', bandit: 'bandit', checkov: 'checkov', retire: 'retire.js', hadolint: 'hadolint', 'osv-scanner': 'osv-scanner', binary: 'Binary-Analyse', ai: 'KI' })[s] || 'KI'; }
+function sourceLabel(s) { return ({ osv: 'Schwachstellen-DB (OSV)', prescan: 'statische Prüfung', webscan: 'Server-Check', nmap: 'nmap', nuclei: 'nuclei', gitleaks: 'gitleaks', trufflehog: 'trufflehog', trivy: 'trivy', grype: 'grype', semgrep: 'semgrep', bandit: 'bandit', checkov: 'checkov', retire: 'retire.js', hadolint: 'hadolint', 'osv-scanner': 'osv-scanner', binary: 'Binary-Analyse', ai: 'KI', 'supply-chain-audit': 'Lieferkette', 'container-host-audit': 'Container-Prüfung', 'semgrep-custom-sast': 'Code-Regeln', 'llm-prompt-security': 'KI-Sicherheit', 'linux-host-audit': 'Server-Konfig', 'web-exposure-audit': 'Web-Exposure', 'web-tls-posture': 'Web/TLS', 'dns-mail-drift': 'DNS & Mail', 'headless-dom-audit': 'Browser-Prüfung', 'api-auth-matrix': 'API-Rechtematrix', correlator: 'Angriffspfad-Analyse' })[s] || s || 'KI'; }
 
 // --- Scan-Verlauf -------------------------------------------------------
 async function openHistory() {
@@ -721,7 +772,8 @@ async function loadCloudModels(id) {
 }
 
 // --- Uebersicht (Dashboard über alle Läufe) ------------------------------
-const dash = { status: 'OPEN,IN_PROGRESS', severity: '', targetId: '', q: '' };
+const dash = { status: 'OPEN,IN_PROGRESS', severity: '', targetId: '', q: '', newSinceBaseline: false, toxic: false };
+const gradeOf = (score) => (score >= 92 ? 'A' : score >= 78 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : score >= 20 ? 'E' : 'F');
 const RUN_LABEL = { QUEUED: 'wartet', RUNNING: 'läuft', COMPLETED: 'fertig', FAILED: 'fehlgeschlagen' };
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '–');
 
@@ -743,6 +795,18 @@ async function loadDashboard() {
     ? `${stats.openTotal} ${stats.openTotal === 1 ? 'Befund ist' : 'Befunde sind'} offen über ${stats.targets.length} ${stats.targets.length === 1 ? 'Ziel' : 'Ziele'}. ${stats.byStatus.RESOLVED || 0} behoben, ${(stats.byStatus.FALSE_POSITIVE || 0) + (stats.byStatus.ACCEPTED_RISK || 0)} als Fehlalarm oder akzeptiertes Risiko markiert.`
     : (stats.targets.length ? 'Keine offenen Befunde – alles im grünen Bereich.' : 'Noch keine Prüfungen gespeichert. Starte unter „Prüfen“ deinen ersten Lauf.');
   $('dashStatus').querySelectorAll('.fbtn').forEach((b) => b.classList.toggle('active', b.dataset.s === dash.status));
+  // Sicherheitswert, Angriffspfade, Threat-Intel
+  const sc = $('dashScore');
+  sc.style.setProperty('--p', stats.posture);
+  sc.style.setProperty('--tone', stats.posture >= 78 ? 'var(--low)' : stats.posture >= 50 ? 'var(--med)' : 'var(--crit)');
+  $('dashGrade').textContent = stats.targets.length ? gradeOf(stats.posture) : '–';
+  $('dashScoreLabel').textContent = stats.targets.length ? `${stats.posture} / 100` : 'Sicherheitswert';
+  $('dashToxic').innerHTML = stats.toxic.length ? `<div class="toxic-banner" role="alert"><div class="toxic-ico">⚠</div><div><b>${stats.toxic.length} ${stats.toxic.length === 1 ? 'Angriffspfad' : 'Angriffspfade'} offen</b><ul>${stats.toxic.map((t) => `<li>${esc(t.title.replace(/^Angriffspfad:\s*/, ''))} <span class="muted small">· ${esc(t.targetName)}</span></li>`).join('')}</ul></div></div>` : '';
+  try {
+    const it = await window.vigil.intelStatus();
+    $('intelLine').textContent = `${stats.kev ? `${stats.kev} offene Lücke(n) werden aktiv ausgenutzt (CISA KEV). ` : ''}${stats.newSinceBaseline} offen seit Baseline · Threat-Intel ${it.updatedAt ? 'vom ' + fmtDate(it.updatedAt) + ` (${it.kev} KEV, ${it.epss} EPSS)` : 'noch nicht geladen'}`;
+  } catch { /* Vorschau */ }
+  $('dashToggles').querySelectorAll('.fbtn').forEach((b) => b.classList.toggle('active', !!dash[b.dataset.t]));
   renderDashTargets(stats.targets);
   renderDashRuns(stats.runs);
   renderDashTable(findings, stats.targets);
@@ -760,10 +824,39 @@ function renderDashTargets(targets) {
       ${t.type === 'url' || t.type === 'endpoint' ? `<span class="verified${t.verified ? '' : ' no'}" title="${t.verified ? 'Freigegeben' : 'Nicht freigegeben'}">${t.verified ? 'freigegeben' : 'nicht freigegeben'}</span>` : ''}
       <span class="tgt-pills">${pills}</span>
       <span class="muted small tgt-when">${fmtDate(t.lastScanAt)}</span>
-      <button class="btn tiny rescan" data-id="${esc(t.id)}">Erneut prüfen</button>
+      <span class="tgt-actions">
+        ${(t.type === 'url' || t.type === 'endpoint') && !t.ownershipVerified ? `<button class="btn tiny verify" data-id="${esc(t.id)}" title="Für tiefe Prüfungen (offene Dateien, SourceMaps, Browser, API) Domain-Besitz nachweisen">Verifizieren</button>` : ''}
+        ${t.ownershipVerified ? '<span class="verified" title="Domain-Besitz nachgewiesen">✓ verifiziert</span>' : ''}
+        <button class="btn tiny baseline" data-id="${esc(t.id)}" title="Alle derzeit offenen Befunde als bekannt markieren – danach zeigt „Nur neu seit Baseline“ nur Neues">Baseline</button>
+        <button class="btn tiny rescan" data-id="${esc(t.id)}">Erneut prüfen</button>
+      </span>
+      <div class="verify-box" id="vb-${esc(t.id)}" hidden></div>
     </div>`;
   }).join('');
   box.querySelectorAll('.tgt-name').forEach((b) => b.onclick = () => { dash.targetId = dash.targetId === b.dataset.filter ? '' : b.dataset.filter; loadDashboard(); });
+  box.querySelectorAll('.baseline').forEach((b) => b.onclick = async () => {
+    const r = await window.vigil.setBaseline(b.dataset.id);
+    b.textContent = r.ok ? `✓ ${r.count} gemerkt` : 'Fehler';
+    setTimeout(loadDashboard, 900);
+  });
+  box.querySelectorAll('.verify').forEach((b) => b.onclick = async () => {
+    const vb = $('vb-' + b.dataset.id);
+    const info = await window.vigil.targetInfo(b.dataset.id);
+    const t = info.target;
+    let host = t.identifier; try { host = new URL(t.identifier).hostname; } catch { /* Server */ }
+    const dom = host.split('.').slice(-2).join('.');
+    vb.hidden = false;
+    vb.innerHTML = `Lege <b>eine</b> der beiden Varianten an und klicke dann auf „Jetzt prüfen“:<br>
+      1. DNS-TXT-Eintrag <code>_sec-audit-verify.${esc(dom)}</code> mit dem Wert <code>${esc(t.verificationToken)}</code><br>
+      2. Datei <code>https://${esc(host)}/.well-known/sec-audit.txt</code> mit dem Inhalt <code>${esc(t.verificationToken)}</code><br>
+      <button class="btn tiny" id="vbtn-${esc(t.id)}" style="margin-top:8px">Jetzt prüfen</button> <span id="vst-${esc(t.id)}"></span>`;
+    $('vbtn-' + t.id).onclick = async () => {
+      $('vst-' + t.id).textContent = 'Prüfe …';
+      const r = await window.vigil.verifyTarget(t.id);
+      $('vst-' + t.id).textContent = r.ok ? `✓ Verifiziert (${r.method})` : r.error;
+      if (r.ok) setTimeout(loadDashboard, 800);
+    };
+  });
   box.querySelectorAll('.rescan').forEach((b) => b.onclick = () => {
     const t = targets.find((x) => x.id === b.dataset.id);
     if (!t) return;
@@ -815,6 +908,14 @@ function renderSettings() {
   $('activeChk').checked = !!state.config.activeScan;
   $('validateChk').checked = state.config.aiValidation !== false;
   $('redactChk').checked = state.config.redactSecrets !== false;
+  $('domChk').checked = state.config.domAudit !== false;
+  window.vigil.intelStatus().then((it) => { $('intelSettings').textContent = it.updatedAt ? `Stand ${fmtDate(it.updatedAt)} · ${it.kev} aktiv ausgenutzte CVEs · ${it.epss} EPSS-Werte` : 'Noch nicht geladen – wird automatisch täglich aktualisiert.'; }).catch(() => {});
+  window.vigil.apiMatrixGet().then((list) => {
+    const m = list[0] || {};
+    $('amHost').value = m.host || ''; $('amResource').value = m.resourceIdA || ''; $('amEndpoints').value = (m.endpoints || []).join('\n');
+    $('amTokenA').value = ''; $('amTokenB').value = '';
+    $('amStatus').textContent = m.host ? `Gespeichert für ${m.host}: Token A ${m.hasTokenA ? '✓' : '–'}, Token B ${m.hasTokenB ? '✓' : '–'}` : 'Noch nicht eingerichtet.';
+  }).catch(() => {});
   $('allowlistInput').value = (state.config.allowlist || []).join('\n');
   $('apiChk').checked = !!state.config.apiEnabled;
   $('apiPort').value = state.config.apiPort || 7811;
@@ -847,6 +948,11 @@ function collectSettings() {
   state.config.activeScan = $('activeChk').checked;
   state.config.aiValidation = $('validateChk').checked;
   state.config.redactSecrets = $('redactChk').checked;
+  state.config.domAudit = $('domChk').checked;
+  // API-Rechtematrix separat speichern – Tokens gehen verschluesselt in den Main-Prozess
+  if ($('amHost').value.trim() || $('amEndpoints').value.trim()) {
+    window.vigil.apiMatrixSave([{ host: $('amHost').value, resourceIdA: $('amResource').value, endpoints: $('amEndpoints').value, tokenA: $('amTokenA').value, tokenB: $('amTokenB').value }]);
+  }
   state.config.allowlist = $('allowlistInput').value.split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
   state.config.apiEnabled = $('apiChk').checked;
   state.config.apiPort = Math.min(65535, Math.max(1024, parseInt($('apiPort').value, 10) || 7811));
@@ -939,6 +1045,21 @@ async function init() {
   let dashTimer = null;
   $('dashSearch').addEventListener('input', () => { clearTimeout(dashTimer); dashTimer = setTimeout(() => { dash.q = $('dashSearch').value; loadDashboard(); }, 200); });
   $('dashTargetClear').onclick = () => { dash.targetId = ''; loadDashboard(); };
+  $('dashToggles').querySelectorAll('.fbtn').forEach((b) => b.onclick = () => { dash[b.dataset.t] = !dash[b.dataset.t]; loadDashboard(); });
+  let sbomTimer = null;
+  $('sbomSearch').addEventListener('input', () => {
+    clearTimeout(sbomTimer);
+    sbomTimer = setTimeout(async () => {
+      const q = $('sbomSearch').value.trim();
+      if (q.length < 2) { $('sbomResults').innerHTML = ''; return; }
+      const hits = await window.vigil.searchSbom(q);
+      $('sbomResults').innerHTML = hits.length
+        ? hits.map((h) => `<div class="sbom-hit"><code>${esc(h.name)}@${esc(h.version || '?')}</code><span class="muted small">${esc(h.ecosystem || '')}</span><span>${esc(h.targetName)}</span></div>`).join('')
+        : '<p class="muted small">Nicht gefunden – in keinem geprüften Projekt im Einsatz.</p>';
+    }, 180);
+  });
+  $('exportJsonBtn').onclick = exportAs('json');
+  $('intelSyncBtn').onclick = async () => { $('intelSettings').textContent = 'Lade CISA KEV und EPSS …'; const r = await window.vigil.syncIntel(); $('intelSettings').textContent = r.ok ? (r.notes || []).join(' · ') || 'Aktuell.' : 'Fehler: ' + r.error; };
   $('apiRegen').onclick = async () => { await window.vigil.regenerateApiToken(); refreshApiInfo(); };
   $('apiCopy').onclick = async () => { try { await navigator.clipboard.writeText($('apiToken').value); $('apiStatus').textContent = 'Token kopiert.'; } catch { $('apiToken').select(); } };
   $('apiTokenToggle').onclick = () => { const i = $('apiToken'); i.type = i.type === 'password' ? 'text' : 'password'; };

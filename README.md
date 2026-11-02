@@ -62,6 +62,32 @@ Taucht ein behobener Befund wieder auf, steht er erneut auf „Offen“ und ist 
 
 Die **Übersicht** zeigt offene Befunde nach Schweregrad, alle Ziele mit „Erneut prüfen“, die letzten Läufe und eine filterbare Befundtabelle mit Statuswahl.
 
+## Audit-Module
+
+| Modul | prüft |
+| --- | --- |
+| Web/TLS (`web-tls-posture`) | Zertifikat (< 14 Tage hoch, < 30 mittel), alte Protokolle/Chiffren, HSTS, CSP (`unsafe-*`, `*`), COOP, Cookies, CORS inkl. sicherem Reflection-Test |
+| Web-Exposure | 404-Canary gegen SPA-Fehlalarme, offene `.env`/`.git`/Compose/Actuator, SourceMaps, GraphQL-Introspection |
+| DNS & Mail | SPF, DMARC, DKIM, CAA, verwaiste CNAMEs (Subdomain-Takeover) inkl. Subdomains aus CT-Logs |
+| Browser-Laufzeit | Tokens im localStorage, Drittskripte ohne SRI, `http://`/`ws://` aus HTTPS, Konsolen-Leaks (unsichtbares, isoliertes Fenster, nur lesend) |
+| API-Rechtematrix | BOLA/IDOR: Nutzer B bzw. anonym liest Objekt von Nutzer A (nur GET, Tokens verschlüsselt gespeichert) |
+| Lieferkette & CI | Lockfile/Integrität, fremde Registries, Dependency-Confusion, Tippfehler-Pakete, Install-Skripte, Docker-Digest, GitHub-Actions-Pinning, `write-all`, `pull_request_target` |
+| Container | privileged, Docker-Socket, root, Host-Netz, SYS_ADMIN, `cap_drop`, `no-new-privileges`, öffentliche DB-Ports |
+| Code-Regeln | Race Conditions, `Math.random()` für Tokens, schwache Krypto, Timing-Vergleiche, JWT ohne Prüfung/Ablauf, Prototype Pollution, ReDoS, SSRF, Mass Assignment |
+| KI-/LLM-Sicherheit | Nutzereingabe im System-Prompt, KI-Ausgabe in `eval`/HTML, offene Ollama/vLLM-Server |
+| Server-Konfiguration | `sshd_config`, Rechte sensibler Dateien (Linux/macOS) |
+| trivy / semgrep / gitleaks u. a. | wie bisher, plus Container-Images (`--image`) |
+
+Tiefe Web-Prüfungen (offene Dateien, SourceMaps, GraphQL, CT-Logs, Browser, API-Matrix) laufen nur für **verifizierte** Domains (DNS-TXT `_sec-audit-verify.<domain>` oder `/.well-known/sec-audit.txt` mit dem Token aus der Übersicht) oder interne Adressen. Drosselt ein Ziel (3× 429/503/403), bricht das Modul ab (`THROTTLED_ABORTED`), damit deine IP nicht gesperrt wird.
+
+## Risiko, Angriffspfade, Lösungen
+
+- **Threat-Intel:** CISA KEV und FIRST EPSS werden täglich lokal zwischengespeichert; Scans schlagen nur lokal nach.
+- **Kontext-Risiko 0–100:** CVSS×10, KEV → mind. 95, EPSS > 50 % → +10, nicht internet-erreichbar ×0,75, Test-/Dev-Code ×0,4.
+- **Angriffspfade:** Container-Ausbruch, SourceMap → API, Sitzungsübernahme, öffentliche Datenbank ohne Firewall – mehrere Befunde werden zu einem kritischen Pfad verknüpft.
+- **Lösungen:** Jede Regel hat eine verständliche Begründung, Schritte, kopierfertige Schnipsel (nginx, Apache, Caddy, Docker, sshd, DNS …) und Links (OWASP/MDN/NVD/OSV, Suchlinks zu heise und YouTube). Verwundbare Pakete bekommen einen **Versions-Patch** auf die erste behobene Version.
+- **Baseline & SBOM:** „Baseline“ markiert den aktuellen Stand als bekannt; „Nur neu seit Baseline“ zeigt nur Neues. Die Paketsuche beantwortet „Wo steckt Paket X in Version Y?“.
+
 ## Scope & Sicherheit
 
 - Webadressen und Server werden nur geprüft, wenn sie auf der **Freigabeliste** stehen (Einstellungen) oder beim Hinzufügen ausdrücklich bestätigt werden. Bestätigte Hosts kommen automatisch auf die Liste. `example.com` gilt auch für Subdomains, `*.example.com` nur für Subdomains.

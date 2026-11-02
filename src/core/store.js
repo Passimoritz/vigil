@@ -61,6 +61,12 @@ function upsertTarget(store, t, now) {
     type: t.type,
     identifier: String(t.value),
     verified: t.type === 'path' || t.type === 'image' || !!t.authorized || !!(prev && prev.verified),
+    // Domain-Nachweis (DNS-TXT oder .well-known) – noetig fuer tiefe Web-Pruefungen
+    ownershipVerified: !!(t.ownershipVerified || (prev && prev.ownershipVerified)),
+    verificationToken: (prev && prev.verificationToken) || crypto.randomBytes(12).toString('hex'),
+    internetExposed: prev && prev.internetExposed != null ? prev.internetExposed : (t.type === 'url' || t.type === 'endpoint'),
+    environment: (prev && prev.environment) || 'PRODUCTION',
+    baselineTimestamp: (prev && prev.baselineTimestamp) || null,
     createdAt: prev ? prev.createdAt : now,
     updatedAt: now,
     lastScanAt: now,
@@ -120,19 +126,39 @@ function applyRun(store, run) {
     if (!prev) { isNew = true; counters.created++; }
     else if (prev.status === 'RESOLVED') { regression = true; counters.reopened++; }
     else { status = prev.status; counters.updated++; }
+    const isBaselineLegacy = prev ? !!prev.isBaselineLegacy : false;
     store.findings[fp] = {
       id: fp, fingerprint: fp, targetId,
-      sourceScanner: primarySource(f), ruleId: f.ruleId || '', title: f.title, severity: f.severity,
-      cvssScore: f.cvss ?? null, location: f.location, evidence: f.evidence || (prev && prev.evidence) || undefined,
+      sourceScanner: primarySource(f), sourceModule: f.sourceModule || primarySource(f), category: f.category,
+      ruleId: f.ruleId || '', title: f.title, severity: f.severity,
+      cvssScore: f.cvss ?? null, epssScore: f.epssScore ?? null, inCisaKev: !!f.inCisaKev,
+      contextualRiskScore: f.contextualRiskScore ?? null,
+      location: f.location, evidence: f.evidence || (prev && prev.evidence) || undefined,
       status,
       statusNote: prev && status === prev.status ? prev.statusNote : (regression ? 'Wieder aufgetaucht (Regression).' : undefined),
+      isBaselineLegacy,
+      linkedFindingIds: [],
       firstSeenAt: prev ? prev.firstSeenAt : now,
       lastSeenAt: now,
+      resolvedAt: status === 'RESOLVED' ? (prev && prev.resolvedAt) : null,
       statusChangedAt: prev && prev.status === status ? prev.statusChangedAt : now,
       finding: snapshot,
     };
-    return { ...f, id: fp, targetId, status, isNew, regression, suppressed: HIDDEN.has(status), firstSeenAt: store.findings[fp].firstSeenAt };
+    return { ...f, id: fp, targetId, status, isNew, regression, isBaselineLegacy, suppressed: HIDDEN.has(status), firstSeenAt: store.findings[fp].firstSeenAt };
   });
+
+  // Angriffspfade: Verknuepfung ueber ruleId@location auf die gespeicherten IDs abbilden.
+  const idByKey = new Map(annotated.map((f) => [`${f.ruleId}@${f.location}`, f.id]));
+  for (const f of annotated) {
+    if (!Array.isArray(f.linkedKeys)) continue;
+    f.linkedFindingIds = f.linkedKeys.map((k) => idByKey.get(k)).filter(Boolean);
+    store.findings[f.id].linkedFindingIds = f.linkedFindingIds;
+  }
+  // SBOM-Inventar je Ziel (letzter Stand) fuer die globale Paketsuche
+  if (Array.isArray(run.sbom) && run.sbom.length) {
+    store.sboms = store.sboms || {};
+    for (const t of runTargets.filter((x) => x.type === 'path' || x.type === 'image')) store.sboms[t.id] = { at: now, packages: run.sbom.slice(0, 5000) };
+  }
 
   // Auto-Resolve: nur fuer Ziel+Scanner-Paare, die in diesem Lauf vollstaendig gelaufen sind.
   const ran = new Set();
@@ -145,11 +171,46 @@ function applyRun(store, run) {
   for (const rec of Object.values(store.findings)) {
     if (rec.status !== 'OPEN' || seen.has(rec.id)) continue;
     if (!ran.has(`${rec.targetId}:${rec.sourceScanner}`)) continue;
-    rec.status = 'RESOLVED'; rec.statusChangedAt = now; rec.statusNote = 'Automatisch behoben: im letzten vollständigen Lauf nicht mehr gefunden.';
+    rec.status = 'RESOLVED'; rec.statusChangedAt = now; rec.resolvedAt = now; rec.statusNote = 'Automatisch behoben: im letzten vollständigen Lauf nicht mehr gefunden.';
     counters.resolved++;
     resolvedNow.push({ id: rec.id, title: rec.title, location: rec.location, severity: rec.severity });
   }
-  return { findings: annotated, counters, resolved: resolvedNow, targetIds: runTargets.map((t) => t.id) };
+  const toxic = annotated.filter((f) => f.toxic && !HIDDEN.has(f.status)).length;
+  return { findings: annotated, counters: { ...counters, toxic }, resolved: resolvedNow, targetIds: runTargets.map((t) => t.id) };
+}
+
+// Baseline: alle derzeit offenen Befunde eines Ziels als "Altlast" markieren –
+// danach zeigt "Neu seit Baseline" nur, was spaeter hinzugekommen ist.
+function setBaseline(store, targetId, now = new Date().toISOString()) {
+  const t = store.targets[targetId];
+  if (!t) return { ok: false, error: 'Ziel nicht gefunden.' };
+  t.baselineTimestamp = now;
+  let n = 0;
+  for (const f of Object.values(store.findings)) if (f.targetId === targetId && ACTIVE.has(f.status)) { f.isBaselineLegacy = true; n++; }
+  return { ok: true, count: n, at: now };
+}
+
+// Globale SBOM-Suche: "lodash" oder "lodash@4.17" -> wo ist das Paket im Einsatz?
+function searchSbom(store, q) {
+  const [name, ver] = String(q || '').trim().toLowerCase().split('@').filter((x, i) => x || i > 0);
+  if (!name) return [];
+  const hits = [];
+  for (const [targetId, s] of Object.entries(store.sboms || {})) {
+    for (const p of s.packages) {
+      if (!String(p.name).toLowerCase().includes(name)) continue;
+      if (ver && !String(p.version).startsWith(ver)) continue;
+      hits.push({ ...p, targetId, targetName: store.targets[targetId] ? store.targets[targetId].name : '?', at: s.at });
+      if (hits.length >= 200) return hits;
+    }
+  }
+  return hits;
+}
+
+function setTargetMeta(store, targetId, patch) {
+  const t = store.targets[targetId];
+  if (!t) return { ok: false, error: 'Ziel nicht gefunden.' };
+  for (const k of ['ownershipVerified', 'internetExposed', 'environment', 'maxRequestsPerSecond']) if (k in patch) t[k] = patch[k];
+  return { ok: true, target: t };
 }
 
 // --- Status & Abfragen -----------------------------------------------------
@@ -157,7 +218,7 @@ function setStatus(store, id, status, note) {
   if (!FINDING_STATUSES.includes(status)) return { ok: false, error: 'Unbekannter Status.' };
   const rec = store.findings[id];
   if (!rec) return { ok: false, error: 'Befund nicht gefunden.' };
-  if (rec.status !== status) { rec.status = status; rec.statusChangedAt = new Date().toISOString(); }
+  if (rec.status !== status) { rec.status = status; rec.statusChangedAt = new Date().toISOString(); rec.resolvedAt = status === 'RESOLVED' ? rec.statusChangedAt : null; }
   rec.statusNote = note || undefined;
   return { ok: true, finding: rec };
 }
@@ -171,7 +232,9 @@ function listFindings(store, filter = {}) {
   if (filter.severity) { const set = new Set(String(filter.severity).toLowerCase().split(',')); list = list.filter((f) => set.has(f.severity)); }
   if (filter.targetId) list = list.filter((f) => f.targetId === filter.targetId);
   if (q) list = list.filter((f) => `${f.title} ${f.location} ${f.ruleId}`.toLowerCase().includes(q));
-  list.sort((a, b) => (SEV_ORDER[a.severity] - SEV_ORDER[b.severity]) || String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)));
+  if (filter.newSinceBaseline) list = list.filter((f) => !f.isBaselineLegacy);
+  if (filter.toxic) list = list.filter((f) => /^toxic-/.test(f.ruleId));
+  list.sort((a, b) => (SEV_ORDER[a.severity] - SEV_ORDER[b.severity]) || ((b.contextualRiskScore || 0) - (a.contextualRiskScore || 0)) || String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)));
   const limit = Math.max(1, Math.min(Number(filter.limit) || 500, 5000));
   return list.slice(0, limit).map((f) => ({ ...f, targetName: store.targets[f.targetId] ? store.targets[f.targetId].name : '?' }));
 }
@@ -191,7 +254,14 @@ function stats(store) {
   const targets = Object.values(store.targets)
     .map((t) => ({ ...t, open: perTarget[t.id] || { critical: 0, high: 0, medium: 0, low: 0, info: 0, total: 0 } }))
     .sort((a, b) => String(b.lastScanAt).localeCompare(String(a.lastScanAt)));
-  return { open, openTotal: Object.values(open).reduce((a, b) => a + b, 0), byStatus, targets, runs: store.runs.slice(0, 20) };
+  const active = Object.values(store.findings).filter((f) => ACTIVE.has(f.status));
+  const toxic = active.filter((f) => /^toxic-/.test(f.ruleId)).map((f) => ({ id: f.id, title: f.title, targetId: f.targetId, targetName: store.targets[f.targetId] ? store.targets[f.targetId].name : '?', linkedFindingIds: f.linkedFindingIds || [], location: f.location }));
+  const kev = active.filter((f) => f.inCisaKev).length;
+  // Sicherheitswert 0–100: Abzug je offenem Befund nach Schweregrad, Angriffspfade und KEV wiegen extra.
+  const penalty = open.critical * 12 + open.high * 6 + open.medium * 2 + open.low * 0.5 + toxic.length * 15 + kev * 8;
+  const posture = Math.max(0, Math.round(100 - penalty));
+  const newSinceBaseline = active.filter((f) => !f.isBaselineLegacy).length;
+  return { open, openTotal: Object.values(open).reduce((a, b) => a + b, 0), byStatus, targets, runs: store.runs.slice(0, 20), toxic, kev, posture, newSinceBaseline, sbomTargets: Object.keys(store.sboms || {}).length };
 }
 
 // --- Laeufe -------------------------------------------------------------------
@@ -206,4 +276,4 @@ function updateRun(store, id, patch) {
   return r;
 }
 
-module.exports = { emptyStore, load, save, targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, setStatus, listFindings, stats, addRun, updateRun, HIDDEN };
+module.exports = { emptyStore, load, save, targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };

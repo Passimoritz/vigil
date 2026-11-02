@@ -807,6 +807,67 @@ main > * { max-width: none; }
 .setup-col, .work-col { min-width: 0; }
 @media (max-width: 1180px) { .workspace { grid-template-columns: minmax(0, 1fr); } }
 
+/* --- Loesungsteil ----------------------------------------------------------- */
+.solution { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.solution h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.sol-why { padding: 12px 14px; border-radius: var(--radius-sm); background: var(--panel-3); border-left: 3px solid var(--accent); }
+.sol-why p { margin: 0; line-height: 1.6; }
+.sol-steps { padding: 12px 14px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--low) 8%, transparent); border: 1px solid color-mix(in srgb, var(--low) 25%, transparent); }
+.sol-steps h4 { color: var(--low); }
+.sol-steps ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; line-height: 1.55; }
+.sol-steps p { margin: 8px 0 0; }
+.sol-patch { padding: 12px 14px; border-radius: var(--radius-sm); background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.sol-patch h4 { color: var(--accent); margin: 0; }
+.sol-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.sol-patch pre, .snip-pane pre { margin: 0; }
+.sol-snips { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+.snip-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 4px; background: var(--panel-3); border-bottom: 1px solid var(--line-soft); }
+.snip-tab { font: inherit; font-size: 12px; font-weight: 600; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 4px 10px; cursor: pointer; }
+.snip-tab:hover { color: var(--text-strong); }
+.snip-tab.active { color: var(--text-strong); background: var(--panel); border-color: var(--line); }
+.snip-pane { position: relative; }
+.snip-pane pre { border: none; border-radius: 0; padding-right: 90px; }
+.snip-pane .copy-btn { position: absolute; top: 8px; right: 8px; z-index: 1; }
+.card-body .snip-pane pre { margin: 0; }
+.link-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.link-chip { font: inherit; font-size: 12px; font-weight: 550; color: var(--text); background: var(--panel-3); border: 1px solid var(--line-soft); border-radius: 99px; padding: 4px 11px; cursor: pointer; transition: border-color .14s, color .14s; }
+.link-chip:hover { border-color: color-mix(in srgb, var(--accent) 50%, transparent); color: var(--text-strong); }
+.link-chip.kind-news { border-color: color-mix(in srgb, var(--high) 30%, transparent); }
+.link-chip.kind-video { border-color: color-mix(in srgb, var(--crit) 30%, transparent); }
+
+/* Risiko-Chip und Threat-Intel-Badges */
+.cvss.risk-crit { color: #fff; background: var(--crit); }
+.cvss.risk-crit small { color: rgba(255,255,255,.8); }
+.cvss.risk-high { color: var(--high); background: color-mix(in srgb, var(--high) 15%, transparent); }
+.cvss.risk-med { color: var(--med); background: color-mix(in srgb, var(--med) 14%, transparent); }
+.badge-kev { display: inline-block; padding: 0 8px; border-radius: 99px; font-size: 11px; font-weight: 800; line-height: 18px; color: #fff; background: var(--crit); letter-spacing: .02em; }
+.badge-epss { display: inline-block; padding: 0 8px; border-radius: 99px; font-size: 11px; font-weight: 700; line-height: 18px; color: var(--high); background: color-mix(in srgb, var(--high) 14%, transparent); }
+
+/* Angriffspfad-Banner */
+.toxic-banner {
+  display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; margin-bottom: 14px;
+  border-radius: var(--radius-md); border: 1px solid color-mix(in srgb, var(--crit) 55%, transparent);
+  background: radial-gradient(400px 120px at 0% 0%, color-mix(in srgb, var(--crit) 22%, transparent), transparent 70%), color-mix(in srgb, var(--crit) 6%, var(--panel-2));
+}
+.toxic-ico { width: 34px; height: 34px; flex: none; border-radius: 10px; display: grid; place-items: center; font-size: 18px; color: #fff; background: var(--crit); }
+.toxic-banner b { color: var(--text-strong); font-size: 14.5px; }
+.toxic-banner ul { margin: 6px 0 6px; padding-left: 18px; color: var(--text); }
+
+/* Uebersicht: Sicherheitswert, Baseline, Verifizierung, SBOM */
+.posture-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px; align-items: center; margin-bottom: 14px; }
+.posture-row .score { width: 104px; height: 104px; }
+.dash-toggles { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.tgt-actions { display: flex; gap: 6px; }
+.verify-box { margin-top: 8px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--panel-3); font-size: 12.5px; color: var(--muted); grid-column: 1 / -1; }
+.verify-box code { user-select: all; }
+.sbom-results { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow: auto; }
+.sbom-hit { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; padding: 7px 10px; border-radius: 8px; background: var(--panel-2); font-size: 13px; }
+.sbom-hit code { background: none; padding: 0; }
+.intel-line { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.api-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.api-row textarea { grid-column: 1 / -1; min-height: 64px; }
+@media (max-width: 760px) { .posture-row { grid-template-columns: 1fr; } .api-row { grid-template-columns: 1fr; } .sbom-hit { grid-template-columns: 1fr; } }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
