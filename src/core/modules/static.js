@@ -233,6 +233,7 @@ function linuxStatic(units) {
 const { runIac } = require('./iac');
 const { runLicense } = require('./license');
 const { runLangs } = require('./langs');
+const { runMobile } = require('./mobile');
 
 const MODULES = [
   { id: 'supply-chain-audit', label: 'Lieferkette & CI', run: supplyChain },
@@ -242,6 +243,7 @@ const MODULES = [
   { id: 'linux-host-audit', label: 'Server-Konfiguration', run: linuxStatic },
   { id: 'iac-audit', label: 'Server-Einrichtung als Code (Terraform, Kubernetes …)', run: runIac },
   { id: 'license-audit', label: 'Lizenzen der Pakete', run: runLicense },
+  { id: 'mobile-audit', label: 'Handy-Apps (Android, iOS)', run: runMobile },
   { id: 'lang-rules', label: 'Regeln für Go, Rust, C#, PHP, Kotlin, Swift', run: runLangs },
 ];
 

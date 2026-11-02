@@ -472,7 +472,7 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
       U('app/safe.js', 'const t = crypto.randomBytes(32);\nif (timingSafeEqual(a, b)) {}\njwt.verify(t, k);\n'),
     ]);
     const ids = new Set(r.findings.map((f) => f.ruleId));
-    check('static: alle 8 Module gelaufen', r.ran.length === 8 && !r.errors.length);
+    check('static: alle 9 Module gelaufen', r.ran.length === 9 && !r.errors.length);
     check('static: Typosquat (vertauscht) erkannt', ids.has('typosquat-suspect') && lev1('lodahs', 'lodash') && !lev1('react', 'redux'));
     check('static: Compose privileged + Socket + DB-Port', ['container-privileged', 'container-docker-sock', 'container-db-port-public'].every((x) => ids.has(x)));
     check('static: Dockerfile latest + root', ids.has('docker-latest-tag') && ids.has('dockerfile-root-user'));
@@ -673,6 +673,48 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const log = '@@C abc1234def|Mia|2025-03-01\ndiff --git a/.env b/.env\n+++ b/.env\n+AWS_KEY=AKIAABCDEFGHIJKLMNOP\n@@C 999|Mia|2025-03-02\n+++ /dev/null\n';
     const hits = scanLog(log);
     check('git-historie: alter AWS-Schlüssel mit Datei und Commit', hits.length === 1 && hits[0].file === '.env' && hits[0].commit.hash === 'abc1234def');
+  }
+
+  // --- Handy-Apps und System-Pruefungen ---
+  {
+    const { decodeAxml, decodeBplist, runMobile } = require('../src/core/modules/mobile');
+    const h = require('../src/core/hostaudit');
+    // Minimales binaeres AndroidManifest (UTF-16-Stringpool, zwei Elemente) zusammenbauen
+    const strs = ['manifest', 'application', 'debuggable', 'usesCleartextTraffic', 'activity', 'exported', 'name', '.AdminActivity'];
+    const enc = strs.map((s) => { const b = Buffer.alloc(2 + s.length * 2 + 2); b.writeUInt16LE(s.length, 0); b.write(s, 2, 'utf16le'); return b; });
+    const offs = []; let o = 0; for (const e of enc) { offs.push(o); o += e.length; }
+    const poolData = Buffer.concat(enc); const pad = (4 - (poolData.length % 4)) % 4;
+    const poolHdr = Buffer.alloc(28 + strs.length * 4);
+    poolHdr.writeUInt16LE(0x0001, 0); poolHdr.writeUInt16LE(28, 2); poolHdr.writeUInt32LE(strs.length, 8); poolHdr.writeUInt32LE(0, 16); poolHdr.writeUInt32LE(28 + strs.length * 4, 20);
+    offs.forEach((x, i) => poolHdr.writeUInt32LE(x, 28 + i * 4));
+    const pool = Buffer.concat([poolHdr, poolData, Buffer.alloc(pad)]); pool.writeUInt32LE(pool.length, 4);
+    const el = (name, attrs) => { const b = Buffer.alloc(36 + attrs.length * 20); b.writeUInt16LE(0x0102, 0); b.writeUInt16LE(16, 2); b.writeUInt32LE(b.length, 4); b.writeInt32LE(-1, 16); b.writeUInt32LE(name, 20); b.writeUInt16LE(20, 24); b.writeUInt16LE(20, 26); b.writeUInt16LE(attrs.length, 28);
+      attrs.forEach(([n, val, str], i) => { const a = 36 + i * 20; b.writeInt32LE(-1, a); b.writeUInt32LE(n, a + 4); b.writeInt32LE(str ?? -1, a + 8); b.writeUInt16LE(8, a + 12); b[a + 15] = str != null ? 0x03 : 0x12; b.writeUInt32LE(str ?? (val ? 0xffffffff : 0), a + 16); }); return b; };
+    const end = (name) => { const b = Buffer.alloc(24); b.writeUInt16LE(0x0103, 0); b.writeUInt16LE(16, 2); b.writeUInt32LE(24, 4); b.writeInt32LE(-1, 16); b.writeUInt32LE(name, 20); return b; };
+    const body = Buffer.concat([pool, el(0, []), el(1, [[2, true], [3, true]]), el(4, [[6, 0, 7], [5, true]]), end(4), end(1), end(0)]);
+    const head = Buffer.alloc(8); head.writeUInt16LE(0x0003, 0); head.writeUInt16LE(8, 2); head.writeUInt32LE(8 + body.length, 4);
+    const xml = decodeAxml(Buffer.concat([head, body]));
+    check('mobil: binäres Android-Manifest wird lesbar', /<application android:debuggable="true" android:usesCleartextTraffic="true">/.test(xml || '') && /android:name="\.AdminActivity"/.test(xml));
+    const mids = runMobile([{ label: 'app.apk!/AndroidManifest.xml', content: xml }]).map((f) => f.ruleId);
+    check('mobil: Debug, Klartext und offener Bildschirm erkannt', ['android-debuggable', 'android-cleartext', 'android-exported-component'].every((x) => mids.includes(x)));
+    // bplist00: { NSAppTransportSecurity: true }
+    const bp = Buffer.concat([Buffer.from('bplist00'), Buffer.from([0xd1, 0x01, 0x02]), Buffer.from([0x56]), Buffer.from('UIFile'), Buffer.from([0x09])]);
+    const offsTable = Buffer.from([8, 11, 18]);
+    const trailer = Buffer.alloc(32); trailer[6] = 1; trailer[7] = 1; trailer.writeBigUInt64BE(3n, 8); trailer.writeBigUInt64BE(0n, 16); trailer.writeBigUInt64BE(BigInt(bp.length), 24);
+    check('mobil: binäre Info.plist wird lesbar', /<key>UIFile<\/key>\s*<true\/>/.test(decodeBplist(Buffer.concat([bp, offsTable, trailer])) || ''));
+    const w = h.parseWindows({ defender: { av: true, rt: false }, firewall: [{ name: 'Public', enabled: false }, { name: 'Private', enabled: true }], bitlocker: 2, lastUpdateDays: 120, uac: 1, rdpDeny: 0, rdpNla: 0, smb1: true, guest: false }).map((f) => f.ruleId);
+    check('windows: Virenschutz, Firewall, BitLocker, Updates, RDP, SMBv1', ['win-defender-off', 'win-firewall-off', 'win-bitlocker-off', 'win-updates-old', 'win-rdp-no-nla', 'win-smb1'].every((x) => w.includes(x)) && !w.includes('win-uac-off'));
+    check('windows: sauberer PC ohne Befund', h.parseWindows({ defender: { av: true, rt: true, age: 1, tamper: true }, firewall: [{ name: 'Public', enabled: true }], bitlocker: 1, lastUpdateDays: 10, uac: 1, rdpDeny: 1, smb1: false, guest: false }).length === 0);
+    const d = h.parseDocker([{ Name: '/db', Config: { User: '' }, HostConfig: { Privileged: true, PortBindings: { '5432/tcp': [{ HostIp: '', HostPort: '5432' }] } }, Mounts: [{ Source: '/var/run/docker.sock' }] }]).map((f) => f.ruleId);
+    check('docker: privilegiert, Socket, offener DB-Port, root', ['container-privileged', 'container-docker-sock', 'container-db-port-public', 'container-root-user'].every((x) => d.includes(x)));
+    const aws = h.parseAws({ summary: { SummaryMap: { AccountMFAEnabled: 0, AccountAccessKeysPresent: 0 } }, passwordPolicy: null, buckets: [{ name: 'b1', isPublic: true }], groups: [{ GroupId: 'sg-1', GroupName: 'web', IpPermissions: [{ IpProtocol: 'tcp', FromPort: 3389, ToPort: 3389, IpRanges: [{ CidrIp: '0.0.0.0/0' }] }] }] }).map((f) => f.ruleId);
+    check('aws: root ohne MFA, keine Passwortregel, offener Bucket, RDP offen', ['aws-root-no-mfa', 'aws-no-password-policy', 'cloud-bucket-public', 'cloud-firewall-open'].every((x) => aws.includes(x)));
+    const az = h.parseAzure({ storage: [{ name: 's1', allowBlobPublicAccess: true, minimumTlsVersion: 'TLS1_0' }], nsgs: [{ name: 'n', securityRules: [{ name: 'ssh', direction: 'Inbound', access: 'Allow', sourceAddressPrefix: '*', destinationPortRange: '22' }] }] }).map((f) => f.ruleId);
+    check('azure: öffentlicher Speicher, altes TLS, SSH offen', ['cloud-bucket-public', 'iac-azure-old-tls', 'cloud-firewall-open'].every((x) => az.includes(x)));
+    const gcp = h.parseGcp({ buckets: [{ name: 'g', public: true }], firewalls: [{ name: 'f', direction: 'INGRESS', sourceRanges: ['0.0.0.0/0'], allowed: [{ IPProtocol: 'tcp', ports: ['20-25'] }] }] }).map((f) => f.ruleId);
+    check('gcp: öffentlicher Bucket, Firewall offen', gcp.includes('cloud-bucket-public') && gcp.includes('cloud-firewall-open'));
+    const { TargetSchema } = require('../src/core/validation');
+    check('system: nur bekannte System-Prüfungen erlaubt', !!TargetSchema && TargetSchema.safeParse({ type: 'system', value: 'windows' }).success && !TargetSchema.safeParse({ type: 'system', value: 'rm -rf' }).success);
   }
 
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);

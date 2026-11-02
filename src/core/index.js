@@ -128,6 +128,15 @@ async function runAudit(targets, config, onProgress = () => {}) {
       if (completed(r.notes)) scannersRun.push({ target: t.value, source: 'trivy' });
     } catch (e) { webNotes.push(`trivy ${t.value}: ${e.message}`); }
   }
+  // System-Pruefungen: dieser PC, Docker, Cloud-Konten – nur lesend
+  for (const t of targets.filter((x) => x.type === 'system')) {
+    if (aborted()) break;
+    try {
+      const r = await require('./hostaudit').auditSystem(t.value, { signal: config.signal, onProgress });
+      webFindings.push(...r.findings); webNotes.push(...r.notes);
+      if (r.ok) scannersRun.push({ target: t.value, source: `system-${t.value}` });
+    } catch (e) { webNotes.push(`System-Prüfung ${t.value}: ${e.message}`); }
+  }
   // Externe statische Scanner fuer Pfad-Ziele (gitleaks/trivy/semgrep) - opt-in + wenn installiert.
   if (config.activeScan) {
     const pathTargets = targets.filter((t) => t.type === 'path');
@@ -165,7 +174,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
     const empty = {
       findings,
       summary: summarize(findings),
-      errors: [...(webTargets.length || targets.some((t) => t.type === 'image') ? [] : ['Kein lesbares Pruefmaterial gefunden.']), ...webNotes, ...cveNotes, ...moduleNotes, ...ing.notes],
+      errors: [...(webTargets.length || targets.some((t) => t.type === 'image' || t.type === 'system') ? [] : ['Kein lesbares Pruefmaterial gefunden.']), ...webNotes, ...cveNotes, ...moduleNotes, ...ing.notes],
       meta: { provider: config.provider, model: config.model, at: new Date().toISOString(), units: 0, batches: 0, ...extraMeta },
     };
     return { result: empty, ingest: ing, prescan: pre };

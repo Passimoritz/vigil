@@ -24,6 +24,8 @@ const DEFAULTS = {
   tool: 25,             // je externem Werkzeug je Ordner (gitleaks, semgrep …)
   activeWeb: 300,       // nmap + nuclei je Webadresse
   gitHistory: 8,
+  system: 30,           // Windows/Docker
+  cloud: 120,           // Cloud-Konto (viele CLI-Aufrufe)
   aiLocal: 75,          // je KI-Aufruf lokal (Mittelklasse-Rechner, grosses Modell)
   aiCloud: 25,          // je KI-Aufruf Cloud
   aiWarmup: 30,         // lokales Modell in den Speicher laden
@@ -54,6 +56,7 @@ function estimate({ targets = [], files = 0, deps = 0, calls = 0, local = false,
   }
   const images = targets.filter((t) => t.type === 'image').length;
   if (images) parts.image = images * learned(calib, 'image', DEFAULTS.image);
+  for (const s of targets.filter((t) => t.type === 'system')) parts.system = (parts.system || 0) + (/^(aws|azure|gcp)$/.test(s.value) ? DEFAULTS.cloud : DEFAULTS.system);
   if (config.activeScan) {
     parts.active = paths.length * EXTERNAL_TOOLS * learned(calib, 'tool', DEFAULTS.tool) + webs.length * learned(calib, 'activeWeb', DEFAULTS.activeWeb);
   }

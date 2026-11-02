@@ -28,7 +28,8 @@ const state = { targets: [], providers: [], config: null, lastFindings: [], last
 let RULE_NAMES = null; // Namen der eingebauten Regeln (lazy via IPC)
 
 // --- Ziele --------------------------------------------------------------
-const KIND_LABEL = { path: 'Datei/Ordner', url: 'Webadresse', endpoint: 'Server', image: 'Container-Image' };
+const KIND_LABEL = { path: 'Datei/Ordner', url: 'Webadresse', endpoint: 'Server', image: 'Container-Image', system: 'System' };
+const SYSTEM_LABEL = { windows: 'Dieser Windows-PC', docker: 'Laufende Docker-Container', aws: 'AWS-Konto', azure: 'Azure-Abonnement', gcp: 'Google-Cloud-Projekt' };
 function addTarget(type, value, authorized = false) {
   if (!value) return;
   if (state.targets.some((t) => t.type === type && t.value === value)) return;
@@ -40,13 +41,14 @@ function renderTargets() {
   ul.innerHTML = '';
   state.targets.forEach((t, i) => {
     const li = document.createElement('li');
-    li.innerHTML = `<span class="t-kind ${t.type}">${KIND_LABEL[t.type]}</span><span class="t-val" title="${esc(t.value)}">${esc(t.value)}</span>`;
+    li.innerHTML = `<span class="t-kind ${t.type}">${KIND_LABEL[t.type]}</span><span class="t-val" title="${esc(t.value)}">${esc(t.type === 'system' ? SYSTEM_LABEL[t.value] || t.value : t.value)}</span>`;
     const rm = document.createElement('button');
     rm.className = 't-rm'; rm.textContent = '✕'; rm.setAttribute('aria-label', 'Entfernen');
     rm.onclick = () => { state.targets.splice(i, 1); renderTargets(); };
     li.appendChild(rm);
     ul.appendChild(li);
   });
+  document.querySelectorAll('.sys-chip').forEach((b) => b.classList.toggle('on', state.targets.some((t) => t.type === 'system' && t.value === b.dataset.system)));
   $('targetCount').textContent = state.targets.length;
   $('targets').hidden = state.targets.length === 0;
   updateRunState();
@@ -55,6 +57,7 @@ function renderTargets() {
 // Freitext deuten: lokaler Pfad, Webadresse, Container-Image oder Server (IP/Host).
 function classifyInput(v) {
   if (/^image:/i.test(v)) return { type: 'image', value: v.slice(6).trim() };
+  if (/^system:(windows|docker|aws|azure|gcp)$/i.test(v)) return { type: 'system', value: v.slice(7).toLowerCase() };
   if (/^https?:\/\//i.test(v)) return { type: 'url', value: v };
   if (/^[a-z]:[\\/]|^\\\\|^\/|^\.{1,2}[\\/]|^~[\\/]/i.test(v)) return { type: 'path', value: v };
   // Image mit Tag (nginx:1.25, ghcr.io/org/app:2.1) oder Digest – ein reiner Zahlen-"Tag" ist ein Port.
@@ -126,6 +129,13 @@ function setupDropzone() {
     if (!added) flash('Konnte die Pfade nicht lesen – nutze die Auswahl-Buttons.');
   });
   // Schnellstart-Kacheln fuer Webseite/Image: Eingabefeld mit passendem Anfang fuellen
+  // System-Pruefungen direkt zur Liste hinzufuegen bzw. wieder entfernen
+  document.querySelectorAll('.sys-chip').forEach((b) => b.addEventListener('click', () => {
+    const v = b.dataset.system;
+    const i = state.targets.findIndex((t) => t.type === 'system' && t.value === v);
+    if (i >= 0) state.targets.splice(i, 1); else state.targets.push({ type: 'system', value: v });
+    renderTargets();
+  }));
   dz.querySelectorAll('.quick-tile[data-fill]').forEach((b) => b.addEventListener('click', () => {
     const inp = $('targetInput');
     if (!inp.value.trim()) inp.value = b.dataset.fill;

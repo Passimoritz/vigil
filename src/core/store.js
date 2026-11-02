@@ -57,10 +57,10 @@ function upsertTarget(store, t, now) {
   const prev = store.targets[id];
   store.targets[id] = {
     id,
-    name: prev ? prev.name : (t.type === 'path' ? path.basename(String(t.value)) || String(t.value) : String(t.value)),
+    name: prev ? prev.name : (t.type === 'path' ? path.basename(String(t.value)) || String(t.value) : t.type === 'system' ? (require('./hostaudit').SYSTEMS[t.value] || String(t.value)) : String(t.value)),
     type: t.type,
     identifier: String(t.value),
-    verified: t.type === 'path' || t.type === 'image' || !!t.authorized || !!(prev && prev.verified),
+    verified: t.type === 'path' || t.type === 'image' || t.type === 'system' || !!t.authorized || !!(prev && prev.verified),
     // Domain-Nachweis (DNS-TXT oder .well-known) – noetig fuer tiefe Web-Pruefungen
     ownershipVerified: !!(t.ownershipVerified || (prev && prev.ownershipVerified)),
     verificationToken: (prev && prev.verificationToken) || crypto.randomBytes(12).toString('hex'),
@@ -80,6 +80,8 @@ function assignTarget(f, runTargets) {
   const loc = String(f.location || '').toLowerCase().replace(/\\/g, '/');
   let host = null;
   try { host = new URL(f.location).host.toLowerCase(); } catch { /* kein URL-Ort */ }
+  const sys = runTargets.find((t) => t.type === 'system' && (f.sourceModule === 'system-' + t.value || f.source === 'system-' + t.value));
+  if (sys) return sys.id;
   for (const t of runTargets) {
     const ident = String(t.value).toLowerCase().replace(/\\/g, '/');
     if (t.type === 'url' && host) { try { if (new URL(t.value).host.toLowerCase() === host) return t.id; } catch { /* weiter */ } }

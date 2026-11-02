@@ -98,6 +98,14 @@
               <b>Container-Image</b><span>Pakete und bekannte Lücken</span>
             </button>
           </div>
+          <div class="sys-row" role="group" aria-label="System prüfen">
+            <span class="sys-label">Oder ein System prüfen – nur lesend:</span>
+            <button type="button" class="sys-chip" data-system="windows">Dieser Windows-PC</button>
+            <button type="button" class="sys-chip" data-system="docker">Laufende Docker-Container</button>
+            <button type="button" class="sys-chip" data-system="aws">AWS-Konto</button>
+            <button type="button" class="sys-chip" data-system="azure">Azure</button>
+            <button type="button" class="sys-chip" data-system="gcp">Google Cloud</button>
+          </div>
           <label id="authRow" class="check confirm" hidden><input type="checkbox" id="authChk" /> <span id="authLabel">Ich bin berechtigt, diesen Server zu prüfen.</span></label>
           <p id="webNote" class="note" hidden>Webadressen und Server prüft Vigil nur zerstörungsfrei: Zertifikat, Sicherheits-Header, Cookies, CORS und offen liegende Pfade. Keine Angriffe, keine Last-Tests.</p>
           <p id="imageNote" class="note" hidden>Container-Images prüft Vigil mit <b>trivy</b> (Pakete, CVEs, Fehlkonfigurationen). trivy muss installiert sein; mit Präfix <code>image:</code> wird immer als Image erkannt.</p>

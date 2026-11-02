@@ -45,7 +45,7 @@ function enforceScope(targets, allowlist, { interactive = false } = {}) {
   const allow = [];
   const errors = [];
   for (const t of targets) {
-    if (t.type === 'path' || t.type === 'image') { out.push({ ...t, authorized: false }); continue; }
+    if (t.type === 'path' || t.type === 'image' || t.type === 'system') { out.push({ ...t, authorized: false }); continue; }
     const host = hostOf(t);
     if (!host) { errors.push(`${t.value}: Adresse nicht lesbar.`); continue; }
     if (isAllowlisted(host, allowlist)) { out.push({ ...t, authorized: true }); continue; }

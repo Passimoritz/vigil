@@ -33,7 +33,8 @@ const TEXT_EXT = new Set([
 const SKIP_DIR = new Set(['node_modules', '.git', '.svn', '.hg', 'dist', 'build', 'out', 'target', '.next', '.cache', 'vendor', '__pycache__', '.venv', 'venv']);
 
 const BINARY_EXE_EXT = new Set(['.exe', '.dll', '.so', '.dylib', '.bin', '.msi', '.app']);
-const ARCHIVE_EXT = new Set(['.zip', '.jar', '.war', '.ear', '.apk', '.aar', '.nupkg']);
+const ARCHIVE_EXT = new Set(['.zip', '.jar', '.war', '.ear', '.apk', '.aar', '.nupkg', '.ipa', '.xapk']);
+const { decodeAxml, decodeBplist } = require('./modules/mobile');
 
 function extname(p) {
   const e = path.extname(p).toLowerCase();
@@ -199,6 +200,11 @@ function ingestArchive(col, archivePath, label) {
     let buf;
     try { buf = ent.getData(); } catch { continue; }
     if (buf.length > MAX_TEXT_BYTES * 3 && !TEXT_EXT.has(ext)) continue;
+    // Handy-Apps: binaeres Manifest bzw. binaere Info.plist lesbar machen
+    if (/(^|/)AndroidManifest.xml$/i.test(name) || /.app/Info.plist$/i.test(name)) {
+      const xml = /plist$/i.test(name) ? decodeBplist(buf) : decodeAxml(buf);
+      if (xml) { col.add({ label: `${label}!/${name}`, kind: 'archive-entry', language: 'xml', path: name, content: xml, meta: { note: 'aus dem Binärformat der App zurückgewandelt' } }); continue; }
+    }
     addTextBuffer(col, `${label}!/${name}`, 'archive-entry', buf, name);
   }
 }
@@ -261,7 +267,7 @@ async function ingestTargets(targets, onProgress = () => {}) {
   const col = new Collector();
   for (const t of targets) {
     if (col.atCapacity()) break;
-    if (t.type === 'image') continue; // Container-Images prueft trivy direkt (kein Quelltext zum Einlesen)
+    if (t.type === 'image' || t.type === 'system') continue; // Container-Images prueft trivy direkt (kein Quelltext zum Einlesen)
     onProgress({ phase: 'ingest', message: `Lese: ${t.value}` });
     try {
       if (t.type === 'url' || t.type === 'endpoint') {
