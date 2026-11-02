@@ -106,7 +106,7 @@ function createApi({ orchestrator, getConfig, enforceScope }) {
         if (server) return resolve({ ok: true, port: server.address().port });
         const s = http.createServer((req, res) => { handle(req, res); });
         s.on('error', (e) => { server = null; resolve({ ok: false, error: e.code === 'EADDRINUSE' ? `Port ${port} ist schon belegt.` : e.message }); });
-        s.listen(port, '127.0.0.1', () => { server = s; resolve({ ok: true, port }); });
+        s.listen(port, '127.0.0.1', () => { server = s; resolve({ ok: true, port: s.address().port }); });
       });
     },
     stop() { return new Promise((r) => { if (!server) return r(); server.close(() => r()); server = null; }); },

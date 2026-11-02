@@ -1,0 +1,111 @@
+# Release-Build mit kostenloser Signierung durch die SignPath Foundation (siehe CODE_SIGNING.md).
+#
+# Ablauf bei einem Tag "v*":
+#   1. Tests, dann App ungepackt bauen (win-unpacked)
+#   2. SignPath signiert Vigil.exe und die mitgelieferten EXE/DLL-Dateien
+#   3. Installer und portable Version aus den signierten Dateien bauen
+#   4. SignPath signiert Installer und portable EXE
+#   5. Signierte Dateien als GitHub-Release veroeffentlichen
+#
+# Benoetigte Einstellungen im Repository (Settings → Secrets and variables → Actions):
+#   Secret   SIGNPATH_API_TOKEN       – API-Token eines SignPath-CI-Benutzers
+#   Variable SIGNPATH_ORGANIZATION_ID – Organisations-ID aus SignPath
+# Ohne diese Werte laeuft der Build trotzdem, die Dateien bleiben dann unsigniert.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      SIGN: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Abhängigkeiten
+        run: npm ci
+
+      - name: Tests
+        run: npm test
+
+      - name: App ungepackt bauen
+        run: npx electron-builder --win --dir --config electron-builder.config.js
+
+      - name: Ungepackte App hochladen (für SignPath)
+        id: unpacked
+        uses: actions/upload-artifact@v4
+        with:
+          name: vigil-unpacked
+          path: dist/win-unpacked
+
+      - name: App-Dateien signieren (SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: vigil
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: app
+          github-artifact-id: ${{ steps.unpacked.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist/win-unpacked-signed
+
+      - name: Signierte Dateien übernehmen
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force dist/win-unpacked
+          Move-Item dist/win-unpacked-signed dist/win-unpacked
+
+      - name: Installer und portable Version bauen
+        run: npx electron-builder --win nsis portable --prepackaged dist/win-unpacked --config electron-builder.config.js
+
+      - name: Installer hochladen (für SignPath)
+        id: installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: vigil-installers
+          path: |
+            dist/Vigil-Setup-*.exe
+            dist/Vigil-Portable-*.exe
+
+      - name: Installer signieren (SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: vigil
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: installers
+          github-artifact-id: ${{ steps.installers.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: release
+
+      - name: Unsignierte Installer bereitstellen (ohne SignPath)
+        if: env.SIGN != 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item dist/Vigil-Setup-*.exe, dist/Vigil-Portable-*.exe release/
+
+      - name: GitHub-Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.exe
+          generate_release_notes: true

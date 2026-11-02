@@ -39,14 +39,35 @@ Ein OV- oder EV-Zertifikat von einer Zertifizierungsstelle wie Certum, Sectigo o
 - **Reputation:** Bei OV-Zertifikaten zeigt SmartScreen anfangs trotzdem eine Warnung, bis genug Nutzer die Datei geladen haben.
 - **Umgebungsvariablen:** `CSC_LINK` (Pfad zur .pfx-Datei) und `CSC_KEY_PASSWORD`.
 
-### Weg C – Kostenlos für Open-Source-Projekte
+### Weg C – Kostenlos über die SignPath Foundation (für Vigil gewählt)
 
-Ist Vigil öffentlich auf GitHub, kann man sich bei der **SignPath Foundation** bewerben. Sie signiert Open-Source-Projekte kostenlos über eine CI-Pipeline, also über einen automatischen Build bei jeder neuen Version.
+Die SignPath Foundation signiert Open-Source-Projekte kostenlos. Das Zertifikat läuft auf die Foundation, die Signatur entsteht nur in einem öffentlichen GitHub-Build. Dadurch kann jeder nachprüfen, dass die Datei aus genau diesem Quellcode stammt.
 
-Bedingungen:
-- OSI-Lizenz (MIT passt),
-- öffentlicher Build,
-- keine proprietären Teile.
+**Schon im Repository vorbereitet:**
+- [LICENSE](LICENSE) mit der MIT-Lizenz (von der OSI anerkannt).
+- [CODE_SIGNING.md](CODE_SIGNING.md): die Signier-Richtlinie mit Rollen und Datenschutz-Erklärung, die SignPath verlangt.
+- [.github/workflows/release.yml](.github/workflows/release.yml): Bei jedem Tag `v*` wird gebaut und getestet, dann werden App und Installer über SignPath signiert und als Release veröffentlicht.
+- [.signpath/app.xml](.signpath/app.xml) und [.signpath/installers.xml](.signpath/installers.xml): die Artefakt-Konfigurationen zum Einfügen in SignPath.
+
+**Was nur du selbst erledigen kannst** (Konten und Anträge laufen auf deinen Namen):
+
+1. **Repository öffentlich machen.** Vigil muss öffentlich auf GitHub liegen, zum Beispiel unter `github.com/Passimoritz/vigil`, und mindestens ein Release haben. Die Bewertung dauert meist einige Tage bis Wochen.
+2. **Antrag stellen:** auf [signpath.org/apply](https://signpath.org/apply). Wichtige Angaben:
+   - Projekt: Vigil
+   - Repository-URL und Lizenz (MIT)
+   - Kurzbeschreibung: defensives Sicherheits-Prüfwerkzeug für eigene Projekte
+   - Link zu CODE_SIGNING.md
+3. **SignPath einrichten,** sobald der Antrag angenommen ist:
+   - Ein Projekt mit dem Slug `vigil` anlegen.
+   - Die Signier-Richtlinie `release-signing` anlegen, mit manueller Freigabe.
+   - Die Artefakt-Konfigurationen `app` und `installers` aus den XML-Dateien anlegen.
+   - Die GitHub-Verbindung als „Trusted Build System“ einrichten.
+4. **GitHub einrichten** unter Settings → Secrets and variables → Actions:
+   - als Secret `SIGNPATH_API_TOKEN`,
+   - als Variable `SIGNPATH_ORGANIZATION_ID`.
+5. **Release auslösen:** `git tag v0.2.0` und `git push --tags`. Den Signier-Auftrag gibst du danach in SignPath frei.
+
+Bis die Signierung eingerichtet ist, läuft derselbe Workflow ebenfalls, liefert aber unsignierte Dateien.
 
 ## Bis dahin
 

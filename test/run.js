@@ -592,8 +592,9 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const orch = createOrchestrator({ storeFile: file, runAudit: fakeAudit, buildConfig: () => ({}) });
     const cfg = { apiToken: 'test-token-123', allowlist: ['ok.example'], selected: 'ollama' };
     const api = createApi({ orchestrator: orch, getConfig: () => cfg, enforceScope });
-    const freePort = await new Promise((r) => { const s = require('net').createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
-    check('api: startet auf 127.0.0.1', (await api.start(freePort)).ok);
+    // Port 0: das System vergibt direkt einen freien Port (kein Wettlauf zwischen Suchen und Belegen)
+    const started = await api.start(0); const freePort = started.port;
+    check('api: startet auf 127.0.0.1', started.ok && freePort > 0);
     const url = (p) => `http://127.0.0.1:${freePort}${p}`;
     const H = { Authorization: 'Bearer test-token-123', 'Content-Type': 'application/json' };
     check('api: ohne Token 401', (await fetch(url('/api/stats'))).status === 401);

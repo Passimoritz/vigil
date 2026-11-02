@@ -96,5 +96,10 @@
   "author": {
     "name": "Passimoritz",
     "email": "passimoritz@gmail.com"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Passimoritz/vigil.git"
+  },
+  "homepage": "https://github.com/Passimoritz/vigil"
 }
