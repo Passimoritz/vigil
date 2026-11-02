@@ -234,14 +234,14 @@ function prescan(units, opts = {}) {
         findings.push(normalizeFinding({
           ruleId: (rule.custom ? 'custom-' : 'secret-') + rule.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
           evidence: redactSecret(m[0]),
-          title: rule.custom ? `Eigene Regel: ${rule.name}` : `Moegliches Secret im Klartext: ${rule.name}`,
+          title: rule.custom ? `Eigene Regel: ${rule.name}` : `Zugangsdaten im Klartext: ${rule.name}`,
           severity: rule.sev,
           category: 'Secrets',
           location: `${u.label}:${lineOf(content, m.index)}`,
-          description: `Ein Muster fuer "${rule.name}" wurde gefunden: \`${redact(m[0])}\`. Hartkodierte Zugangsdaten koennen von jedem gelesen werden, der Zugriff auf Code, Binary oder Archiv hat.`,
-          reachability: 'Direkt lesbar, sobald jemand die Datei/den Build in die Haende bekommt (Repo, Artefakt, dekompilierbares Paket).',
-          impact: 'Uebernahme des betroffenen Kontos/Dienstes, lateral movement, Datenabfluss.',
-          remediation: 'Secret sofort rotieren/ungueltig machen. Werte aus dem Code entfernen und ueber Umgebungsvariablen / Secret-Store laden. History bereinigen, falls committet.',
+          description: `Im Code steht ein Wert im Format „${rule.name}“: \`${redact(m[0])}\`. Fest eingetragene Zugangsdaten kann jeder lesen, der den Code, das Programm oder ein Archiv davon bekommt.`,
+          reachability: 'Direkt lesbar, sobald jemand die Datei oder den Build in die Hände bekommt (Repository, Download, entpacktes Paket).',
+          impact: 'Wer den Code sieht, kann den Zugang benutzen – und von dort aus oft weitere Systeme erreichen oder Daten abziehen.',
+          remediation: 'Den Schlüssel sofort beim Anbieter sperren und neu erzeugen. Dann aus dem Code entfernen und über eine Umgebungsvariable oder einen Secret-Manager laden; war er schon in Git, auch die Historie bereinigen.',
           patch: 'Beispiel:\n- const key = "…";\n+ const key = process.env.SERVICE_KEY;  // aus .env / Secret-Manager',
           confidence: 'medium',
         }, 'prescan'));
@@ -263,14 +263,15 @@ function prescan(units, opts = {}) {
     // Methode: hohe Entropie -> moegliches Secret ohne bekanntes Muster
     for (const h of findHighEntropy(content)) {
       findings.push(normalizeFinding({
-        title: 'Moeglicher geheimer Schluessel (hohe Entropie)',
+        ruleId: 'moeglicher-geheimer-schluessel-hohe-entropie', // fester Schluessel, damit der Verlauf erhalten bleibt
+        title: 'Möglicher geheimer Schlüssel (hohe Entropie)',
         severity: h.context ? 'medium' : 'low',
         category: 'Secrets',
         location: `${u.label}:${h.line}`,
-        description: `Eine Zeichenkette mit hoher Zufaelligkeit (Entropie ${h.entropy}) wurde gefunden: \`${redact(h.value)}\`. Das sieht nach einem Schluessel/Token aus.`,
-        reachability: 'Direkt lesbar im Code/Artefakt.',
-        impact: 'Falls es ein echtes Secret ist: Uebernahme des zugehoerigen Dienstes/Kontos.',
-        remediation: 'Pruefen, ob es ein Secret ist; falls ja rotieren und ueber Umgebungsvariablen/Secret-Store laden.',
+        description: `Eine sehr zufällig wirkende Zeichenkette (Entropie ${h.entropy}): \`${redact(h.value)}\`. So sehen Schlüssel und Tokens aus.`,
+        reachability: 'Direkt lesbar im Code.',
+        impact: 'Falls es ein echter Schlüssel ist, kann ihn jeder benutzen, der den Code sieht.',
+        remediation: 'Prüfen, ob es ein echter Schlüssel ist. Falls ja: beim Anbieter sperren, neu erzeugen und über eine Umgebungsvariable laden.',
         confidence: 'low',
       }, 'prescan'));
     }
