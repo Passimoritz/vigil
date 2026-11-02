@@ -770,6 +770,15 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('prompt-cache: zwischengespeicherte Tokens kosten nur einen Bruchteil', cached.usd < full.usd * 0.25 && cached.savedUsd > 0);
   }
 
+  // --- Jede Kern-Datei laesst sich laden (faengt Syntaxfehler in Dateien ohne eigenen Test) ---
+  {
+    const fs = require('fs'); const path = require('path');
+    const dirs = ['../src/core', '../src/core/modules'];
+    const bad = [];
+    for (const d of dirs) for (const f of fs.readdirSync(path.join(__dirname, d)).filter((x) => x.endsWith('.js'))) { try { require(path.join(__dirname, d, f)); } catch (e) { bad.push(`${f}: ${e.message}`); } }
+    check('laden: alle Kern-Module ohne Fehler' + (bad.length ? ' – ' + bad.join('; ') : ''), bad.length === 0);
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

@@ -201,7 +201,7 @@ function ingestArchive(col, archivePath, label) {
     try { buf = ent.getData(); } catch { continue; }
     if (buf.length > MAX_TEXT_BYTES * 3 && !TEXT_EXT.has(ext)) continue;
     // Handy-Apps: binaeres Manifest bzw. binaere Info.plist lesbar machen
-    if (/(^|/)AndroidManifest.xml$/i.test(name) || /.app/Info.plist$/i.test(name)) {
+    if (/(^|\/)AndroidManifest\.xml$/i.test(name) || /\.app\/Info\.plist$/i.test(name)) {
       const xml = /plist$/i.test(name) ? decodeBplist(buf) : decodeAxml(buf);
       if (xml) { col.add({ label: `${label}!/${name}`, kind: 'archive-entry', language: 'xml', path: name, content: xml, meta: { note: 'aus dem Binärformat der App zurückgewandelt' } }); continue; }
     }

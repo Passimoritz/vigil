@@ -199,7 +199,7 @@ function applyRun(store, run) {
   return { findings: annotated, counters: { ...counters, toxic }, resolved: resolvedNow, targetIds: runTargets.map((t) => t.id) };
 }
 
-const normTitle = (t) => String(t || '').toLowerCase().replace(/d+/g, '#').replace(/s+/g, ' ').trim().slice(0, 80);
+const normTitle = (t) => String(t || '').toLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 80);
 
 // Bestaetigte Fehlalarme der Ziele (neueste zuerst) – Hinweis fuer die KI
 function falsePositivesFor(store, targetIds) {

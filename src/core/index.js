@@ -156,8 +156,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   const gitFindings = [];
   if (config.gitHistory !== false && !aborted()) {
     const { scanGitHistory } = require('./githistory');
-    const currentText = ing.units.map((u) => u.content || '').join('
-');
+    const currentText = ing.units.map((u) => u.content || '').join('\n');
     for (const t of targets.filter((x) => x.type === 'path')) {
       try {
         const g = await scanGitHistory(t.value, { currentText, signal: config.signal, onProgress });
