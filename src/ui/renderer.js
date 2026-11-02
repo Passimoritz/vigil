@@ -686,6 +686,37 @@ function findingDetail(f) {
     </div>`;
 }
 
+// Kleines, sicheres Markdown fuer KI-Antworten: Absaetze, Ueberschriften, Listen, **fett**, *kursiv*,
+// `Code`, Codebloecke und https-Links. Alles wird zuerst maskiert – die KI kann kein HTML einschleusen.
+function mdInline(t) {
+  return esc(t)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=[\s.,;:!?)]|$)/g, '$1<i>$2</i>')
+    .replace(/\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g, '<a href="#" class="md-link" data-url="$2">$1</a>');
+}
+function miniMarkdown(src) {
+  const parts = String(src || '').replace(/\r/g, '').split('```');
+  let html = '';
+  parts.forEach((part, i) => {
+    if (i % 2) { html += `<pre class="md-code"><code>${esc(part.replace(/^[\w+.-]*\n/, '').replace(/\n$/, ''))}</code></pre>`; return; }
+    let list = null;
+    const close = () => { if (list) { html += `</${list}>`; list = null; } };
+    for (const raw of part.split('\n')) {
+      const l = raw.trimEnd();
+      let m;
+      if (!l.trim()) { close(); continue; }
+      if ((m = l.match(/^\s*#{1,4}\s+(.*)$/))) { close(); html += `<p class="md-h">${mdInline(m[1])}</p>`; continue; }
+      if ((m = l.match(/^\s*[-*•]\s+(.*)$/))) { if (list !== 'ul') { close(); html += '<ul>'; list = 'ul'; } html += `<li>${mdInline(m[1])}</li>`; continue; }
+      if ((m = l.match(/^\s*\d+[.)]\s+(.*)$/))) { if (list !== 'ol') { close(); html += '<ol>'; list = 'ol'; } html += `<li>${mdInline(m[1])}</li>`; continue; }
+      close();
+      html += `<p>${mdInline(l)}</p>`;
+    }
+    close();
+  });
+  return html;
+}
+
 // Nach dem Einfuegen der Detailansicht: Code-Ausschnitt laden und Rueckfragen verdrahten.
 // Gespraeche bleiben je Befund erhalten, solange die App laeuft.
 state.chats = state.chats || {};
@@ -704,7 +735,8 @@ function hydrateDetail(root, f) {
   const chat = state.chats[key] || (state.chats[key] = []);
   const log = sec.querySelector('.ask-log');
   const paint = () => {
-    log.innerHTML = chat.map((m) => `<div class="ask-msg ${m.role}">${m.role === 'user' ? '<b>Du</b>' : `<b>${esc(m.model || 'KI')}</b>`}<div>${m.pending ? '<span class="ask-dots"><i></i><i></i><i></i></span>' : esc(m.text).replace(/`([^`\n]+)`/g, '<code>$1</code>')}</div></div>`).join('');
+    log.innerHTML = chat.map((m) => `<div class="ask-msg ${m.role}"><span class="ask-who">${m.role === 'user' ? 'Du' : esc(m.model || 'KI')}</span><div class="${m.role === 'ai' ? 'ask-md' : ''}">${m.pending ? '<span class="ask-dots"><i></i><i></i><i></i></span>' : m.role === 'ai' ? miniMarkdown(m.text) : esc(m.text)}</div></div>`).join('');
+    log.querySelectorAll('.md-link').forEach((a) => a.onclick = (e) => { e.preventDefault(); window.vigil.openLink(a.dataset.url); });
     log.hidden = !chat.length;
   };
   paint();
@@ -1493,6 +1525,18 @@ function openDashDetail(i, keepScroll) {
     + (linked.length ? `<div class="f-sec"><h4>Beteiligte Befunde</h4>${linked.map((k) => `<button type="button" class="linked-row" data-i="${k}"><span class="sev-tag sev-${list[k].severity}">${SEV_LABEL[list[k].severity]}</span> ${esc(cleanTitle(list[k].title))}</button>`).join('')}</div>` : '');
   bindSolutionControls(body);
   hydrateDetail(body, f);
+  // Zweispaltig: links Befund, Code, Fundstelle – rechts Loesung und Rueckfrage (bleiben beim Scrollen sichtbar)
+  const fd = body.querySelector('.fd-body');
+  if (fd) {
+    const main = document.createElement('div'); main.className = 'dd-main';
+    const side = document.createElement('aside'); side.className = 'dd-side';
+    [fd.querySelector('.solution'), fd.querySelector('.ask-sec')].forEach((n) => n && side.appendChild(n));
+    while (fd.firstChild) main.appendChild(fd.firstChild);
+    const linkedSec = body.querySelector(':scope > .f-sec');
+    if (linkedSec) main.appendChild(linkedSec);
+    fd.append(main, side);
+    fd.classList.add('dd-grid');
+  }
   body.querySelectorAll('.linked-row').forEach((b) => b.onclick = () => openDashDetail(Number(b.dataset.i)));
   bindStatusSelects(body, (id, status) => { toast(`Status: ${STATUS_LABEL[status]}`, 'ok'); loadDashboard(); });
   $('dashDrawerPos').textContent = `Befund ${i + 1} von ${list.length}`;
@@ -1910,6 +1954,17 @@ async function init() {
     }
   });
   $('dashDrawerClose').onclick = closeDashDetail;
+  // Breite des Detail-Fensters ziehen bzw. mit Pfeiltasten aendern; wird gemerkt
+  const setDrawerW = (px) => { const w = Math.round(Math.max(520, Math.min(window.innerWidth - 80, px))); $('dashDrawer').style.setProperty('--drawer-w', w + 'px'); try { localStorage.setItem('vigil.drawerW', String(w)); } catch { /* egal */ } };
+  try { const w = Number(localStorage.getItem('vigil.drawerW')); if (w) $('dashDrawer').style.setProperty('--drawer-w', w + 'px'); } catch { /* egal */ }
+  $('dashDrawerResize').addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const h = $('dashDrawerResize'); h.setPointerCapture(e.pointerId);
+    const move = (ev) => setDrawerW(window.innerWidth - ev.clientX);
+    const up = () => { h.removeEventListener('pointermove', move); h.removeEventListener('pointerup', up); };
+    h.addEventListener('pointermove', move); h.addEventListener('pointerup', up);
+  });
+  $('dashDrawerResize').addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); setDrawerW($('dashDrawer').getBoundingClientRect().width + (e.key === 'ArrowLeft' ? 60 : -60)); } });
   $('dashDrawerBg').onclick = closeDashDetail;
   $('dashDrawerPrev').onclick = () => openDashDetail((state.dashIndex || 0) - 1);
   $('dashDrawerNext').onclick = () => openDashDetail((state.dashIndex || 0) + 1);

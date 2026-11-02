@@ -98,6 +98,9 @@ const ollama = require('./ollama');
 
 let win;
 let lastResult = null;
+let lastTargets = [];
+// Angaben fuer den Berichtskopf: gepruefte Ziele, Firma und Logo aus den Einstellungen
+const reportOpts = () => { const c = loadConfig(); return { targets: lastTargets, company: c.reportCompany || '', logoDataUrl: c.reportLogo || '' }; };
 let orchestrator = null;
 let api = null;
 
@@ -140,13 +143,18 @@ function executiveHtml() {
 }
 
 async function saveReportPdf(outPath, kind) {
-  const html = kind === 'exec' ? executiveHtml() : report.toHtml(lastResult);
+  const html = kind === 'exec' ? executiveHtml() : report.toHtml(lastResult, reportOpts());
   const tmp = path.join(app.getPath('temp'), `vigil-report-${Date.now()}.html`);
   fs.writeFileSync(tmp, html, 'utf8');
   const w = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } });
   try {
     await w.loadFile(tmp);
-    const data = await w.webContents.printToPDF({ printBackground: true, pageSize: 'A4' });
+    // Fusszeile mit Seitenzahl
+    const data = await w.webContents.printToPDF({
+      printBackground: true, pageSize: 'A4', preferCSSPageSize: true, displayHeaderFooter: kind !== 'exec',
+      headerTemplate: '<div></div>',
+      footerTemplate: '<div style="width:100%;font:8.5px Segoe UI,sans-serif;color:#94a3b8;padding:0 14mm;display:flex;justify-content:space-between"><span>Vigil · Sicherheitsbericht</span><span>Seite <span class="pageNumber"></span> von <span class="totalPages"></span></span></div>',
+    });
     fs.writeFileSync(outPath, data);
   } finally { try { w.destroy(); } catch { /* egal */ } try { fs.unlinkSync(tmp); } catch { /* egal */ } }
 }
@@ -390,7 +398,7 @@ ipcMain.handle('audit:run', async (e, payload) => {
     onProgress: (p) => { clock.tick(p); try { e.sender.send('audit:progress', p); } catch { /* Fenster weg */ } },
   });
   const out = await job.done;
-  if (out.ok) { lastResult = out.result; recordHistory(out.result, scope.targets); }
+  if (out.ok) { lastResult = out.result; lastTargets = scope.targets; recordHistory(out.result, scope.targets); }
   // Aus vollstaendigen Laeufen lernen, wie lange welche Phase wirklich dauert
   if (out.ok && !out.canceled) {
     try {
@@ -436,8 +444,10 @@ ipcMain.handle('crash:info', () => { try { return { count: fs.readdirSync(CRASH_
 ipcMain.handle('crash:open', () => { fs.mkdirSync(CRASH_DIR(), { recursive: true }); return shell.openPath(CRASH_DIR()).then((err) => ({ ok: !err })); });
 
 const ASK_PROMPT = `Du bist ein erfahrener, defensiver Sicherheitsberater und beantwortest Rueckfragen zu EINEM Befund aus einer Sicherheitspruefung des eigenen Projekts des Nutzers.
-- Antworte auf Deutsch, in Alltagssprache, kurz und konkret (hoechstens etwa 12 Saetze, Code nur wenn er hilft).
-- Beziehe dich auf den mitgelieferten Code-Ausschnitt. Sag ehrlich, wenn der Ausschnitt nicht reicht, und was man zusaetzlich pruefen muesste.
+- Antworte auf Deutsch, in Alltagssprache. KURZ: hoechstens 5 Saetze ODER 3-5 Stichpunkte, dazu bei Bedarf EIN kurzer Codeblock.
+- Beginne direkt mit der Antwort (erste Zeile = Kernaussage, z. B. "**Ja, wahrscheinlich ausnutzbar**, weil …"). KEINE Einleitung, keine Wiederholung des Befunds oder der Frage, keine Hoeflichkeitsfloskeln, keine Zusammenfassung am Ende.
+- Formatiere mit Markdown: **fett** fuer die Kernaussage, "- " fuer Stichpunkte, Backticks fuer Namen im Text und Codebloecke mit drei Backticks. Keine Tabellen, keine Ueberschriften.
+- Beziehe dich auf den mitgelieferten Code-Ausschnitt. Reicht er nicht, sag in einem Satz, was man zusaetzlich pruefen muesste.
 - Bei "Ist das bei mir ausnutzbar?": erklaere die Voraussetzungen konzeptionell (Eingang, Bedingungen, wie realistisch) und gib eine Einschaetzung – aber KEINE einsatzfertigen Angriffs-Payloads oder Schritt-fuer-Schritt-Anleitungen.
 - Schwerpunkt: verstehen und beheben.`;
 ipcMain.handle('finding:ask', async (_e, payload) => {
@@ -456,7 +466,7 @@ ipcMain.handle('finding:ask', async (_e, payload) => {
   if (shouldRedact(eff)) user = redactSecrets(user).text;
   try {
     const { callProvider } = require('../src/core/providers');
-    const r = await callProvider({ ...eff, maxTokens: 1500 }, { system: ASK_PROMPT, user, json: false });
+    const r = await callProvider({ ...eff, maxTokens: 700 }, { system: ASK_PROMPT, user, json: false });
     let text = String(r.text || '').trim();
     // Manche lokalen Modelle antworten wegen JSON-Modus in JSON – dann den Text herausziehen
     try { const j = JSON.parse(text); text = j.answer || j.antwort || j.text || Object.values(j).find((v) => typeof v === 'string') || text; } catch { /* normaler Text */ }
@@ -616,6 +626,7 @@ ipcMain.handle('history:open', (_e, id) => {
     const result = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR(), safe + '.json'), 'utf8'));
     refreshStatuses(result);
     lastResult = result;
+    lastTargets = ((loadHistory().find((h) => h.id === safe) || {}).targets || []).map((v) => ({ value: v }));
     return { ok: true, result };
   } catch (e) { return { ok: false, error: e.message }; }
 });
@@ -644,8 +655,8 @@ ipcMain.handle('report:save', async (_e, { format }) => {
     try { await saveReportPdf(r.filePath, exec ? 'exec' : 'full'); return { ok: true, path: r.filePath }; }
     catch (err) { return { ok: false, error: err.message }; }
   }
-  const content = exec ? executiveHtml() : ext === 'md' ? report.toMarkdown(lastResult)
-    : ext === 'sarif' ? report.toSarif(lastResult) : ext === 'json' ? report.toJson(lastResult, orchestrator.stats()) : report.toHtml(lastResult);
+  const content = exec ? executiveHtml() : ext === 'md' ? report.toMarkdown(lastResult, reportOpts())
+    : ext === 'sarif' ? report.toSarif(lastResult) : ext === 'json' ? report.toJson(lastResult, orchestrator.stats()) : report.toHtml(lastResult, reportOpts());
   try { fs.writeFileSync(r.filePath, content, 'utf8'); return { ok: true, path: r.filePath }; }
   catch (err) { return { ok: false, error: err.message }; }
 });
