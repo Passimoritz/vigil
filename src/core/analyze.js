@@ -2,6 +2,7 @@
 
 // Orchestrierung: Units + Fakten -> KI-Prompts -> geparste, normalisierte Befunde.
 
+const crypto = require('crypto');
 const { callProvider } = require('./providers');
 const { normalizeFinding, sortFindings, summarize, dedupeFindings } = require('./schema');
 const { estimateCost, approxTokens } = require('./cost');
@@ -60,7 +61,7 @@ function batchUnits(units, budget) {
       cur = [];
       size = 0;
     }
-    cur.push(text);
+    cur.push({ unit: u, text });
     size += text.length;
   }
   if (cur.length) batches.push(cur);
@@ -108,86 +109,224 @@ const FOCI = [
 
 // Haupteinstieg.
 // opts: { units, facts, prescanFindings, config, onProgress, charBudget }
+//
+// Ablauf:
+//  1. Nur Geaendertes: Dateien, deren Inhalt (und Modell/Modus) seit dem letzten Lauf gleich
+//     ist, kommen aus dem KI-Zwischenspeicher (config.aiCache) statt erneut zur KI.
+//  2. Vorsortierung (optional, config.triageModel): ein kleines Modell markiert verdaechtige
+//     Dateien; nur diese gehen an das grosse Modell.
+//  3. Hauptanalyse in Bloecken und Durchgaengen.
+//  4. Zweites Modell (optional, config.consensusModel): prueft dieselben Bloecke; was beide
+//     finden, gilt als sicher, Einzelfunde werden heruntergestuft.
+//  5. Gegenpruefung am Code-Ausschnitt (harness.validateFindings).
 async function analyze(opts) {
   const { units = [], facts = '', prescanFindings = [], config, onProgress = () => {} } = opts;
   const budget = opts.charBudget || DEFAULT_CHAR_BUDGET;
   const errors = [];
-  const aiFindings = [];
 
   const depth = config.analysisDepth === 'thorough' ? 'thorough' : 'standard';
   const passes = depth === 'thorough' ? FOCI : [{ key: 'all', label: 'Rundum', hint: '' }];
-  const batches = batchUnits(units, budget);
-  const total = batches.length * passes.length;
-  let done = 0;
   const factBlock = facts ? `## Statische Vorab-Fakten (Heuristik; verifizieren):\n${facts.slice(0, 8000)}\n\n` : '';
+  // Aus Fehlalarmen lernen: bestaetigte Fehlalarme werden der KI als "nicht erneut melden" mitgegeben
+  const fps = (config.knownFalsePositives || []).slice(0, 40);
+  const fpBlock = fps.length ? `## Bereits als FEHLALARM bestaetigt (nicht erneut melden, ausser der Code hat sich dort wesentlich geaendert):\n${fps.map((f) => `- ${f.title} @ ${f.location}`).join('\n')}\n\n` : '';
 
-  // Kosten/Token mitfuehren (nur bei nicht-lokalen Anbietern in der UI sichtbar).
-  // Erst eine grobe Vorab-Schaetzung, dann waehrend des Laufs die echten Werte.
   const costCfg = { provider: config.provider, model: config.model, baseUrl: config.baseUrl };
-  let usedIn = 0, usedOut = 0;
-  const costOf = (inTok, outTok, estimate) => {
-    const c = estimateCost({ ...costCfg, inputTokens: inTok, outputTokens: outTok });
-    return { inputTokens: c.inputTokens, outputTokens: c.outputTokens, usd: c.usd, priced: c.priced, local: c.local, estimate: !!estimate };
+  const used = { in: 0, out: 0, cached: 0, written: 0 };
+  const addUsage = (u) => { if (!u) return; used.in += u.inputTokens || 0; used.out += u.outputTokens || 0; used.cached += u.cachedTokens || 0; used.written += u.cacheWriteTokens || 0; };
+  const costOf = (inTok, outTok, estimate, cached = 0, written = 0) => {
+    const c = estimateCost({ ...costCfg, inputTokens: inTok, outputTokens: outTok, cachedTokens: cached, cacheWriteTokens: written });
+    return { inputTokens: c.inputTokens, outputTokens: c.outputTokens, usd: c.usd, savedUsd: c.savedUsd || 0, cachedTokens: c.cachedTokens || 0, priced: c.priced, local: c.local, estimate: !!estimate };
   };
-  let estInChars = 0;
-  for (let i = 0; i < batches.length; i++) estInChars += SYSTEM_PROMPT.length + factBlock.length + 400 + batches[i].join('\n').length;
-  const estCost = costOf(approxTokens(estInChars) * passes.length, 700 * total, true);
+  const liveCost = () => costOf(used.in, used.out, false, used.cached, used.written);
 
-  onProgress({ phase: 'analyze', message: `KI-Analyse (${depth === 'thorough' ? 'gruendlich, ' + passes.length + ' Durchgaenge' : 'standard'}) in ${batches.length} Block/Bloecken`, total, done, cost: estCost });
-
-  const redact = shouldRedact(config);
-  let redactedCount = 0;
-  let aborted = false;
-  for (let i = 0; i < batches.length && !aborted; i++) {
-    for (const pass of passes) {
-      if (config.signal && config.signal.aborted) { aborted = true; break; }
-      const focusLine = pass.hint ? `\nSCHWERPUNKT dieses Durchgangs: ${pass.hint} Melde auch andere klare Funde, aber grabe bei diesem Schwerpunkt besonders tief.\n` : '';
-      const user =
-        `Pruefe die folgenden Artefakte auf Sicherheitsluecken und gib Befunde als JSON zurueck. ` +
-        `Suche aktiv auch nach Logik-, Autorisierungs- (IDOR/fehlende Rechtepruefung), Auth-Bypass- und Race-Condition-Fehlern, die reine Mustererkennung nicht findet - folge dabei den Datenfluessen von Eingaben zu gefaehrlichen Senken.` +
-        focusLine + `\n\n` +
-        factBlock +
-        `## Zu pruefende Artefakte (Block ${i + 1}/${batches.length}):\n` +
-        batches[i].join('\n');
-      // Externe Anbieter bekommen Secrets nur geschwaerzt zu sehen.
-      let prompt = user;
-      if (redact) { const r = redactSecrets(user); prompt = r.text; if (pass === passes[0]) redactedCount += r.count; }
-      try {
-        const { text, usage } = await callProvider(config, { system: SYSTEM_PROMPT, user: prompt });
-        if (usage) { usedIn += usage.inputTokens || 0; usedOut += usage.outputTokens || 0; }
-        const raw = parseFindings(text);
-        for (const r of raw) aiFindings.push(normalizeFinding(r, 'ai'));
-        done++;
-        onProgress({ phase: 'analyze', message: `Block ${i + 1}/${batches.length} · ${pass.label}: ${raw.length} Befund(e)`, total, done, cost: costOf(usedIn, usedOut, false) });
-      } catch (e) {
-        done++;
-        if ((config.signal && config.signal.aborted) || e.name === 'AbortError') { aborted = true; break; }
-        errors.push(`Block ${i + 1} (${pass.label}): ${e.message}`);
-        onProgress({ phase: 'analyze', message: `Block ${i + 1} (${pass.label}) fehlgeschlagen: ${e.message}`, total, done, error: true });
-      }
+  // 1. Nur Geaendertes neu pruefen
+  const cache = config.incremental !== false && config.aiCache ? config.aiCache : null;
+  const cachedFindings = [];
+  let fresh = units;
+  let fromCache = 0;
+  if (cache) {
+    fresh = [];
+    for (const u of units) {
+      const hit = cache.get(unitKey(u, config, depth));
+      if (Array.isArray(hit)) { fromCache++; for (const f of hit) cachedFindings.push(normalizeFinding(f, 'ai')); }
+      else fresh.push(u);
     }
   }
-  if (aborted) errors.push('KI-Analyse abgebrochen - Teilergebnis angezeigt.');
 
+  const aborted = () => !!(config.signal && config.signal.aborted);
+  const redact = shouldRedact(config);
+  let redactedCount = 0;
+  const progress = { total: 0, done: 0 };
+
+  // 2. Vorsortierung durch ein kleines Modell
+  let skippedByTriage = [];
+  if (config.triageModel && fresh.length > 1 && !aborted()) {
+    const r = await triage(fresh, { ...config, model: config.triageModel }, { redact, addUsage, onProgress, signal: config.signal });
+    if (r.ok) { skippedByTriage = fresh.filter((u) => !r.keep.has(u.label)); fresh = fresh.filter((u) => r.keep.has(u.label)); }
+    else errors.push(`Vorsortierung übersprungen: ${r.error}`);
+  }
+
+  const batches = batchUnits(fresh, budget);
+  const models = [config.model, ...(config.consensusModel && config.consensusModel !== config.model ? [config.consensusModel] : [])];
+  progress.total = batches.length * passes.length * models.length;
+  let estInChars = 0;
+  for (const b of batches) estInChars += SYSTEM_PROMPT.length + factBlock.length + fpBlock.length + 400 + b.map((x) => x.text).join('\n').length;
+  const estCost = costOf(approxTokens(estInChars) * passes.length * models.length, 700 * progress.total, true);
+  const cacheNote = fromCache ? ` – ${fromCache} unveränderte ${fromCache === 1 ? 'Datei' : 'Dateien'} aus dem Zwischenspeicher` : '';
+  onProgress({ phase: 'analyze', message: fresh.length
+    ? `KI-Analyse (${depth === 'thorough' ? 'gründlich, ' + passes.length + ' Durchgänge' : 'standard'}${models.length > 1 ? ', zwei Modelle' : ''}) in ${batches.length} ${batches.length === 1 ? 'Block' : 'Blöcken'}${cacheNote}`
+    : `Keine geänderten Dateien – ${fromCache} KI-Ergebnis(se) aus dem Zwischenspeicher`, total: progress.total, done: 0, cost: estCost });
+
+  // 3./4. Durchgaenge je Modell
+  let aborts = false;
+  const perModel = [];
+  for (const model of models) {
+    const cfgM = { ...config, model };
+    const found = [];
+    const batchOk = batches.map(() => true);
+    for (let i = 0; i < batches.length && !aborts; i++) {
+      for (const pass of passes) {
+        if (aborted()) { aborts = true; break; }
+        const focusLine = pass.hint ? `\nSCHWERPUNKT dieses Durchgangs: ${pass.hint} Melde auch andere klare Funde, aber grabe bei diesem Schwerpunkt besonders tief.\n` : '';
+        // Gleichbleibender Anfang (wird beim Anbieter zwischengespeichert) + wechselnder Block
+        let prefix =
+          `Pruefe die folgenden Artefakte auf Sicherheitsluecken und gib Befunde als JSON zurueck. ` +
+          `Suche aktiv auch nach Logik-, Autorisierungs- (IDOR/fehlende Rechtepruefung), Auth-Bypass- und Race-Condition-Fehlern, die reine Mustererkennung nicht findet - folge dabei den Datenfluessen von Eingaben zu gefaehrlichen Senken.` +
+          focusLine + `\n\n` + factBlock + fpBlock;
+        let user = `## Zu pruefende Artefakte (Block ${i + 1}/${batches.length}):\n` + batches[i].map((x) => x.text).join('\n');
+        if (redact) {
+          const a = redactSecrets(prefix); const b = redactSecrets(user);
+          prefix = a.text; user = b.text;
+          if (pass === passes[0] && model === models[0]) redactedCount += a.count + b.count;
+        }
+        const tag = models.length > 1 ? ` · ${model}` : '';
+        try {
+          const { text, usage } = await callProvider(cfgM, { system: SYSTEM_PROMPT, prefix, user });
+          addUsage(usage);
+          const raw = parseFindings(text);
+          for (const r of raw) { const f = normalizeFinding(r, 'ai'); f._batch = i; found.push(f); }
+          progress.done++;
+          onProgress({ phase: 'analyze', message: `Block ${i + 1}/${batches.length} · ${pass.label}${tag}: ${raw.length} Befund(e)`, total: progress.total, done: progress.done, cost: liveCost() });
+        } catch (e) {
+          progress.done++;
+          batchOk[i] = false;
+          if (aborted() || e.name === 'AbortError') { aborts = true; break; }
+          errors.push(`Block ${i + 1} (${pass.label}${tag}): ${e.message}`);
+          onProgress({ phase: 'analyze', message: `Block ${i + 1} (${pass.label}${tag}) fehlgeschlagen: ${e.message}`, total: progress.total, done: progress.done, error: true });
+        }
+      }
+    }
+    perModel.push({ model, found, batchOk });
+    if (aborts) break;
+  }
+  if (aborts) errors.push('KI-Analyse abgebrochen - Teilergebnis angezeigt.');
   if (redactedCount) errors.push(`Datenschutz: ${redactedCount} Secret(s) vor dem Versand an den externen KI-Anbieter geschwaerzt.`);
 
-  // Zweite Stufe: reine KI-Befunde am Code-Ausschnitt gegenpruefen; widerlegte fallen heraus.
+  let aiFindings = perModel.length > 1 ? consensus(perModel[0].found, perModel[1].found, perModel.map((p) => p.model)) : (perModel[0] ? perModel[0].found : []);
+
+  // Ergebnisse je Datei zwischenspeichern (nur vollstaendig gelaufene Bloecke)
+  if (cache && !aborts) {
+    const okAll = (i) => perModel.every((p) => p.batchOk[i]);
+    batches.forEach((b, i) => {
+      if (!okAll(i)) return;
+      const byUnit = attribute(aiFindings.filter((f) => f._batch === i), b.map((x) => x.unit));
+      for (const x of b) cache.set(unitKey(x.unit, config, depth), byUnit.get(x.unit.label) || []);
+    });
+    for (const u of skippedByTriage) cache.set(unitKey(u, config, depth), []);
+  }
+  for (const f of aiFindings) delete f._batch;
+  aiFindings = [...cachedFindings, ...aiFindings];
+
+  // 5. Gegenpruefung: reine KI-Befunde am Code-Ausschnitt; widerlegte fallen heraus.
   let merged = dedupeFindings([...prescanFindings, ...aiFindings]);
   let refuted = [];
-  if (!aborted) {
+  if (!aborts) {
     const v = await validateFindings({ findings: merged, units, config, onProgress });
     merged = v.findings; refuted = v.refuted;
-    usedIn += v.usage.inputTokens; usedOut += v.usage.outputTokens;
+    addUsage(v.usage);
     errors.push(...v.errors);
     if (refuted.length) errors.push(`Gegenprüfung: ${refuted.length} KI-Befund(e) widerlegt und verworfen – ${refuted.slice(0, 5).map((f) => f.title).join('; ')}${refuted.length > 5 ? ' …' : ''}`);
   }
+  if (cache && typeof cache.flush === 'function') cache.flush();
   const all = sortFindings(enrich(merged, units));
   return {
     findings: all,
     summary: summarize(all),
     errors,
-    meta: { batches: batches.length, passes: passes.length, depth, units: units.length, provider: config.provider, model: config.model, at: new Date().toISOString(), usage: costOf(usedIn, usedOut, false), redacted: redactedCount, refuted: refuted.length },
+    meta: { batches: batches.length, passes: passes.length, depth, units: units.length, provider: config.provider, model: config.model, consensusModel: models[1] || null, triageModel: config.triageModel || null, at: new Date().toISOString(), usage: liveCost(), redacted: redactedCount, refuted: refuted.length, fromCache, skippedByTriage: skippedByTriage.length },
   };
+}
+
+// --- Hilfen fuer Zwischenspeicher, Vorsortierung, Konsens -------------------------
+const PROMPT_VERSION = 'v3';
+const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
+function unitKey(u, cfg, depth) {
+  return sha([PROMPT_VERSION, cfg.provider, cfg.model, cfg.consensusModel || '', depth, u.label, u.content || ''].join('\u0000'));
+}
+const fileOf = (loc) => String(loc || '').replace(/\\/g, '/').replace(/(:\d+)+$/, '').trim().toLowerCase();
+// Befunde den Dateien eines Blocks zuordnen (ueber den Dateiteil des Orts)
+function attribute(findings, units) {
+  const map = new Map();
+  for (const f of findings) {
+    const file = fileOf(f.location);
+    const u = units.find((x) => { const l = String(x.label).replace(/\\/g, '/').toLowerCase(); return file === l || file.endsWith('/' + l) || l.endsWith('/' + file) || (file && l.endsWith(file)); });
+    if (!u) continue;
+    if (!map.has(u.label)) map.set(u.label, []);
+    const copy = { ...f }; delete copy._batch;
+    map.get(u.label).push(copy);
+  }
+  return map;
+}
+
+const TRIAGE_PROMPT = `Du sortierst Quelltext-Dateien fuer eine Sicherheitspruefung vor. Markiere jede Datei, die moeglicherweise sicherheitsrelevanten Code enthaelt: Eingaben von aussen, Datenbank, Dateien, Shell, Netzwerk, Anmeldung, Rechte, Krypto, Geheimnisse, Templates/HTML, Deserialisierung, Konfiguration. Im Zweifel markieren. Unauffaellig sind z. B. reine Typdefinitionen, Styles, Konstanten, Tests ohne Logik.
+Antworte NUR mit JSON: {"suspicious":["<UNIT-Name>", ...]}`;
+async function triage(units, cfg, { redact, addUsage, onProgress, signal }) {
+  const batches = batchUnits(units, 60000);
+  const keep = new Set();
+  for (let i = 0; i < batches.length; i++) {
+    if (signal && signal.aborted) return { ok: false, error: 'abgebrochen' };
+    onProgress({ phase: 'analyze', message: `Vorsortierung mit ${cfg.model}: Block ${i + 1}/${batches.length} …` });
+    let user = batches[i].map((x) => x.text).join('\n');
+    if (redact) user = redactSecrets(user).text;
+    try {
+      const { text, usage } = await callProvider(cfg, { system: TRIAGE_PROMPT, user });
+      addUsage(usage);
+      const j = parseJsonObject(text);
+      if (!j || !Array.isArray(j.suspicious)) { batches[i].forEach((x) => keep.add(x.unit.label)); continue; }
+      const names = j.suspicious.map((s) => String(s).toLowerCase()).filter(Boolean);
+      for (const x of batches[i]) { const l = x.unit.label.toLowerCase(); if (names.some((n) => l.includes(n) || n.includes(l))) keep.add(x.unit.label); }
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  return { ok: true, keep };
+}
+function parseJsonObject(text) {
+  const t = String(text || '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+  try { return JSON.parse(t); } catch { /* weiter */ }
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a >= 0 && b > a) { try { return JSON.parse(t.slice(a, b + 1)); } catch { /* egal */ } }
+  return null;
+}
+
+const CONF_DOWN = { high: 'medium', medium: 'low', low: 'low' };
+const lineNo = (loc) => { const m = String(loc || '').match(/:(\d+)(?::\d+)?$/); return m ? Number(m[1]) : null; };
+function sameIssue(a, b) {
+  if (fileOf(a.location) !== fileOf(b.location)) return false;
+  const la = lineNo(a.location), lb = lineNo(b.location);
+  if (la != null && lb != null) return Math.abs(la - lb) <= 5;
+  return a.category === b.category;
+}
+// Zwei Modelle: Treffer beider -> sicher; Einzelfunde -> eine Stufe weniger Vertrauen
+function consensus(a, b, models) {
+  const usedB = new Set();
+  const out = [];
+  for (const f of a) {
+    const j = b.findIndex((g, k) => !usedB.has(k) && sameIssue(f, g));
+    if (j >= 0) { usedB.add(j); out.push({ ...f, confidence: 'high', consensus: 'both' }); }
+    else out.push({ ...f, confidence: CONF_DOWN[f.confidence] || 'low', consensus: `only:${models[0]}` });
+  }
+  b.forEach((g, k) => { if (!usedB.has(k)) out.push({ ...g, confidence: CONF_DOWN[g.confidence] || 'low', consensus: `only:${models[1]}` }); });
+  return out;
 }
 
 // Vorab-Schaetzung ohne KI-Aufruf: gleiche Blockbildung wie analyze(), daraus Tokens, Kosten, Dauer.
@@ -197,7 +336,7 @@ function estimateRun({ units = [], facts = '', config = {}, charBudget }) {
   const batches = batchUnits(units, charBudget || DEFAULT_CHAR_BUDGET);
   const factLen = facts ? Math.min(8000, facts.length) + 60 : 0;
   let chars = 0;
-  for (const b of batches) chars += SYSTEM_PROMPT.length + factLen + 400 + b.join('\n').length;
+  for (const b of batches) chars += SYSTEM_PROMPT.length + factLen + 400 + b.map((x) => x.text).join('\n').length;
   const calls = batches.length * passes;
   let inputTokens = approxTokens(chars) * passes;
   let outputTokens = 700 * calls;
@@ -209,4 +348,4 @@ function estimateRun({ units = [], facts = '', config = {}, charBudget }) {
   return { units: units.length, batches: batches.length, passes, calls, inputTokens: c.inputTokens, outputTokens: c.outputTokens, usd: c.usd, priced: c.priced, local: c.local, seconds: calls * perCall, depth };
 }
 
-module.exports = { analyze, parseFindings, estimateRun, SYSTEM_PROMPT };
+module.exports = { analyze, parseFindings, estimateRun, consensus, attribute, unitKey, SYSTEM_PROMPT };

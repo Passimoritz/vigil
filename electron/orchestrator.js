@@ -44,6 +44,8 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
       cfg.signal = ctrl.signal;
       // Domain-Nachweis aus dem Speicher mitgeben – entscheidet ueber tiefe Web-Pruefungen.
       const targets = job.targets.map((t) => { const rec = db.targets[store.targetIdOf(t)]; return { ...t, verified: !!(rec && rec.ownershipVerified) }; });
+      // Aus Fehlalarmen lernen: bestaetigte Fehlalarme dieser Ziele gehen als Hinweis an die KI
+      cfg.knownFalsePositives = store.falsePositivesFor(db, job.targets.map((t) => store.targetIdOf(t)));
       const { result } = await runAudit(targets, cfg, (p) => { try { if (job.onProgress) job.onProgress(p); } catch { /* Fenster weg */ } });
       const scannersRun = (result.meta && result.meta.scannersRun) || [];
       // Abgebrochene oder gedrosselte Laeufe sind unvollstaendig: nichts automatisch schliessen.

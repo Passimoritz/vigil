@@ -156,8 +156,18 @@ function effectiveConfig(cfg, providerId) {
     redactSecrets: cfg.redactSecrets !== false,
     customRules: Array.isArray(cfg.customRules) ? cfg.customRules : [],
     disabledRules: Array.isArray(cfg.disabledRules) ? cfg.disabledRules : [],
+    gitHistory: cfg.gitHistory !== false,
+    incremental: cfg.incremental !== false,
+    // Kleines Modell zum Vorsortieren bzw. zweites Modell zum Gegenpruefen (je Anbieter, optional)
+    triageModel: (p.triageModel || '').trim() || null,
+    consensusModel: (p.consensusModel || '').trim() || null,
   };
 }
+
+// KI-Zwischenspeicher (nur Geaendertes neu pruefen) – eine Instanz je App-Lauf
+const { openCache } = require('../src/core/aicache');
+let aiCacheInst = null;
+const aiCache = () => (aiCacheInst = aiCacheInst || openCache(path.join(app.getPath('userData'), 'ai-cache.json')));
 
 function iconPath() {
   const ico = path.join(__dirname, '..', 'assets', 'icon.ico');
@@ -224,7 +234,7 @@ app.whenReady().then(() => {
     runAudit,
     buildConfig: (providerId) => {
       const c = loadConfig(); applyProxySafe(c);
-      return { ...effectiveConfig(c, providerId || c.selected), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), maxRequestsPerSecond: c.maxRequestsPerSecond || 4 };
+      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), maxRequestsPerSecond: c.maxRequestsPerSecond || 4 };
     },
   });
   api = createApi({ orchestrator, getConfig: loadConfig, enforceScope });
@@ -326,6 +336,8 @@ ipcMain.handle('audit:run', async (e, payload) => {
   return out;
 });
 
+ipcMain.handle('aicache:info', () => ({ entries: aiCache().size() }));
+ipcMain.handle('aicache:clear', () => { aiCache().clear(); return { ok: true }; });
 ipcMain.handle('audit:cancel', () => ({ ok: orchestrator.cancel() }));
 
 // Kosten-/Token-Vorschau: aktueller Modus + Vergleich mit dem jeweils anderen Modus.

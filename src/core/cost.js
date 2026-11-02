@@ -68,7 +68,11 @@ function approxTokens(chars) {
 
 // Kosten fuer eine (geschaetzte oder tatsaechliche) Token-Menge berechnen.
 // Rueckgabe: { local, priced, usd, inputTokens, outputTokens, rate }
-function estimateCost({ provider, model, baseUrl, inputTokens = 0, outputTokens = 0 } = {}) {
+// Zwischengespeicherte Eingangs-Tokens kosten nur einen Bruchteil (Anteil des normalen Preises).
+const CACHE_READ_FACTOR = { anthropic: 0.1, openai: 0.25, gemini: 0.25 };
+const CACHE_WRITE_FACTOR = { anthropic: 1.25 };
+
+function estimateCost({ provider, model, baseUrl, inputTokens = 0, outputTokens = 0, cachedTokens = 0, cacheWriteTokens = 0 } = {}) {
   const inTok = Math.max(0, Math.round(inputTokens) || 0);
   const outTok = Math.max(0, Math.round(outputTokens) || 0);
   if (isLocalProvider(provider, baseUrl)) {
@@ -78,8 +82,12 @@ function estimateCost({ provider, model, baseUrl, inputTokens = 0, outputTokens 
   if (!rate) {
     return { local: false, priced: false, usd: 0, inputTokens: inTok, outputTokens: outTok, rate: null };
   }
-  const usd = (inTok / 1e6) * rate.in + (outTok / 1e6) * rate.out;
-  return { local: false, priced: true, usd, inputTokens: inTok, outputTokens: outTok, rate };
+  const cached = Math.min(inTok, Math.max(0, cachedTokens || 0));
+  const written = Math.min(inTok - cached, Math.max(0, cacheWriteTokens || 0));
+  const plain = inTok - cached - written;
+  const usd = ((plain + cached * (CACHE_READ_FACTOR[provider] ?? 1) + written * (CACHE_WRITE_FACTOR[provider] ?? 1)) / 1e6) * rate.in + (outTok / 1e6) * rate.out;
+  const fullUsd = (inTok / 1e6) * rate.in + (outTok / 1e6) * rate.out;
+  return { local: false, priced: true, usd, savedUsd: Math.max(0, fullUsd - usd), cachedTokens: cached, inputTokens: inTok, outputTokens: outTok, rate };
 }
 
 module.exports = { PRICING, isLocalProvider, looksLocalUrl, priceFor, approxTokens, estimateCost };

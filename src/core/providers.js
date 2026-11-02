@@ -103,7 +103,7 @@ async function httpJson(url, options, timeoutMs = 120000, extSignal) {
 }
 
 // --- Ollama -------------------------------------------------------------
-async function callOllama(cfg, { system, user }) {
+async function callOllama(cfg, { system, user, prefix }) {
   const base = (cfg.baseUrl || PROVIDERS.ollama.defaultBaseUrl).replace(/\/$/, '');
   let json;
   try {
@@ -115,7 +115,9 @@ async function callOllama(cfg, { system, user }) {
         stream: false,
         format: 'json',
         options: { temperature: cfg.temperature ?? 0.1 },
-        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+        // Modell zwischen den Bloecken im Speicher halten (sonst Neuladen je Aufruf)
+        keep_alive: '20m',
+        messages: [{ role: 'system', content: system }, { role: 'user', content: prefix ? prefix + user : user }],
       }),
     }, 120000, cfg.signal);
   } catch (e) {
@@ -128,7 +130,7 @@ async function callOllama(cfg, { system, user }) {
 }
 
 // --- Anthropic / Claude -------------------------------------------------
-async function callAnthropic(cfg, { system, user }) {
+async function callAnthropic(cfg, { system, user, prefix }) {
   const base = (cfg.baseUrl || PROVIDERS.anthropic.defaultBaseUrl).replace(/\/$/, '');
   const json = await httpJson(`${base}/v1/messages`, {
     method: 'POST',
@@ -142,8 +144,12 @@ async function callAnthropic(cfg, { system, user }) {
     body: JSON.stringify({
       model: cfg.model || PROVIDERS.anthropic.defaultModel,
       max_tokens: cfg.maxTokens || 4096,
-      system,
-      messages: [{ role: 'user', content: user }],
+      // Prompt-Caching: System-Prompt und gleichbleibender Anfang (Anweisung + Fakten) werden
+      // beim Anbieter zwischengespeichert und bei Folgeaufrufen zum Bruchteil abgerechnet.
+      system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content: prefix
+        ? [{ type: 'text', text: prefix, cache_control: { type: 'ephemeral' } }, { type: 'text', text: user }]
+        : [{ type: 'text', text: user }] }],
     }),
   }, 120000, cfg.signal);
   const text = Array.isArray(json?.content)
@@ -155,12 +161,14 @@ async function callAnthropic(cfg, { system, user }) {
     usage: {
       inputTokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0),
       outputTokens: u.output_tokens || 0,
+      cachedTokens: u.cache_read_input_tokens || 0,
+      cacheWriteTokens: u.cache_creation_input_tokens || 0,
     },
   };
 }
 
 // --- OpenAI (und kompatibel) -------------------------------------------
-async function callOpenAICompatible(cfg, { system, user }, fallbackBase) {
+async function callOpenAICompatible(cfg, { system, user, prefix }, fallbackBase) {
   const base = (cfg.baseUrl || fallbackBase || '').replace(/\/$/, '');
   if (!base) throw new Error('Keine Basis-URL fuer den OpenAI-kompatiblen Anbieter gesetzt.');
   const headers = { 'Content-Type': 'application/json' };
@@ -172,19 +180,19 @@ async function callOpenAICompatible(cfg, { system, user }, fallbackBase) {
       model: cfg.model,
       temperature: cfg.temperature ?? 0.1,
       max_tokens: cfg.maxTokens || 4096,
-      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      messages: [{ role: 'system', content: system }, { role: 'user', content: prefix ? prefix + user : user }],
       response_format: { type: 'json_object' },
     }),
   }, 120000, cfg.signal);
   const u = json?.usage || {};
   return {
     text: json?.choices?.[0]?.message?.content || '',
-    usage: { inputTokens: u.prompt_tokens || 0, outputTokens: u.completion_tokens || 0 },
+    usage: { inputTokens: u.prompt_tokens || 0, outputTokens: u.completion_tokens || 0, cachedTokens: (u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0 },
   };
 }
 
 // --- Gemini -------------------------------------------------------------
-async function callGemini(cfg, { system, user }) {
+async function callGemini(cfg, { system, user, prefix }) {
   const base = (cfg.baseUrl || PROVIDERS.gemini.defaultBaseUrl).replace(/\/$/, '');
   const model = cfg.model || PROVIDERS.gemini.defaultModel;
   // Schluessel als Header statt in der URL (landet sonst in Logs/Proxies/History).
@@ -194,7 +202,7 @@ async function callGemini(cfg, { system, user }) {
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.apiKey || '' },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
-      contents: [{ role: 'user', parts: [{ text: user }] }],
+      contents: [{ role: 'user', parts: [{ text: prefix ? prefix + user : user }] }],
       generationConfig: {
         temperature: cfg.temperature ?? 0.1,
         maxOutputTokens: cfg.maxTokens || 4096,
@@ -206,7 +214,7 @@ async function callGemini(cfg, { system, user }) {
   const u = json?.usageMetadata || {};
   return {
     text,
-    usage: { inputTokens: u.promptTokenCount || 0, outputTokens: u.candidatesTokenCount || 0 },
+    usage: { inputTokens: u.promptTokenCount || 0, outputTokens: u.candidatesTokenCount || 0, cachedTokens: u.cachedContentTokenCount || 0 },
   };
 }
 

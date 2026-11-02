@@ -717,6 +717,59 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('system: nur bekannte System-Prüfungen erlaubt', !!TargetSchema && TargetSchema.safeParse({ type: 'system', value: 'windows' }).success && !TargetSchema.safeParse({ type: 'system', value: 'rm -rf' }).success);
   }
 
+  // --- KI: nur Geaendertes, Vorsortierung, zwei Modelle, Fehlalarme lernen, Prompt-Cache ---
+  {
+    const http = require('http');
+    const { analyze, consensus } = require('../src/core/analyze');
+    let calls = [];
+    const srv = http.createServer((req, res) => {
+      let body = ''; req.on('data', (d) => { body += d; }); req.on('end', () => {
+        const j = JSON.parse(body); calls.push(j);
+        const sys = j.messages[0].content, user = j.messages[1].content;
+        let content;
+        if (/sortierst Quelltext/.test(sys)) content = JSON.stringify({ suspicious: ['proj/db.js'] });
+        else content = JSON.stringify({ findings: /db\.js/.test(user) ? [{ title: 'SQL-Injection in getUser', severity: 'high', category: 'Injection', location: 'proj/db.js:2', description: 'x', remediation: 'y', confidence: 'medium' }] : [] });
+        res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ message: { content }, prompt_eval_count: 100, eval_count: 20 }));
+      });
+    });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${srv.address().port}`;
+    const mem = {}; const cache = { get: (k) => mem[k], set: (k, v) => { mem[k] = v; } };
+    const units = [{ label: 'proj/db.js', kind: 'file', language: 'javascript', content: 'const q = "SELECT * FROM u WHERE id=" + req.query.id;\ndb.query(q);' }, { label: 'proj/style.js', kind: 'file', language: 'javascript', content: 'export const color = "red";' }];
+    const cfg = { provider: 'ollama', model: 'big', baseUrl: base, analysisDepth: 'standard', aiValidation: false, aiCache: cache };
+    const r1 = await analyze({ units, config: cfg });
+    const n1 = calls.length;
+    check('ki-cache: erster Lauf fragt die KI', n1 >= 1 && r1.findings.some((f) => /SQL-Injection/.test(f.title)));
+    const r2 = await analyze({ units, config: cfg });
+    check('ki-cache: unveränderter zweiter Lauf ohne KI-Aufruf, gleicher Befund', calls.length === n1 && r2.meta.fromCache === 2 && r2.findings.some((f) => /SQL-Injection/.test(f.title)));
+    const changed = [{ ...units[0], content: units[0].content + '\n// geändert' }, units[1]];
+    await analyze({ units: changed, config: cfg });
+    const sent = calls.slice(n1).map((c) => c.messages[1].content).join('\n');
+    check('ki-cache: nur die geänderte Datei geht erneut an die KI', /db\.js/.test(sent) && !/style\.js/.test(sent));
+    calls = [];
+    const r3 = await analyze({ units, config: { ...cfg, aiCache: null, triageModel: 'tiny' } });
+    const mainSent = calls.filter((c) => c.model === 'big').map((c) => c.messages[1].content).join('\n');
+    check('vorsortierung: kleines Modell siebt unauffällige Datei aus', calls.some((c) => c.model === 'tiny') && /db\.js/.test(mainSent) && !/style\.js/.test(mainSent) && r3.meta.skippedByTriage === 1);
+    calls = [];
+    const r4 = await analyze({ units, config: { ...cfg, aiCache: null, consensusModel: 'second' } });
+    check('zwei modelle: beide gefragt, gemeinsamer Fund gilt als sicher', calls.some((c) => c.model === 'second') && r4.findings.some((f) => f.consensus === 'both' && f.confidence === 'high'));
+    srv.close();
+    const mixed = consensus([{ location: 'a.js:10', category: 'XSS', confidence: 'high' }], [{ location: 'a.js:12', category: 'XSS', confidence: 'medium' }, { location: 'b.js:1', category: 'Auth', confidence: 'high' }], ['A', 'B']);
+    check('zwei modelle: Einzelfund wird heruntergestuft', mixed.length === 2 && mixed[0].consensus === 'both' && mixed[1].consensus === 'only:B' && mixed[1].confidence === 'medium');
+    const st = require('../src/core/store');
+    const db = st.emptyStore();
+    const tg = [{ type: 'path', value: 'C:/p' }];
+    const first = st.applyRun(db, { targets: tg, findings: [{ ruleId: 'sql-injection-in-getuser', title: 'SQL-Injection in getUser', location: 'p/db.js:2', category: 'Injection', severity: 'high', source: 'ai' }], scannersRun: [] });
+    st.setStatus(db, first.findings[0].id, 'FALSE_POSITIVE');
+    const again = st.applyRun(db, { targets: tg, findings: [{ ruleId: 'sql-injection-in-getuser', title: 'SQL-Injection in getUser', location: 'p/db.js:7', category: 'Injection', severity: 'high', source: 'ai' }], scannersRun: [] });
+    check('fehlalarm lernen: gleicher Befund an anderer Zeile bleibt ausgeblendet', again.findings[0].status === 'FALSE_POSITIVE' && again.findings[0].suppressed && again.counters.learned === 1);
+    check('fehlalarm lernen: Hinweisliste für die KI', st.falsePositivesFor(db, [first.findings[0].targetId]).length >= 1);
+    const { estimateCost } = require('../src/core/cost');
+    const full = estimateCost({ provider: 'anthropic', model: 'claude-sonnet-5', inputTokens: 1e6, outputTokens: 0 });
+    const cached = estimateCost({ provider: 'anthropic', model: 'claude-sonnet-5', inputTokens: 1e6, outputTokens: 0, cachedTokens: 9e5 });
+    check('prompt-cache: zwischengespeicherte Tokens kosten nur einen Bruchteil', cached.usd < full.usd * 0.25 && cached.savedUsd > 0);
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

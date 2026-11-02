@@ -117,15 +117,32 @@ function applyRun(store, run) {
   const seen = new Set();
   const counters = { created: 0, reopened: 0, resolved: 0, updated: 0 };
 
+  // Fehlalarme lernen: gleiche Regel (bzw. gleicher Titel) in derselben Datei, nur andere Zeile
+  const learnedFp = new Map();
+  for (const r of Object.values(store.findings)) {
+    if (r.status !== 'FALSE_POSITIVE') continue;
+    const file = splitLoc(r.location).file || String(r.location || '').toLowerCase();
+    learnedFp.set(`${r.targetId}|${r.ruleId}|${file}`, r);
+    learnedFp.set(`${r.targetId}|t:${normTitle(r.title)}|${file}`, r);
+  }
+  counters.learned = 0;
   const annotated = run.findings.map((f) => {
     const targetId = assignTarget(f, runTargets);
     const fp = fingerprintOf(targetId, f);
     seen.add(fp);
-    const prev = store.findings[fp];
+    let prev = store.findings[fp];
+    if (!prev) {
+      const file = splitLoc(f.location).file || String(f.location || '').toLowerCase();
+      const twin = learnedFp.get(`${targetId}|${f.ruleId || ''}|${file}`) || learnedFp.get(`${targetId}|t:${normTitle(f.title)}|${file}`);
+      if (twin) {
+        counters.learned++;
+        prev = { status: 'FALSE_POSITIVE', statusNote: 'Automatisch als Fehlalarm übernommen: derselbe Befund in dieser Datei wurde früher als Fehlalarm markiert.', firstSeenAt: now, statusChangedAt: now, learned: true };
+      }
+    }
     const snapshot = { ...f };
     delete snapshot.id; delete snapshot.status; delete snapshot.isNew; delete snapshot.suppressed; delete snapshot.regression;
     let status = 'OPEN', isNew = false, regression = false;
-    if (!prev) { isNew = true; counters.created++; }
+    if (!prev || prev.learned) { isNew = !prev; if (!prev) counters.created++; if (prev && prev.learned) status = 'FALSE_POSITIVE'; }
     else if (prev.status === 'RESOLVED') { regression = true; counters.reopened++; }
     else { status = prev.status; counters.updated++; }
     const isBaselineLegacy = prev ? !!prev.isBaselineLegacy : false;
@@ -138,6 +155,7 @@ function applyRun(store, run) {
       location: f.location, evidence: f.evidence || (prev && prev.evidence) || undefined,
       status,
       statusNote: prev && status === prev.status ? prev.statusNote : (regression ? 'Wieder aufgetaucht (Regression).' : undefined),
+      ...(prev && prev.learned ? { learnedFalsePositive: true } : {}),
       isBaselineLegacy,
       linkedFindingIds: [],
       firstSeenAt: prev ? prev.firstSeenAt : now,
@@ -179,6 +197,17 @@ function applyRun(store, run) {
   }
   const toxic = annotated.filter((f) => f.toxic && !HIDDEN.has(f.status)).length;
   return { findings: annotated, counters: { ...counters, toxic }, resolved: resolvedNow, targetIds: runTargets.map((t) => t.id) };
+}
+
+const normTitle = (t) => String(t || '').toLowerCase().replace(/d+/g, '#').replace(/s+/g, ' ').trim().slice(0, 80);
+
+// Bestaetigte Fehlalarme der Ziele (neueste zuerst) – Hinweis fuer die KI
+function falsePositivesFor(store, targetIds) {
+  const ids = new Set(targetIds);
+  return Object.values(store.findings)
+    .filter((r) => ids.has(r.targetId) && r.status === 'FALSE_POSITIVE')
+    .sort((a, b) => String(b.statusChangedAt).localeCompare(String(a.statusChangedAt)))
+    .slice(0, 40).map((r) => ({ title: r.title, location: r.location }));
 }
 
 // Baseline: alle derzeit offenen Befunde eines Ziels als "Altlast" markieren –
@@ -278,4 +307,4 @@ function updateRun(store, id, patch) {
   return r;
 }
 
-module.exports = { emptyStore, load, save, targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };
+module.exports = { emptyStore, load, save, targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, falsePositivesFor, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };
