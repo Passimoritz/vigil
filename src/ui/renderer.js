@@ -105,6 +105,7 @@ function updateRunState() {
   else if (!ready.ok) $('runHint').textContent = ready.why;
   else $('runHint').textContent = `Bereit – ${state.targets.length} ${state.targets.length === 1 ? 'Ziel' : 'Ziele'} mit ${ready.label}.`;
   scheduleEstimate(ready.ok && needsAi());
+  setRunEta();
   updateStatusBar();
 }
 
@@ -142,8 +143,21 @@ let estTimer = null;
 let estSeq = 0;
 function scheduleEstimate(show) {
   clearTimeout(estTimer);
-  if (!show) { $('estimateCard').hidden = true; state.estimate = null; return; }
+  if (!show) { $('estimateCard').hidden = true; state.estimate = null; setRunEta(); return; }
   estTimer = setTimeout(refreshEstimate, 350);
+}
+// Grobe Dauer der KI-losen Pruefungen (Web, Server, Image) – je Ziel, passiv und gedrosselt.
+const PASSIVE_SECONDS = { url: 45, endpoint: 60, image: 90, path: 0 };
+function expectedSeconds() {
+  const passive = state.targets.reduce((s, t) => s + (PASSIVE_SECONDS[t.type] || 0), 0);
+  if (needsAi()) return state.estimate ? state.estimate.seconds + passive : null;
+  return state.targets.length ? Math.max(15, passive) : null;
+}
+// Voraussichtliche Zeit direkt im Start-Button
+function setRunEta() {
+  const s = state.running ? null : expectedSeconds();
+  $('runEta').hidden = s == null;
+  if (s != null) $('runEta').textContent = fmtDur(s);
 }
 async function refreshEstimate() {
   const seq = ++estSeq;
@@ -158,6 +172,7 @@ async function refreshEstimate() {
   if (!r || !r.ok) { card.innerHTML = `<div class="est-head"><span>Vorschau</span></div><p class="muted small">Keine Schätzung möglich${r && r.error ? ': ' + esc(r.error) : ''}.</p>`; return; }
   const c = r.current, o = r.other;
   state.estimate = c;
+  setRunEta();
   const total = c.inputTokens + c.outputTokens;
   const price = c.local ? '<b class="est-price free">Kostenlos</b><span class="muted small">läuft lokal auf deinem Rechner</span>'
     : c.priced ? `<b class="est-price">≈ ${esc(fmtUsd(c.usd))}</b><span class="muted small">${esc(r.model || '')}</span>`
@@ -199,15 +214,25 @@ async function runAudit() {
   $('progressTitle').textContent = 'Prüfung läuft …';
   $('progressPanel').classList.remove('done', 'failed');
   renderStepper('ingest');
+  resetStage();
+  $('baselineStatus').textContent = 'Prüfung läuft – die Befunde erscheinen hier, sobald sie fertig ist.';
   showView('results');
-  // Laufzeit live mitzaehlen
-  const tick = () => { $('progressSub').textContent = `${state.targets.map((t) => t.value).join(', ')} · ${fmtElapsed(Date.now() - state.runStartedAt)}`; };
+  // Laufzeit und Restzeit live mitzaehlen
+  const expected = expectedSeconds();
+  const tick = () => {
+    const ms = Date.now() - state.runStartedAt;
+    $('progressSub').textContent = `${state.targets.map((t) => t.value).join(', ')} · ${fmtElapsed(ms)}`;
+    $('stageElapsed').textContent = fmtElapsed(ms);
+    if (expected == null) $('stageEta').textContent = '–';
+    else { const left = expected - ms / 1000; $('stageEta').textContent = left > 5 ? fmtDur(left).replace('≈ ', '') : 'gleich'; }
+  };
   tick();
   clearInterval(state.elapsedTimer);
   state.elapsedTimer = setInterval(tick, 1000);
 
   const unsub = window.vigil.onProgress((p) => {
     renderStepper(p.phase);
+    updateStage(p);
     $('log').textContent += `[${p.phase}]${p.total ? ` ${p.done}/${p.total}` : ''} ${p.message}\n`;
     $('log').scrollTop = $('log').scrollHeight;
     if (p.total) $('barFill').style.width = Math.round((p.done / p.total) * 100) + '%';
@@ -219,7 +244,7 @@ async function runAudit() {
   try { state.config.allowlist = (await window.vigil.getConfig()).allowlist || []; } catch { /* egal */ }
   unsub();
   clearInterval(state.elapsedTimer);
-  state.running = false; updateRunState();
+  state.running = false; updateRunState(); setRunEta();
   $('cancelBtn').hidden = true;
   const took = fmtElapsed(Date.now() - state.runStartedAt);
 
@@ -244,6 +269,38 @@ async function runAudit() {
     const n = (res.result.findings || []).filter((f) => !f.suppressed).length;
     toast(res.canceled ? 'Abgebrochen – Teilergebnis geladen' : `Fertig: ${n} ${n === 1 ? 'Befund' : 'Befunde'} in ${took}`, 'ok');
   }
+}
+// Radar-Buehne: Phase, Meldung, Fortschritt und ein Leuchtpunkt je Ereignis
+function resetStage() {
+  state.stagePhase = null;
+  $('radarBlips').innerHTML = '';
+  $('stagePhase').textContent = PHASES[0].label;
+  $('stageStep').textContent = `Schritt 1 von ${PHASES.length}`;
+  $('stageMsg').textContent = 'Starte …';
+  $('stagePct').textContent = '0 %';
+}
+function updateStage(p) {
+  const i = PHASES.findIndex((x) => x.key === p.phase);
+  if (i >= 0 && p.phase !== state.stagePhase) {
+    state.stagePhase = p.phase;
+    const el = $('stagePhase');
+    el.textContent = PHASES[i].label;
+    el.classList.remove('swap'); void el.offsetWidth; el.classList.add('swap');
+    $('stageStep').textContent = `Schritt ${i + 1} von ${PHASES.length}`;
+  }
+  if (p.message) $('stageMsg').textContent = p.message;
+  $('stagePct').textContent = p.total ? Math.round((p.done / p.total) * 100) + ' %' : '–';
+  // Leuchtpunkt an zufaelliger Stelle im Radar (hoechstens 14 sichtbar)
+  const box = $('radarBlips');
+  const a = Math.random() * Math.PI * 2, r = 40 + Math.random() * 50;
+  const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  c.setAttribute('cx', (100 + Math.cos(a) * r).toFixed(1));
+  c.setAttribute('cy', (100 + Math.sin(a) * r).toFixed(1));
+  c.setAttribute('r', '3');
+  c.setAttribute('fill', Math.random() < 0.2 ? '#ff8a3d' : '#2ee6c8');
+  c.setAttribute('class', 'blip');
+  box.appendChild(c);
+  while (box.childNodes.length > 14) box.firstChild.remove();
 }
 const fmtElapsed = (ms) => { const s = Math.round(ms / 1000); return s < 60 ? `${s} s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} min`; };
 

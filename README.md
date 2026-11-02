@@ -154,3 +154,7 @@ src/
 ```
 
 Neuer Anbieter: in `src/core/providers.js` einen Eintrag + Aufruf ergänzen – der Rest bleibt gleich.
+
+## Roadmap
+
+Geplante Erweiterungen mit Checkliste: [ROADMAP.md](ROADMAP.md).

@@ -13,7 +13,12 @@
   <!-- ===================== Seitenleiste ===================== -->
   <aside class="sidebar" aria-label="Navigation">
     <div class="brand">
-      <span class="logo-tile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m8.5 12 2.3 2.4L15.8 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <span class="logo-tile"><svg viewBox="0 0 24 24" aria-hidden="true">
+        <defs><linearGradient id="logoShield" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2ee6c8"/><stop offset="1" stop-color="#6a70ff"/></linearGradient></defs>
+        <circle cx="12" cy="12.4" r="8.6" fill="none" stroke="#2ee6c8" stroke-opacity=".45" stroke-width="1.1"/>
+        <path d="M12 5.2c1.7.95 3.6 1.55 5.5 1.8v4.6c0 3.5-2.3 6-5.5 7.6-3.2-1.6-5.5-4.1-5.5-7.6V7c1.9-.25 3.8-.85 5.5-1.8z" fill="url(#logoShield)"/>
+        <circle cx="12" cy="11.6" r="1.7" fill="#fff"/>
+      </svg></span>
       <span class="brand-name">Vigil</span>
       <span class="brand-tag">Security Audit</span>
     </div>
@@ -199,7 +204,8 @@
           <div id="estimateCard" class="estimate" hidden aria-live="polite"></div>
           <button id="runBtn" class="btn primary big" disabled>
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 5.5v13l11-6.5-11-6.5z" fill="currentColor"/></svg>
-            Prüfung starten
+            <span>Prüfung starten</span>
+            <span class="run-eta" id="runEta" hidden></span>
           </button>
           <p class="run-hint" id="runHint" aria-live="polite"></p>
           <p class="kbd-hint"><kbd>Strg</kbd>+<kbd>Enter</kbd> startet</p>
@@ -250,6 +256,39 @@
 
     <!-- Fortschritt -->
     <section class="card progress" id="progressPanel" hidden aria-live="polite">
+      <div class="scan-stage" id="scanStage" aria-hidden="true">
+        <div class="radar">
+          <svg viewBox="0 0 200 200">
+            <defs>
+              <radialGradient id="radarBg" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#12304a"/><stop offset="1" stop-color="#0a0f1f"/></radialGradient>
+              <linearGradient id="radarShield" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2ee6c8"/><stop offset="1" stop-color="#6a70ff"/></linearGradient>
+              <radialGradient id="radarSweep" cx="0" cy="1" r="1"><stop offset="0" stop-color="#2ee6c8" stop-opacity=".55"/><stop offset="1" stop-color="#2ee6c8" stop-opacity="0"/></radialGradient>
+            </defs>
+            <circle cx="100" cy="100" r="98" fill="url(#radarBg)"/>
+            <g fill="none" stroke="#2ee6c8">
+              <circle cx="100" cy="100" r="34" stroke-opacity=".35"/>
+              <circle cx="100" cy="100" r="60" stroke-opacity=".22"/>
+              <circle cx="100" cy="100" r="86" stroke-opacity=".12"/>
+              <path d="M100 6v188M6 100h188" stroke-opacity=".08"/>
+            </g>
+            <g class="radar-sweep"><path d="M100 100 L100 6 A94 94 0 0 1 181 53 Z" fill="url(#radarSweep)"/><path d="M100 100 L181 53" stroke="#2ee6c8" stroke-width="1.5" stroke-opacity=".8"/></g>
+            <g id="radarBlips"></g>
+            <path class="radar-shield" d="M100 72c6 3.4 12.6 5.4 19.4 6.3v16.2c0 12.3-8.2 21.1-19.4 26.8-11.2-5.7-19.4-14.5-19.4-26.8V78.3C87.4 77.4 94 75.4 100 72z" fill="url(#radarShield)"/>
+            <circle cx="100" cy="94" r="5.5" fill="#fff"/>
+          </svg>
+          <span class="radar-ping"></span>
+        </div>
+        <div class="stage-info">
+          <span class="eyebrow" id="stageStep">Schritt 1 von 8</span>
+          <strong class="stage-phase" id="stagePhase">Sammeln</strong>
+          <span class="stage-msg" id="stageMsg">Starte …</span>
+          <div class="stage-stats">
+            <div><span class="stage-n" id="stageElapsed">0 s</span><span class="stage-l">vergangen</span></div>
+            <div><span class="stage-n" id="stageEta">–</span><span class="stage-l">noch etwa</span></div>
+            <div><span class="stage-n" id="stagePct">0 %</span><span class="stage-l">dieser Schritt</span></div>
+          </div>
+        </div>
+      </div>
       <div class="progress-top">
         <div class="spinner" aria-hidden="true"></div>
         <div class="progress-title"><strong id="progressTitle">Prüfung läuft …</strong><span id="progressSub"></span></div>
