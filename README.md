@@ -1,164 +1,146 @@
-# Vigil
+<p align="center">
+  <img src="docs/images/banner.svg" alt="Vigil – defensive security audit for everything you own" width="100%">
+</p>
 
-KI-gestütztes, **defensives** Sicherheits-Audit für deine **eigenen** Artefakte: Dateien, Ordner, ZIP/JAR, EXE/Binaries sowie Links/Endpunkte, für die du eine Prüf-Berechtigung hast.
+<p align="center">
+  <b>English</b> · <a href="README.de.md">Deutsch</a>
+</p>
 
-Vigil sammelt das Material, macht eine schnelle statische Vorprüfung (Secrets, Abhängigkeiten, riskante Muster) und lässt dann eine KI – **lokal (Ollama)** oder extern (**Claude, OpenAI, Gemini** oder jeder OpenAI-kompatible Anbieter) – Schwachstellen finden, einordnen und **konkret erklären, wie man sie patcht**.
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-f2b23a"></a>
+  <img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-0f1b2d">
+  <img alt="Electron 45" src="https://img.shields.io/badge/Electron-45-47848f">
+  <img alt="AI: local or cloud" src="https://img.shields.io/badge/AI-Ollama%20%7C%20Claude%20%7C%20OpenAI%20%7C%20Gemini-2b3a55">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-294%20core%20%2B%2030%20UI-2ea44f">
+</p>
 
-## Was Vigil tut
+Vigil is a desktop app that checks **your own** code, websites, servers, containers, cloud accounts and files for security problems – and explains in plain language what is wrong and how to fix it.
 
-Pro Befund bekommst du:
-- **Schweregrad** (Kritisch → Info) und, wenn möglich, einen **CVSS-Basiswert**
-- **Ort** (Datei:Zeile / Komponente) und **Kategorie**
-- **Erreichbarkeit/Risiko** – konzeptionell: welcher Eingang, welche Voraussetzungen, wie realistisch (damit du priorisieren kannst)
-- **Auswirkung** bei Ausnutzung
-- **Behebung** Schritt für Schritt + **konkreter Patch** (Code/Config)
+It combines **fixed rules and live vulnerability databases** (which find known problems reliably) with an **AI review** (local via Ollama, or Claude, OpenAI, Gemini or any OpenAI-compatible service) that looks for logic and access flaws – and then has to **prove** every finding in a second cross-check. Everything is **non-destructive**: no attacks, no load tests, no password guessing.
 
-## Was Vigil bewusst NICHT tut
+<p align="center">
+  <img src="docs/images/results.png" alt="Results view with security grade, severity filter and a finding with its fix" width="100%">
+</p>
 
-- Keine einsatzfertigen Angriffs-Payloads, keine Exploit-Ausführung, kein DoS, keine Massen-Scans.
-- Netzwerkziele (Link/IP) werden **nur passiv** abgerufen (Antwort + Header lesen) und **nur mit bestätigter Berechtigung**. Kein Portscan, kein aktives Eindringen.
+## Highlights
 
-Gedacht für Code/Systeme, die dir gehören oder die du ausdrücklich prüfen darfst.
+- **One place for everything you own** – drop a folder, a ZIP/JAR/EXE, type a URL, a server or a container image, or pick *This Windows PC*, Docker, AWS, Azure or Google Cloud (read-only).
+- **Clear results** – a security grade, findings sorted by risk, no duplicates, and for each one: what is wrong, what can happen, and a concrete fix with copy-ready snippets.
+- **AI that has to prove itself** – AI-only findings are cross-checked against the code; refuted ones are dropped, unclear ones are marked *unconfirmed*.
+- **Privacy first** – with Ollama nothing leaves your computer. With cloud AI, detected secrets are redacted before sending. Keys and tokens are stored encrypted.
+- **Up to date without app updates** – detection data (gitleaks rules, retire.js, CISA KEV, EPSS, OSV) is fetched and validated automatically, at least once a day.
+- **Knows your history** – findings are tracked across runs: new, fixed, back again, false positive, accepted risk, plus trend, baseline and package search (SBOM).
+- **Reports for everyone** – one-page executive summary (PDF), full PDF/HTML/Markdown report, SARIF and JSON for CI.
+- **Cost and time up front** – you see the estimated cost and duration before the first token; the estimate learns from your real runs.
 
-## Installation
+## Screenshots
+
+| New scan | Overview |
+| --- | --- |
+| <img src="docs/images/scan.png" alt="New scan: targets, AI choice and cost preview" width="100%"> | <img src="docs/images/overview.png" alt="Overview across all scans with score, severity and trend" width="100%"> |
+| **Finding details** | **Settings** |
+| <img src="docs/images/overview-detail.png" alt="Detail drawer of a finding with explanation and fix" width="100%"> | <img src="docs/images/settings.png" alt="Settings grouped into General, Checks, Web & Login and Advanced" width="100%"> |
+
+## How it works
+
+<p align="center">
+  <img src="docs/images/how-it-works.svg" alt="Collect → rules and databases → AI analysis → cross-check → merge and report" width="100%">
+</p>
+
+1. **Collect** – files, folders, archives and binaries are unpacked into units; websites, servers and systems are read passively.
+2. **Rules & databases** – secrets (including deleted ones in Git history), vulnerable dependencies (OSV), actively exploited CVEs (CISA KEV), IaC (Terraform, Kubernetes, CloudFormation, Ansible), containers, Office macros and PDF scripts, malware (Microsoft Defender, signatures, optional MalwareBazaar), TLS, headers, cookies, DNS/mail and more. Installed tools such as semgrep, trivy, gitleaks or bandit are used automatically.
+3. **AI analysis** – focused passes (access, injection, crypto, logic, config) follow data from source to sink. Unchanged files come from a cache, so repeat runs are fast and cheap.
+4. **Cross-check** – a second AI step tries to refute every AI-only finding on the concrete code snippet.
+5. **Merge & report** – duplicates are merged, each finding gets a context risk score (CVSS, KEV, EPSS, reachability) and a fix; several weaknesses can be linked into an *attack path*.
+
+## What Vigil checks
+
+| Area | Examples |
+| --- | --- |
+| Code | Injection, XSS, path traversal, SSRF, unsafe deserialization, JWT without verification, prototype pollution, weak crypto, `Math.random()` for tokens, taint flows across files – JS/TS, Python, Java, Go, Rust, C#, PHP, Kotlin, Swift |
+| Credentials | API keys, passwords, private keys, connection strings – in current code and in Git history (always redacted) |
+| Dependencies | Known CVEs (OSV), actively exploited ones (KEV), exploit probability (EPSS), reachability, vulnerable JS libraries, licenses, supply chain (typosquatting, install scripts, unpinned actions) |
+| Infrastructure | Dockerfiles, Compose, Kubernetes, Terraform, CloudFormation, Ansible, GitHub Actions |
+| Websites | Certificate and protocols, security headers, CSP, cookies, CORS, exposed files (`.env`, `.git`, source maps), DNS & mail (SPF, DMARC, DKIM, CAA, subdomain takeover). For verified domains also: crawl, harmless test values in parameters, browser runtime check, login check with a test account, API access matrix (BOLA/IDOR) |
+| Files & programs | Malware scan, digital signatures, Office macros, remote templates, PDF JavaScript, RTF objects, Android/iOS apps |
+| Systems (read-only) | This Windows PC, running Docker containers, AWS, Azure, Google Cloud |
+
+## Safe by design
+
+Vigil is meant for systems **you own or are explicitly allowed to test**.
+
+- Websites and servers are only checked after you confirm you are authorised; deep web checks require a **verified domain** (DNS TXT record or `/.well-known/sec-audit.txt`).
+- All web checks are passive and rate-limited; if a target starts throttling, the check stops.
+- No exploit payloads, no brute force, no load tests, and forms are never submitted – the login check only uses your test account, on your own host.
+- Vigil suggests patches but never applies them.
+
+## Getting started
+
+**Requirements:** Windows 10/11 and [Node.js](https://nodejs.org) 20 or newer. Optional: [Ollama](https://ollama.com) for free, private local AI, or an API key for Claude, OpenAI or Gemini.
 
 ```bash
+git clone https://github.com/Passimoritz/vigil.git
 cd vigil
 npm install
-```
-
-API-Schlüssel optional in `.env` (siehe `.env.example`) **oder** in der App unter *Einstellungen*.
-Für den lokalen Betrieb: [Ollama](https://ollama.com) installieren und z. B. `ollama pull qwen2.5-coder`.
-
-## Starten
-
-```bash
 npm start
 ```
 
-Dann: Anbieter oben wählen → Dateien/Ordner reinziehen (oder Link/IP eintragen) → **Analyse starten**. Ergebnis als **HTML/Markdown** exportierbar.
+On first start a short introduction appears. **View a sample run** checks the bundled, deliberately vulnerable practice project in a few seconds – no AI needed.
 
-## CLI (zum Testen ohne GUI)
+API keys can be entered in the app (stored encrypted) or put into a `.env` file – see [`.env.example`](.env.example).
+
+> **Windows Smart App Control:** unsigned builds may be blocked. Run Vigil from source as shown above, or see [SIGNING.md](SIGNING.md) for signed builds.
+
+### Command line
 
 ```bash
-node src/cli.js --provider ollama --model qwen2.5-coder --out report.html ./mein-projekt
-node src/cli.js --provider anthropic --model claude-sonnet-4-5 --url https://meine-seite.example
+node src/cli.js --provider ollama --model qwen2.5-coder:7b --out report.html ./my-project
+node src/cli.js --provider anthropic --url https://my-site.example
 node src/cli.js --image nginx:1.25
 ```
 
-`--image` prüft ein Container-Image über trivy (Pakete, CVEs, Fehlkonfigurationen); trivy muss installiert sein.
+### Local REST API
 
-## Befund-Lebenszyklus
+Can be enabled under *Settings → Advanced*. It listens only on `127.0.0.1` (default port 7811), requires the displayed bearer token and only checks targets from your allow-list.
 
-Vigil merkt sich jeden Befund über alle Läufe hinweg (lokal in `findings-store.json` im App-Datenordner). Der Fingerabdruck ist `SHA-256(Ziel:Scanner:Regel-ID:Ort)`.
-
-| Status | Bedeutung |
-| --- | --- |
-| Offen / In Arbeit | aktiv; bei jedem Fund wird „zuletzt gesehen“ aktualisiert |
-| Fehlalarm / Risiko akzeptiert | ausgeblendet; bleibt so, auch wenn der Befund wieder auftaucht |
-| Behoben | gesetzt von Hand oder automatisch, wenn ein vollständig gelaufener Scanner den Befund nicht mehr findet |
-
-Taucht ein behobener Befund wieder auf, steht er erneut auf „Offen“ und ist als **Regression** markiert. KI-Befunde werden nie automatisch geschlossen, weil die KI nicht bei jedem Lauf exakt dasselbe findet. Geschwärzte Fundstellen (`evidence`) zeigen bei Secrets nur die ersten 3 und letzten 2 Zeichen; der Klartext wird nie gespeichert.
-
-Die **Übersicht** zeigt offene Befunde nach Schweregrad, alle Ziele mit „Erneut prüfen“, die letzten Läufe und eine filterbare Befundtabelle mit Statuswahl.
-
-## Audit-Module
-
-| Modul | prüft |
-| --- | --- |
-| Web/TLS (`web-tls-posture`) | Zertifikat (< 14 Tage hoch, < 30 mittel), alte Protokolle/Chiffren, HSTS, CSP (`unsafe-*`, `*`), COOP, Cookies, CORS inkl. sicherem Reflection-Test |
-| Web-Exposure | 404-Canary gegen SPA-Fehlalarme, offene `.env`/`.git`/Compose/Actuator, SourceMaps, GraphQL-Introspection |
-| DNS & Mail | SPF, DMARC, DKIM, CAA, verwaiste CNAMEs (Subdomain-Takeover) inkl. Subdomains aus CT-Logs |
-| Browser-Laufzeit | Tokens im localStorage, Drittskripte ohne SRI, `http://`/`ws://` aus HTTPS, Konsolen-Leaks (unsichtbares, isoliertes Fenster, nur lesend) |
-| API-Rechtematrix | BOLA/IDOR: Nutzer B bzw. anonym liest Objekt von Nutzer A (nur GET, Tokens verschlüsselt gespeichert) |
-| Lieferkette & CI | Lockfile/Integrität, fremde Registries, Dependency-Confusion, Tippfehler-Pakete, Install-Skripte, Docker-Digest, GitHub-Actions-Pinning, `write-all`, `pull_request_target` |
-| Container | privileged, Docker-Socket, root, Host-Netz, SYS_ADMIN, `cap_drop`, `no-new-privileges`, öffentliche DB-Ports |
-| Code-Regeln | Race Conditions, `Math.random()` für Tokens, schwache Krypto, Timing-Vergleiche, JWT ohne Prüfung/Ablauf, Prototype Pollution, ReDoS, SSRF, Mass Assignment |
-| KI-/LLM-Sicherheit | Nutzereingabe im System-Prompt, KI-Ausgabe in `eval`/HTML, offene Ollama/vLLM-Server |
-| Server-Konfiguration | `sshd_config`, Rechte sensibler Dateien (Linux/macOS) |
-| trivy / semgrep / gitleaks u. a. | wie bisher, plus Container-Images (`--image`) |
-
-Tiefe Web-Prüfungen (offene Dateien, SourceMaps, GraphQL, CT-Logs, Browser, API-Matrix) laufen nur für **verifizierte** Domains (DNS-TXT `_sec-audit-verify.<domain>` oder `/.well-known/sec-audit.txt` mit dem Token aus der Übersicht) oder interne Adressen. Drosselt ein Ziel (3× 429/503/403), bricht das Modul ab (`THROTTLED_ABORTED`), damit deine IP nicht gesperrt wird.
-
-## Risiko, Angriffspfade, Lösungen
-
-- **Threat-Intel:** CISA KEV und FIRST EPSS werden täglich lokal zwischengespeichert; Scans schlagen nur lokal nach.
-- **Kontext-Risiko 0–100:** CVSS×10, KEV → mind. 95, EPSS > 50 % → +10, nicht internet-erreichbar ×0,75, Test-/Dev-Code ×0,4.
-- **Angriffspfade:** Container-Ausbruch, SourceMap → API, Sitzungsübernahme, öffentliche Datenbank ohne Firewall – mehrere Befunde werden zu einem kritischen Pfad verknüpft.
-- **Lösungen:** Jede Regel hat eine verständliche Begründung, Schritte, kopierfertige Schnipsel (nginx, Apache, Caddy, Docker, sshd, DNS …) und Links (OWASP/MDN/NVD/OSV, Suchlinks zu heise und YouTube). Verwundbare Pakete bekommen einen **Versions-Patch** auf die erste behobene Version.
-- **Baseline & SBOM:** „Baseline“ markiert den aktuellen Stand als bekannt; „Nur neu seit Baseline“ zeigt nur Neues. Die Paketsuche beantwortet „Wo steckt Paket X in Version Y?“.
-
-## Scope & Sicherheit
-
-- Webadressen und Server werden nur geprüft, wenn sie auf der **Freigabeliste** stehen (Einstellungen) oder beim Hinzufügen ausdrücklich bestätigt werden. Bestätigte Hosts kommen automatisch auf die Liste. `example.com` gilt auch für Subdomains, `*.example.com` nur für Subdomains.
-- Alle Web-Checks sind passiv (eine GET/OPTIONS-Anfrage plus eine kleine, feste Liste versehentlich offener Pfade) und gedrosselt: höchstens 2 parallel, mindestens 400 ms Abstand je Host. OSV-Abfragen: höchstens 3 parallel.
-- Externe Tools laufen über `spawn` mit Argument-Arrays, ohne Shell. Eingaben aus UI und API sowie die JSON-Ausgaben von trivy, semgrep und gitleaks werden mit **Zod** validiert.
-
-## Lokale REST-API
-
-In den Einstellungen einschaltbar. Sie lauscht nur auf `127.0.0.1` (Standard-Port 7811), verlangt das angezeigte Bearer-Token, weist Browser-Anfragen (mit `Origin`-Header) ab und prüft ausschließlich Ziele von der Freigabeliste.
-
-| Methode | Pfad | Zweck |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/stats` | offene Befunde nach Schweregrad, Ziele, letzte Läufe |
-| GET | `/api/targets` | Ziele inkl. offener Befunde |
-| GET | `/api/findings?status=OPEN&severity=high&targetId=&q=` | Befunde filtern |
+| GET | `/api/stats` | open findings by severity, targets, recent runs |
+| GET | `/api/findings?status=OPEN&severity=high` | filter findings |
 | PATCH | `/api/findings/:id/status` | `{ "status": "FALSE_POSITIVE", "note": "…" }` |
 | POST | `/api/scans` | `{ "targets": [{ "type": "url", "value": "https://…" }] }` → `202 { scanId }` |
-| GET | `/api/scans/:id` | Status `QUEUED` / `RUNNING` / `COMPLETED` / `FAILED` |
+| GET | `/api/scans/:id` | `QUEUED` / `RUNNING` / `COMPLETED` / `FAILED` |
 
 ```bash
-curl -H "Authorization: Bearer <Token>" "http://127.0.0.1:7811/api/findings?status=OPEN"
+curl -H "Authorization: Bearer <token>" "http://127.0.0.1:7811/api/findings?status=OPEN"
 ```
 
-Scans laufen nacheinander über eine Warteschlange, egal ob sie aus der App oder über die API kommen.
+## Development
 
-## Architektur
-
-Vigil verlässt sich nicht auf reine KI-Einschätzung, sondern arbeitet zweistufig:
-
-1. **Deterministische Basis** – Secret-/Muster-Regeln, Schwachstellen-DB (OSV), optional semgrep, bandit, gitleaks, trivy u. a.
-2. **KI-Analyse** – fokussierte Durchgänge, die Datenflüsse von der Quelle zur Senke verfolgen und jeden Befund als prüfbare Hypothese formulieren.
-3. **Gegenprüfung** – ein zweiter KI-Schritt versucht, jeden *nur* von der KI gemeldeten Befund am konkreten Code-Ausschnitt zu widerlegen. Widerlegte Funde werden verworfen, unklare als „unbestätigt“ markiert.
-4. **Zusammenführen & Kontext** – Duplikate über alle Quellen werden vereint; jeder Befund bekommt einen Beleg-Status (mehrfach bestätigt / regelbasiert / KI-gegengeprüft / unbestätigt) und Kontext (Request-Handler, Internet-erreichbar, sensible Daten, Lieferkette).
-
-Datenschutz: Bei externen KI-Anbietern werden erkannte Secrets vor dem Versand geschwärzt (abschaltbar, CLI `--no-redact`). Mit Ollama verlässt nichts den Rechner. Die Gegenprüfung lässt sich mit `--no-validate` abschalten.
-
-Vigil schlägt Patches vor, wendet sie aber nie selbst an – jede Änderung bleibt deine Entscheidung.
-
-```
-electron/           GUI-Prozess (Fenster, IPC, Datei-Dialoge)
-  main.js
-  preload.js
-  orchestrator.js   Scan-Warteschlange + Übernahme in den Befund-Speicher
-  api.js            lokale REST-API (127.0.0.1, Token)
-  ollama.js         Ollama installieren/starten, Modelle laden
-src/
-  core/
-    ingest.js       Dateien/Ordner/ZIP/JAR/EXE/Link/IP -> Prüf-Units
-    prescan.js      Secrets, Dependencies, riskante Muster (ohne KI)
-    webscan.js      passive Web-/TLS-Prüfung (Header, CSP, Zertifikat, Versionen)
-    tools.js        externe Scanner (trivy fs/image, semgrep, gitleaks, …)
-    providers.js    Ollama / Anthropic / OpenAI / Gemini / OpenAI-kompatibel
-    analyze.js      Prompt-Bau, Batching, JSON-Befunde
-    harness.js      Schwärzen, Code-Slices, Gegenprüfung, Beleg-Status & Kontext
-    store.js        Befund-Lebenszyklus (Fingerabdruck, Auto-Resolve, Regression)
-    scope.js        Freigabeliste / Scope-Durchsetzung
-    validation.js   Zod-Schemas für Eingaben und Scanner-Ausgaben
-    ratelimit.js    Drosselung externer Anfragen
-    report.js       HTML-, Markdown- und SARIF-Report
-    schema.js       Befund-Format, CVSS/Severity, Duplikat-Erkennung
-    index.js        Pipeline-Fassade (runAudit)
-  ui/               Oberfläche (index.html, styles.css, renderer.js)
-  cli.js            Kommandozeile
+```bash
+npm test          # core tests
+npm run e2e       # real app window: click paths and accessibility
+npm run bench     # detection rate on the practice project (with AI: npm run bench -- ollama qwen2.5-coder:14b)
+npm run dist      # Windows installer (electron-builder)
 ```
 
-Neuer Anbieter: in `src/core/providers.js` einen Eintrag + Aufruf ergänzen – der Rest bleibt gleich.
+```
+electron/     app window, IPC, scan queue, local REST API, Ollama setup
+src/core/     ingest, rules, modules, feeds, AI providers, analysis, store, reports
+src/ui/       interface (index.html, styles.css, renderer.js, i18n.js)
+src/cli.js    command line
+bench/        deliberately vulnerable practice project with expected findings
+test/         core and UI tests
+```
 
-## Roadmap
+To add an AI provider, add an entry and a call in `src/core/providers.js` – everything else stays the same.
 
-Geplante Erweiterungen mit Checkliste: [ROADMAP.md](ROADMAP.md).
+## Language
 
-Tests: `npm test` (Kern), `npm run e2e` (echte Oberfläche inkl. Barrierefreiheit), `npm run bench` (Trefferquote am Übungsprojekt, optional mit KI: `npm run bench -- ollama qwen2.5-coder:14b`).
+The interface is available in **English (default)** and **German** (*Settings → General*). The detail texts of individual findings are currently mostly written in German; translating them is planned.
 
-Signieren für eine Installation ohne Windows-Sperre: [SIGNING.md](SIGNING.md) · Richtlinie: [CODE_SIGNING.md](CODE_SIGNING.md) · Lizenz: [MIT](LICENSE).
+## Roadmap, signing, license
+
+- Planned features: [ROADMAP.md](ROADMAP.md)
+- Code signing: [SIGNING.md](SIGNING.md) · policy: [CODE_SIGNING.md](CODE_SIGNING.md)
+- License: [MIT](LICENSE)

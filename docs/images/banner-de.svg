@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-label="Vigil – defensives Sicherheits-Audit für eigene Projekte, Webseiten, Server und Cloud-Konten">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#13233b"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.18" cy="0.5" r="0.45">
+      <stop offset="0" stop-color="#f2b23a" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#f2b23a" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity=".04"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="300" rx="24" fill="url(#bg)"/>
+  <rect width="1200" height="300" rx="24" fill="url(#grid)"/>
+  <rect width="1200" height="300" rx="24" fill="url(#glow)"/>
+  <g transform="translate(96 54) scale(0.1875)">
+    <rect x="16" y="16" width="992" height="992" rx="224" fill="#0f1b2d"/>
+    <rect x="16" y="16" width="992" height="992" rx="224" fill="none" stroke="#ffffff" stroke-opacity=".12" stroke-width="10"/>
+    <path fill="#f2b23a" d="M272 252 L392 252 L512 560 L632 252 L752 252 L752 500 C752 660 652 776 512 852 C372 776 272 660 272 500 Z"/>
+  </g>
+  <g font-family="Segoe UI, Helvetica Neue, Arial, sans-serif">
+    <text x="330" y="138" font-size="76" font-weight="800" fill="#ffffff" letter-spacing="-1">Vigil</text>
+    <text x="332" y="184" font-size="26" fill="#c7d2e3">Defensives Sicherheits-Audit für alles, was dir gehört</text>
+    <g font-size="17" font-weight="600">
+      <rect x="332" y="210" width="96" height="34" rx="17" fill="#f2b23a" fill-opacity=".14" stroke="#f2b23a" stroke-opacity=".5"/>
+      <text x="380" y="232" text-anchor="middle" fill="#f6c66a">Code</text>
+      <rect x="440" y="210" width="118" height="34" rx="17" fill="#ffffff" fill-opacity=".05" stroke="#ffffff" stroke-opacity=".18"/>
+      <text x="499" y="232" text-anchor="middle" fill="#dbe4f0">Webseiten</text>
+      <rect x="570" y="210" width="104" height="34" rx="17" fill="#ffffff" fill-opacity=".05" stroke="#ffffff" stroke-opacity=".18"/>
+      <text x="622" y="232" text-anchor="middle" fill="#dbe4f0">Server</text>
+      <rect x="686" y="210" width="128" height="34" rx="17" fill="#ffffff" fill-opacity=".05" stroke="#ffffff" stroke-opacity=".18"/>
+      <text x="750" y="232" text-anchor="middle" fill="#dbe4f0">Container</text>
+      <rect x="826" y="210" width="88" height="34" rx="17" fill="#ffffff" fill-opacity=".05" stroke="#ffffff" stroke-opacity=".18"/>
+      <text x="870" y="232" text-anchor="middle" fill="#dbe4f0">Cloud</text>
+      <rect x="926" y="210" width="106" height="34" rx="17" fill="#ffffff" fill-opacity=".05" stroke="#ffffff" stroke-opacity=".18"/>
+      <text x="979" y="232" text-anchor="middle" fill="#dbe4f0">Dateien</text>
+    </g>
+  </g>
+</svg>

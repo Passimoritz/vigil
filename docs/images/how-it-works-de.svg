@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 290" width="1200" height="290" role="img" aria-label="So arbeitet Vigil: sammeln, Regeln und Datenbanken, KI-Analyse, Gegenprüfung, zusammenführen und berichten">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f2b23a"/></marker>
+  </defs>
+  <rect width="1200" height="290" rx="20" fill="#0d1626"/>
+  <g font-family="Segoe UI, Helvetica Neue, Arial, sans-serif">
+    <text x="40" y="48" font-size="22" font-weight="700" fill="#ffffff">So arbeitet Vigil</text>
+    <text x="40" y="74" font-size="15" fill="#93a4bd">Feste Regeln finden Bekanntes zuverlässig – die KI ergänzt Logikfehler und muss sie belegen.</text>
+
+    <g transform="translate(40 100)">
+      <rect width="196" height="150" rx="14" fill="#16233a" stroke="#ffffff" stroke-opacity=".1"/>
+      <circle cx="30" cy="32" r="16" fill="#f2b23a" fill-opacity=".16"/><text x="30" y="38" text-anchor="middle" font-size="16" font-weight="700" fill="#f6c66a">1</text>
+      <text x="18" y="76" font-size="17" font-weight="700" fill="#ffffff">Sammeln</text>
+      <text x="18" y="100" font-size="13" fill="#a9b8cd">Ordner, ZIP/JAR/EXE,</text>
+      <text x="18" y="118" font-size="13" fill="#a9b8cd">Webseiten, Images,</text>
+      <text x="18" y="136" font-size="13" fill="#a9b8cd">Systeme (nur lesend)</text>
+    </g>
+    <g transform="translate(272 100)">
+      <rect width="196" height="150" rx="14" fill="#16233a" stroke="#ffffff" stroke-opacity=".1"/>
+      <circle cx="30" cy="32" r="16" fill="#f2b23a" fill-opacity=".16"/><text x="30" y="38" text-anchor="middle" font-size="16" font-weight="700" fill="#f6c66a">2</text>
+      <text x="18" y="76" font-size="17" font-weight="700" fill="#ffffff">Feste Regeln</text>
+      <text x="18" y="100" font-size="13" fill="#a9b8cd">Secrets, OSV, CISA KEV,</text>
+      <text x="18" y="118" font-size="13" fill="#a9b8cd">gitleaks- &amp; retire.js-Feeds,</text>
+      <text x="18" y="136" font-size="13" fill="#a9b8cd">IaC, Schadsoftware, TLS</text>
+    </g>
+    <g transform="translate(504 100)">
+      <rect width="196" height="150" rx="14" fill="#16233a" stroke="#ffffff" stroke-opacity=".1"/>
+      <circle cx="30" cy="32" r="16" fill="#f2b23a" fill-opacity=".16"/><text x="30" y="38" text-anchor="middle" font-size="16" font-weight="700" fill="#f6c66a">3</text>
+      <text x="18" y="76" font-size="17" font-weight="700" fill="#ffffff">KI-Analyse</text>
+      <text x="18" y="100" font-size="13" fill="#a9b8cd">Lokal (Ollama) oder Cloud.</text>
+      <text x="18" y="118" font-size="13" fill="#a9b8cd">Secrets werden vorher</text>
+      <text x="18" y="136" font-size="13" fill="#a9b8cd">geschwärzt</text>
+    </g>
+    <g transform="translate(736 100)">
+      <rect width="196" height="150" rx="14" fill="#16233a" stroke="#ffffff" stroke-opacity=".1"/>
+      <circle cx="30" cy="32" r="16" fill="#f2b23a" fill-opacity=".16"/><text x="30" y="38" text-anchor="middle" font-size="16" font-weight="700" fill="#f6c66a">4</text>
+      <text x="18" y="76" font-size="17" font-weight="700" fill="#ffffff">Gegenprüfung</text>
+      <text x="18" y="100" font-size="13" fill="#a9b8cd">Ein zweiter Schritt will</text>
+      <text x="18" y="118" font-size="13" fill="#a9b8cd">jeden reinen KI-Fund am</text>
+      <text x="18" y="136" font-size="13" fill="#a9b8cd">Code widerlegen</text>
+    </g>
+    <g transform="translate(968 100)">
+      <rect width="192" height="150" rx="14" fill="#2a2412" stroke="#f2b23a" stroke-opacity=".55"/>
+      <circle cx="30" cy="32" r="16" fill="#f2b23a"/><text x="30" y="38" text-anchor="middle" font-size="16" font-weight="700" fill="#1a1405">5</text>
+      <text x="18" y="76" font-size="17" font-weight="700" fill="#ffffff">Zusammenführen</text>
+      <text x="18" y="100" font-size="13" fill="#e9d9b2">Ohne Doppelungen, mit Risiko,</text>
+      <text x="18" y="118" font-size="13" fill="#e9d9b2">konkreter Lösung, Verlauf,</text>
+      <text x="18" y="136" font-size="13" fill="#e9d9b2">PDF / HTML / SARIF</text>
+    </g>
+    <g stroke="#f2b23a" stroke-width="2.5" marker-end="url(#arr)">
+      <line x1="240" y1="175" x2="266" y2="175"/>
+      <line x1="472" y1="175" x2="498" y2="175"/>
+      <line x1="704" y1="175" x2="730" y2="175"/>
+      <line x1="936" y1="175" x2="962" y2="175"/>
+    </g>
+  </g>
+</svg>
