@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld('vigil', {
   targetInfo: (id) => ipcRenderer.invoke('target:info', id),
   setBaseline: (id) => ipcRenderer.invoke('target:baseline', id),
   setTargetMeta: (id, patch) => ipcRenderer.invoke('target:meta', id, patch),
+  aiCacheInfo: () => ipcRenderer.invoke('aicache:info'),
+  aiCacheClear: () => ipcRenderer.invoke('aicache:clear'),
   searchSbom: (q) => ipcRenderer.invoke('sbom:search', q),
   intelStatus: () => ipcRenderer.invoke('intel:status'),
   syncIntel: () => ipcRenderer.invoke('intel:sync'),

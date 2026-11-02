@@ -530,6 +530,22 @@
             <div class="set-label"><b>Schwachstellen-Datenbank</b><span>Abhängigkeiten (npm, PyPI, Maven, Go, Cargo, RubyGems) gegen OSV.dev prüfen. Kostenlos, braucht Internet.</span></div>
             <label class="switch"><input type="checkbox" id="cveChk" /><span></span></label>
           </div>
+          <div class="set-row">
+            <div class="set-label"><b>Nur Geändertes neu prüfen</b><span>Vigil merkt sich die KI-Ergebnisse je Datei. Unveränderte Dateien kommen beim nächsten Lauf aus dem Zwischenspeicher – das spart meist den Großteil an Zeit und Kosten. <span id="cacheInfo"></span></span></div>
+            <span class="set-ctrl"><button id="cacheClearBtn" type="button" class="btn tiny ghost">Leeren</button><label class="switch"><input type="checkbox" id="incrChk" /><span></span></label></span>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Gelöschte Schlüssel in der Git-Historie suchen</b><span>Auch Zugangsdaten, die längst aus dem Code entfernt wurden, stehen oft noch in alten Versionen. Nur für Ordner, die ein Git-Repository sind.</span></div>
+            <label class="switch"><input type="checkbox" id="gitHistChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Kleines Modell sortiert vor</b><span>Optional: Ein günstiges Modell markiert verdächtige Dateien, nur diese gehen an das große Modell. Leer lassen zum Abschalten. Gilt für den gerade gewählten Anbieter.</span></div>
+            <input id="triageModelInput" type="text" class="set-input" placeholder="z. B. qwen2.5-coder:1.5b" spellcheck="false" />
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Zweites Modell prüft gegen</b><span>Optional: Ein zweites Modell prüft dieselben Dateien. Was beide finden, gilt als sicher, Einzelfunde werden heruntergestuft. Verdoppelt Zeit und Kosten der KI-Analyse.</span></div>
+            <input id="consensusModelInput" type="text" class="set-input" placeholder="z. B. llama3.1:8b" spellcheck="false" />
+          </div>
         </section>
 
         <section class="card set-block" id="set-privacy">

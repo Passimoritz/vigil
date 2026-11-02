@@ -1345,6 +1345,11 @@ function renderSettings() {
   $('depthSelect').value = state.config.analysisDepth === 'standard' ? 'standard' : 'thorough';
   $('activeChk').checked = !!state.config.activeScan;
   $('validateChk').checked = state.config.aiValidation !== false;
+  $('incrChk').checked = state.config.incremental !== false;
+  $('gitHistChk').checked = state.config.gitHistory !== false;
+  $('triageModelInput').value = pcfg(state.config.selected || 'ollama').triageModel || '';
+  $('consensusModelInput').value = pcfg(state.config.selected || 'ollama').consensusModel || '';
+  if (window.vigil.aiCacheInfo) window.vigil.aiCacheInfo().then((c) => { $('cacheInfo').textContent = c.entries ? `Derzeit ${c.entries} Dateien gemerkt.` : ''; }).catch(() => {});
   $('redactChk').checked = state.config.redactSecrets !== false;
   $('domChk').checked = state.config.domAudit !== false;
   $('costWarnInput').value = state.config.costWarnUsd ?? 2;
@@ -1387,6 +1392,10 @@ function collectSettings() {
   state.config.analysisDepth = $('depthSelect').value;
   state.config.activeScan = $('activeChk').checked;
   state.config.aiValidation = $('validateChk').checked;
+  state.config.incremental = $('incrChk').checked;
+  state.config.gitHistory = $('gitHistChk').checked;
+  pcfg(state.config.selected || 'ollama').triageModel = $('triageModelInput').value.trim();
+  pcfg(state.config.selected || 'ollama').consensusModel = $('consensusModelInput').value.trim();
   state.config.redactSecrets = $('redactChk').checked;
   state.config.domAudit = $('domChk').checked;
   state.config.costWarnUsd = Math.max(0, parseFloat($('costWarnInput').value) || 0);
@@ -1533,6 +1542,7 @@ async function init() {
   };
   document.querySelectorAll('#presetGrid .preset').forEach((b) => b.onclick = () => applyPreset(b.dataset.preset));
   // Schalter, die zu einem Profil gehoeren: Profil-Markierung sofort mitziehen
+  $('cacheClearBtn').onclick = async () => { await window.vigil.aiCacheClear(); $('cacheInfo').textContent = ''; toast('KI-Zwischenspeicher geleert – der nächste Lauf prüft alles neu', 'ok'); };
   ['depthSelect', 'validateChk', 'cveChk', 'activeChk', 'domChk'].forEach((id) => $(id).addEventListener('change', () => { collectSettings(); renderPresets(); }));
   // Einstellungen: Unternavigation folgt dem Scrollen
   $('setNav').querySelectorAll('a').forEach((a) => a.onclick = (e) => {

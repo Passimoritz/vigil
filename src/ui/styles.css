@@ -821,3 +821,6 @@ button.stat:hover:not(:disabled) { border-color: var(--line-strong); }
 .known-row { flex-wrap: wrap; align-items: flex-start; padding-right: 4px; }
 .known-actions { align-self: center; }
 @media (max-width: 760px) { .known-meta { display: block; } }
+.set-ctrl { display: flex; align-items: center; gap: 10px; flex: none; }
+.set-input { flex: none; width: 220px; font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); }
+.set-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
