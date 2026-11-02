@@ -472,7 +472,7 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
       U('app/safe.js', 'const t = crypto.randomBytes(32);\nif (timingSafeEqual(a, b)) {}\njwt.verify(t, k);\n'),
     ]);
     const ids = new Set(r.findings.map((f) => f.ruleId));
-    check('static: alle 9 Module gelaufen', r.ran.length === 9 && !r.errors.length);
+    check('static: alle 10 Module gelaufen', r.ran.length === 10 && !r.errors.length);
     check('static: Typosquat (vertauscht) erkannt', ids.has('typosquat-suspect') && lev1('lodahs', 'lodash') && !lev1('react', 'redux'));
     check('static: Compose privileged + Socket + DB-Port', ['container-privileged', 'container-docker-sock', 'container-db-port-public'].every((x) => ids.has(x)));
     check('static: Dockerfile latest + root', ids.has('docker-latest-tag') && ids.has('dockerfile-root-user'));
@@ -777,6 +777,35 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const bad = [];
     for (const d of dirs) for (const f of fs.readdirSync(path.join(__dirname, d)).filter((x) => x.endsWith('.js'))) { try { require(path.join(__dirname, d, f)); } catch (e) { bad.push(`${f}: ${e.message}`); } }
     check('laden: alle Kern-Module ohne Fehler' + (bad.length ? ' – ' + bad.join('; ') : ''), bad.length === 0);
+  }
+
+  // --- Erreichbarkeit verwundbarer Pakete und Datenfluesse ueber Dateien ---
+  {
+    const { applyReachability } = require('../src/core/reach');
+    const { analyzeTaint } = require('../src/core/taint');
+    const U = (label, content) => ({ label, content, kind: 'file' });
+    const units = [
+      U('app/package.json', JSON.stringify({ dependencies: { lodash: '4.17.15', minimist: '1.2.0', axios: '0.21.0' } })),
+      U('app/src/index.js', "const _ = require('lodash');\nimport axios from 'axios';\n_.merge(a, b);\n"),
+    ];
+    const dep = (name, extra = {}) => ({ title: `Verwundbare Abhaengigkeit: ${name}`, category: 'Dependencies', severity: 'high', contextualRiskScore: 80, package: { ecosystem: 'npm', name, version: '1' }, reachability: '', ...extra });
+    const r = applyReachability([dep('lodash', { vulnSymbols: ['template'] }), dep('minimist'), dep('kind-of'), dep('axios'), dep('lodash', { vulnSymbols: ['merge'] })], units);
+    check('erreichbar: Paket genutzt, betroffene Funktion nicht → heruntergestuft', r[0].reach === 'function-unused' && r[0].severity === 'medium' && r[0].contextualRiskScore === 40);
+    check('erreichbar: direkte Abhängigkeit ohne Import → ungenutzt', r[1].reach === 'unused' && r[1].severity === 'medium');
+    check('erreichbar: nur indirekt enthalten', r[2].reach === 'transitive' && r[2].severity === 'high');
+    check('erreichbar: genutzt bleibt hoch, betroffene Funktion aufgerufen → sicher', r[3].reach === 'used' && r[3].severity === 'high' && r[4].reach === 'function-used' && r[4].confidence === 'high');
+    check('erreichbar: aktiv ausgenutzte Lücke wird nie abgewertet', applyReachability([dep('minimist', { inCisaKev: true })], units)[0].severity === 'high');
+    const flow = analyzeTaint([
+      U('srv/db.js', 'function findUser(id) {\n  return db.query("SELECT * FROM users WHERE id = " + id);\n}\nmodule.exports = { findUser };'),
+      U('srv/service.js', 'function loadProfile(userId) {\n  return findUser(userId);\n}'),
+      U('srv/routes.js', "app.get('/u', (req, res) => {\n  loadProfile(req.query.id);\n});"),
+    ]);
+    check('datenfluss: Eingabe über drei Dateien bis in den SQL-Befehl', flow.length === 1 && flow[0].ruleId === 'taint-sql' && /routes\.js/.test(flow[0].description) && /service\.js:loadProfile/.test(flow[0].description) && flow[0].location === 'srv/db.js:2');
+    const safe = analyzeTaint([
+      U('srv/db.js', 'function findUser(id) {\n  return db.query("SELECT * FROM users WHERE id = ?", [id]);\n}'),
+      U('srv/routes.js', "app.get('/u', (req, res) => { findUser(req.query.id); });"),
+    ]);
+    check('datenfluss: Platzhalter im SQL → keine Meldung', safe.length === 0);
   }
 
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);

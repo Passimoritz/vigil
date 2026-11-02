@@ -99,7 +99,7 @@ function normalizeFinding(raw, source) {
   if (Array.isArray(f.linkedKeys)) out.linkedKeys = f.linkedKeys.slice(0, 10);
   if (f.devOnly) out.devOnly = true;
   // Einordnung und Zusatzwissen aus spaeteren Schritten (Taxonomie, Erreichbarkeit, Konsens)
-  for (const k of ['cwe', 'owasp', 'reach', 'consensus', 'taint']) if (f[k] != null) out[k] = f[k];
+  for (const k of ['cwe', 'owasp', 'reach', 'consensus', 'taint', 'vulnSymbols']) if (f[k] != null) out[k] = f[k];
   // Zod-Pruefung als letzte Sicherung: was hier durchfaellt, ist ein Programmierfehler.
   const v = check(UnifiedFindingSchema, out);
   if (!v.ok) throw new Error('Ungueltiger Befund: ' + v.error);

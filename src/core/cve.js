@@ -86,6 +86,18 @@ function fixedVersions(vuln, pkgName) {
   return [...fixes];
 }
 
+// Betroffene Funktionen laut Advisory (Go: imports[].symbols, andere: affected_functions)
+function affectedSymbols(vuln, pkgName) {
+  const out = new Set();
+  for (const aff of vuln.affected || []) {
+    if (pkgName && aff.package?.name && aff.package.name.toLowerCase() !== pkgName.toLowerCase()) continue;
+    const es = aff.ecosystem_specific || {};
+    for (const imp of es.imports || []) for (const s of imp.symbols || []) out.add(String(s));
+    for (const s of es.affected_functions || []) out.add(String(s));
+  }
+  return [...out].slice(0, 30);
+}
+
 // deps: [{ecosystem,name,version,raw}]
 async function lookupCves(deps, onProgress = () => {}, signal) {
   const notes = [];
@@ -143,6 +155,7 @@ async function lookupCves(deps, onProgress = () => {}, signal) {
         category: 'Dependencies',
         location: `${dep.ecosystem}: ${dep.name}@${dep.version}`,
         package: { ecosystem: dep.ecosystem, name: dep.name, version: dep.version, fixed: fixes[0] || '' },
+        vulnSymbols: affectedSymbols(vuln, dep.name),
         description: `${vuln.summary || id}. ${(vuln.details || '').slice(0, 500)}`.trim(),
         reachability: 'Abhaengig davon, ob die verwundbare Funktion des Pakets im Projekt tatsaechlich genutzt wird. Transitive/ungenutzte Pfade haben geringeres reales Risiko.',
         impact: `Bekannte Schwachstelle laut ${vuln.id}${vuln.aliases?.length ? ' / ' + vuln.aliases.join(', ') : ''}.`,

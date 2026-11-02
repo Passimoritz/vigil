@@ -19,10 +19,12 @@ const { enrichRemedy } = require('./remedies');
 const { hostOf, isInternalHost } = require('./scope');
 
 // Gemeinsamer Abschluss: Threat-Intel, Kontext-Risiko, Angriffspfade, Loesungswissen.
-function finalize(findings, targets, config) {
+function finalize(findings, targets, config, units = []) {
   const exposed = targets.some((t) => (t.type === 'url' || t.type === 'endpoint') && !isInternalHost(hostOf(t)));
   let list = applyIntel(findings, config.intel);
   list = list.map((f) => ({ ...f, contextualRiskScore: f.contextualRiskScore ?? contextualRisk(f, { internetExposed: exposed || f.source === 'webscan' }) }));
+  // Verwundbare Pakete: wird das Paket bzw. die betroffene Funktion ueberhaupt benutzt?
+  list = require('./reach').applyReachability(list, units);
   list = [...list, ...correlate(list)];
   return sortFindings(list.map(enrichRemedy));
 }
@@ -186,7 +188,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
     config,
     onProgress,
   });
-  result.findings = finalize(result.findings, targets, config);
+  result.findings = finalize(result.findings, targets, config, ing.units);
   result.summary = summarize(result.findings);
   result.errors = [...result.errors, ...webNotes, ...cveNotes, ...moduleNotes, ...ing.notes];
   Object.assign(result.meta, extraMeta);
