@@ -11,7 +11,7 @@ const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 const CATEGORIES = [
   'Injection', 'XSS', 'Deserialization', 'Secrets', 'Crypto', 'Auth',
   'AccessControl', 'SSRF', 'PathTraversal', 'Config', 'Dependencies',
-  'DoS', 'Logging', 'Transport', 'Other',
+  'DoS', 'Logging', 'Transport', 'License', 'Other',
 ];
 
 // CVSS-Basiswert -> Schweregrad (grobe, uebliche Abbildung).
@@ -98,6 +98,8 @@ function normalizeFinding(raw, source) {
   if (f.sourceModule) out.sourceModule = String(f.sourceModule);
   if (Array.isArray(f.linkedKeys)) out.linkedKeys = f.linkedKeys.slice(0, 10);
   if (f.devOnly) out.devOnly = true;
+  // Einordnung und Zusatzwissen aus spaeteren Schritten (Taxonomie, Erreichbarkeit, Konsens)
+  for (const k of ['cwe', 'owasp', 'reach', 'consensus', 'taint']) if (f[k] != null) out[k] = f[k];
   // Zod-Pruefung als letzte Sicherung: was hier durchfaellt, ist ein Programmierfehler.
   const v = check(UnifiedFindingSchema, out);
   if (!v.ok) throw new Error('Ungueltiger Befund: ' + v.error);

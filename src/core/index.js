@@ -143,7 +143,21 @@ async function runAudit(targets, config, onProgress = () => {}) {
       }
     }
   }
-  const staticFindings = [...pre.findings, ...mods.findings, ...cveFindings, ...webFindings, ...(ing.findings || [])];
+  // Zugangsdaten, die in alten Git-Versionen stehen (nur Ordner, die ein Git-Repository sind)
+  const gitFindings = [];
+  if (config.gitHistory !== false && !aborted()) {
+    const { scanGitHistory } = require('./githistory');
+    const currentText = ing.units.map((u) => u.content || '').join('
+');
+    for (const t of targets.filter((x) => x.type === 'path')) {
+      try {
+        const g = await scanGitHistory(t.value, { currentText, signal: config.signal, onProgress });
+        gitFindings.push(...g.findings); moduleNotes.push(...g.notes);
+        if (g.ran) scannersRun.push({ target: t.value, source: 'git-history' });
+      } catch (e) { moduleNotes.push('Git-Historie: ' + e.message); }
+    }
+  }
+  const staticFindings = [...pre.findings, ...gitFindings, ...mods.findings, ...cveFindings, ...webFindings, ...(ing.findings || [])];
   const extraMeta = { scannersRun, throttled, sbom, modulesRun: [...new Set(scannersRun.map((s) => s.source))] };
 
   if (!ing.units.length) {

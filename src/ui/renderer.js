@@ -504,7 +504,7 @@ const CATEGORY_LABEL = {
   AccessControl: 'Zugriffsrechte', Auth: 'Anmeldung', Injection: 'Einschleusen von Befehlen', XSS: 'Einschleusen von Skripten',
   Crypto: 'Verschlüsselung', SSRF: 'Server-Anfragen von außen', PathTraversal: 'Dateizugriff', Deserialization: 'Datenverarbeitung',
   Logic: 'Programmlogik', DoS: 'Überlastung', Supply: 'Lieferkette', SupplyChain: 'Lieferkette', Container: 'Container', Host: 'Server',
-  DNS: 'DNS & E-Mail', LLM: 'KI-Sicherheit', Logging: 'Protokollierung', AttackPath: 'Angriffsweg',
+  DNS: 'DNS & E-Mail', LLM: 'KI-Sicherheit', Logging: 'Protokollierung', License: 'Lizenz', AttackPath: 'Angriffsweg',
 };
 // Beteiligte Befunde eines Angriffswegs (verknuepft ueber ruleId@location)
 function linkedOf(f) {

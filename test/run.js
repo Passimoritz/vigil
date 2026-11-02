@@ -472,7 +472,7 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
       U('app/safe.js', 'const t = crypto.randomBytes(32);\nif (timingSafeEqual(a, b)) {}\njwt.verify(t, k);\n'),
     ]);
     const ids = new Set(r.findings.map((f) => f.ruleId));
-    check('static: alle 5 Module gelaufen', r.ran.length === 5 && !r.errors.length);
+    check('static: alle 8 Module gelaufen', r.ran.length === 8 && !r.errors.length);
     check('static: Typosquat (vertauscht) erkannt', ids.has('typosquat-suspect') && lev1('lodahs', 'lodash') && !lev1('react', 'redux'));
     check('static: Compose privileged + Socket + DB-Port', ['container-privileged', 'container-docker-sock', 'container-db-port-public'].every((x) => ids.has(x)));
     check('static: Dockerfile latest + root', ids.has('docker-latest-tag') && ids.has('dockerfile-root-user'));
@@ -633,6 +633,46 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('timing: nach einem 6-Min-Lauf schaetzt Vigil ~6 Min.', after.measured && Math.abs(after.seconds - 350) < 40);
     const web = t.estimate({ targets: [{ type: 'url' }], config: {} }, {});
     check('timing: Webadresse ohne KI nicht unter einer Minute', web.seconds >= 60);
+  }
+
+  // --- Server-Einrichtung als Code, Lizenzen, weitere Sprachen, Git-Historie ---
+  {
+    const { runIac } = require('../src/core/modules/iac');
+    const { runLicense, conflict } = require('../src/core/modules/license');
+    const { runLangs } = require('../src/core/modules/langs');
+    const { scanLog } = require('../src/core/githistory');
+    const U = (label, content) => ({ label, content, kind: 'file' });
+    const tf = U('infra/main.tf', 'resource "aws_s3_bucket" "logs" {\n  bucket = "x"\n  acl    = "public-read"\n}\nresource "aws_security_group" "web" {\n  ingress {\n    from_port   = 22\n    to_port     = 22\n    cidr_blocks = ["0.0.0.0/0"]\n  }\n}\nresource "aws_db_instance" "db" {\n  publicly_accessible = true\n  password = "SuperGeheim123"\n}\n');
+    const ids = runIac([tf]).map((f) => f.ruleId);
+    check('iac: Terraform – offener Bucket, SSH offen, DB öffentlich, Passwort', ['iac-s3-public-acl', 'iac-sg-open-admin', 'iac-db-public', 'iac-db-unencrypted', 'iac-hardcoded-secret'].every((x) => ids.includes(x)));
+    check('iac: Zeile stimmt', runIac([tf]).find((f) => f.ruleId === 'iac-s3-public-acl').location === 'infra/main.tf:3');
+    const k8s = U('k8s/app.yaml', 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: shop\nspec:\n  template:\n    spec:\n      hostNetwork: true\n      containers:\n        - name: shop\n          image: shop:latest\n          securityContext:\n            privileged: true\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: shop\n');
+    const kid = runIac([k8s]).map((f) => f.ruleId);
+    check('iac: Kubernetes – privileged, hostNetwork, latest, keine Limits', ['k8s-privileged', 'k8s-hostnetwork', 'k8s-image-latest', 'k8s-no-limits'].every((x) => kid.includes(x)));
+    const safe = U('k8s/ok.yaml', 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: ok\nspec:\n  securityContext:\n    runAsNonRoot: true\n  containers:\n    - name: a\n      image: nginx:1.27.2\n      resources:\n        limits:\n          cpu: 100m\n');
+    check('iac: sauberes Pod-Manifest ohne Befund', runIac([safe]).length === 0);
+    const ans = U('playbook.yml', '- hosts: web\n  tasks:\n    - name: install\n      shell: curl https://x.sh | bash\n    - name: set db password\n      mysql_user: password=abc\n');
+    const aid = runIac([ans]).map((f) => f.ruleId);
+    check('iac: Ansible – curl|bash und Passwort ohne no_log', aid.includes('ansible-curl-pipe-sh') && aid.includes('ansible-secret-logged'));
+    check('lizenz: GPL in MIT-Projekt ist Konflikt, AGPL hoch', conflict('GPL-3.0', 'MIT').severity === 'medium' && conflict('AGPL-3.0', 'MIT').severity === 'high');
+    check('lizenz: MIT OR GPL ist kein Konflikt, LGPL auch nicht', !conflict('MIT OR GPL-3.0', 'MIT') && !conflict('LGPL-2.1', 'MIT'));
+    check('lizenz: GPL in GPL-Projekt ok', !conflict('GPL-3.0', 'GPL-3.0'));
+    const pj = U('app/package.json', JSON.stringify({ name: 'a', license: 'MIT', dependencies: { foo: '1', bar: '1' } }));
+    const lock = U('app/package-lock.json', JSON.stringify({ packages: { '': {}, 'node_modules/foo': { version: '1.0.0', license: 'AGPL-3.0' }, 'node_modules/bar': { version: '2.0.0', license: 'MIT' }, 'node_modules/baz': { version: '1.0.0' } } }));
+    const lic = runLicense([pj, lock]);
+    check('lizenz: AGPL-Paket gemeldet, MIT nicht, fehlende Lizenz gesammelt', lic.some((f) => f.ruleId === 'license-copyleft' && /foo/.test(f.title) && f.severity === 'high') && !lic.some((f) => /„bar“/.test(f.title)) && lic.some((f) => f.ruleId === 'license-unknown' && f.category === 'License'));
+    const langs = runLangs([
+      U('srv/db.go', 'package x\nimport "fmt"\nfunc q(id string){ db.Query(fmt.Sprintf("SELECT * FROM u WHERE id=%s", id)) }\nvar c = &tls.Config{InsecureSkipVerify: true}\n'),
+      U('web/index.php', '<?php echo $_GET["name"]; mysqli_query($c, "SELECT * FROM u WHERE id=" . $_GET["id"]);'),
+      U('App/Data.cs', 'var cmd = new SqlCommand("SELECT * FROM u WHERE n=\'" + name + "\'", con);\nvar f = new BinaryFormatter();'),
+      U('app/Main.kt', 'db.rawQuery("SELECT * FROM u WHERE id=" + id, null)'),
+      U('ios/Info.plist', '<key>NSAllowsArbitraryLoads</key>\n<true/>'),
+      U('src/main.rs', 'let c = Client::builder().danger_accept_invalid_certs(true).build();'),
+    ]).map((f) => f.ruleId);
+    check('sprachen: Go, PHP, C#, Kotlin, Swift/iOS, Rust', ['go-sql-concat', 'go-insecure-tls', 'php-xss-echo', 'php-sql-concat', 'cs-sql-concat', 'cs-binaryformatter', 'kt-sql-concat', 'ios-ats-disabled', 'rust-insecure-tls'].every((x) => langs.includes(x)));
+    const log = '@@C abc1234def|Mia|2025-03-01\ndiff --git a/.env b/.env\n+++ b/.env\n+AWS_KEY=AKIAABCDEFGHIJKLMNOP\n@@C 999|Mia|2025-03-02\n+++ /dev/null\n';
+    const hits = scanLog(log);
+    check('git-historie: alter AWS-Schlüssel mit Datei und Commit', hits.length === 1 && hits[0].file === '.env' && hits[0].commit.hash === 'abc1234def');
   }
 
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);

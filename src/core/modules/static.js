@@ -230,12 +230,19 @@ function linuxStatic(units) {
   return out;
 }
 
+const { runIac } = require('./iac');
+const { runLicense } = require('./license');
+const { runLangs } = require('./langs');
+
 const MODULES = [
   { id: 'supply-chain-audit', label: 'Lieferkette & CI', run: supplyChain },
   { id: 'container-host-audit', label: 'Container-Konfiguration', run: containers },
   { id: 'semgrep-custom-sast', label: 'Code-Regeln (Race, Krypto, JWT …)', run: sast },
   { id: 'llm-prompt-security', label: 'KI-/LLM-Sicherheit', run: llm },
   { id: 'linux-host-audit', label: 'Server-Konfiguration', run: linuxStatic },
+  { id: 'iac-audit', label: 'Server-Einrichtung als Code (Terraform, Kubernetes …)', run: runIac },
+  { id: 'license-audit', label: 'Lizenzen der Pakete', run: runLicense },
+  { id: 'lang-rules', label: 'Regeln für Go, Rust, C#, PHP, Kotlin, Swift', run: runLangs },
 ];
 
 function runStaticModules(units, onProgress = () => {}) {
