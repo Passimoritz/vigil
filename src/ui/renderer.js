@@ -1249,7 +1249,7 @@ async function loadCloudModels(id) {
 // --- Uebersicht (Dashboard über alle Läufe) ------------------------------
 const dash = { status: 'OPEN,IN_PROGRESS', severity: '', targetId: '', q: '', newSinceBaseline: false, toxic: false };
 const gradeOf = (score) => (score >= 92 ? 'A' : score >= 78 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : score >= 20 ? 'E' : 'F');
-const RUN_LABEL = { QUEUED: 'wartet', RUNNING: 'läuft', COMPLETED: 'fertig', FAILED: 'fehlgeschlagen' };
+const RUN_LABEL = { QUEUED: 'wartet', RUNNING: 'läuft', COMPLETED: 'fertig', FAILED: 'fehlgeschlagen', PARTIAL_FAILURE: 'teilweise', THROTTLED_ABORTED: 'gedrosselt' };
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '–');
 
 // Seiten: Neue Pruefung | Ergebnis | Uebersicht | Verlauf | Einstellungen
@@ -1279,7 +1279,7 @@ function closeMenus() {
 }
 
 async function loadDashboard() {
-  const { stats, findings } = await window.vigil.dashboard({ ...dash, limit: 1000 });
+  const { stats, findings } = await window.vigil.dashboard({ ...dash, limit: 5000 });
   state.dashStats = stats;
   const open = stats.open || {};
   const total = stats.openTotal || 0;

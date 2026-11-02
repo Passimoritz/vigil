@@ -180,12 +180,17 @@ function buildLoginBody(form, user, pass, { userField, passField } = {}) {
   return { body: p.toString(), userName: us && us.name, passName: pw && pw.name };
 }
 
-async function postForm(guard, url, body, jar, signal) {
+// Testkonto und Cookies gehen nie an einen anderen Host als die freigegebene Anmeldeseite:
+// Formularziel und jede Weiterleitung muessen auf demselben Host bleiben, sonst wird abgebrochen.
+async function postForm(guard, url, body, jar, signal, home = url) {
+  if (!sameSite(url, home)) return { ok: false, offsite: true, error: `Formular sendet an fremden Host (${new URL(url).host})`, finalUrl: url };
   let r = await request(guard, url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...(jar.c.size ? { Cookie: jar.header() } : {}) }, body, signal });
   if (r.ok) jar.take(r);
   let final = url;
   for (let i = 0; i < 4 && r.ok && r.status >= 300 && r.status < 400 && r.headers.get('location'); i++) {
-    final = new URL(r.headers.get('location'), final).href;
+    const next = new URL(r.headers.get('location'), final).href;
+    if (!sameSite(next, home)) return { ...r, offsite: true, finalUrl: next };
+    final = next;
     r = await request(guard, final, { headers: jar.c.size ? { Cookie: jar.header() } : {}, signal });
     if (r.ok) jar.take(r);
   }
@@ -206,7 +211,8 @@ async function loginAudit(cfg, guard, { signal, onProgress = () => {} } = {}) {
   onProgress({ phase: 'webscan', message: 'Login-Prüfung: Anmeldung mit dem Testkonto …' });
   const { body, userName, passName } = buildLoginBody(form, cfg.username, cfg.password, cfg);
   if (!userName || !passName) return { findings: out, notes: ['Login-Prüfung: Benutzer- oder Passwortfeld nicht eindeutig erkannt – Feldnamen in den Einstellungen angeben.'] };
-  const res = await postForm(guard, form.action, body, jar, signal);
+  const res = await postForm(guard, form.action, body, jar, signal, cfg.loginUrl);
+  if (res.offsite) return { findings: out, notes: [`Login-Prüfung abgebrochen: Die Anmeldung führt zu einem anderen Host (${new URL(res.finalUrl).host}). Vigil schickt das Testkonto nur an die freigegebene Domain.`] };
   const changed = [...jar.c.values()].filter((k) => !before.c.has(k.name) || before.c.get(k.name).value !== k.value);
   const ok = res.ok && res.status < 400 && !looksLoggedOut(res.body) && (changed.length > 0 || res.finalUrl !== form.action);
   if (!ok) return { findings: out, notes: [`Login-Prüfung: Anmeldung mit dem Testkonto hat nicht geklappt (Status ${res.status || res.error}). Zugangsdaten und Anmelde-Adresse prüfen.`] };
@@ -224,10 +230,10 @@ async function loginAudit(cfg, guard, { signal, onProgress = () => {} } = {}) {
   }
   // Verraet die Anmeldung, ob ein Konto existiert? (2 Fehlversuche, kein Durchprobieren)
   onProgress({ phase: 'webscan', message: 'Login-Prüfung: Antworten bei falschen Daten …' });
-  const tryWrong = async (user) => { const j = new Jar(); const p = await request(guard, cfg.loginUrl, { signal }); if (!p.ok) return null; j.take(p); const f = parseForms(p.body, cfg.loginUrl).find((x) => x.inputs.some((i) => i.type === 'password')) || form; return postForm(guard, f.action, buildLoginBody(f, user, `vigil-falsch-${Date.now()}`, cfg).body, j, signal); };
+  const tryWrong = async (user) => { const j = new Jar(); const p = await request(guard, cfg.loginUrl, { signal }); if (!p.ok) return null; j.take(p); const f = parseForms(p.body, cfg.loginUrl).find((x) => x.inputs.some((i) => i.type === 'password')) || form; return postForm(guard, f.action, buildLoginBody(f, user, `vigil-falsch-${Date.now()}`, cfg).body, j, signal, cfg.loginUrl); };
   const a1 = await tryWrong(cfg.username);
   const a2 = await tryWrong(`vigil-gibt-es-nicht-${Math.random().toString(36).slice(2, 8)}@example.invalid`);
-  if (a1 && a2 && a1.ok && a2.ok) {
+  if (a1 && a2 && a1.ok && a2.ok && !a1.offsite && !a2.offsite) {
     const t1 = norm(a1.body), t2 = norm(a2.body);
     const diff = a1.status !== a2.status || new URL(a1.finalUrl).pathname !== new URL(a2.finalUrl).pathname || Math.abs(t1.length - t2.length) > Math.max(30, t1.length * 0.03);
     if (diff) out.push(W(M, { ruleId: 'login-user-enumeration', severity: 'medium', category: 'Auth', confidence: 'medium', title: 'Anmeldung verrät, ob ein Konto existiert', description: 'Bei falschem Passwort für ein existierendes Konto antwortet die Seite anders als bei einem nicht existierenden Konto (andere Meldung, Weiterleitung oder Länge). So lassen sich gültige Benutzernamen bzw. E-Mail-Adressen sammeln.', impact: 'Erleichtert gezieltes Passwort-Raten und Phishing.', remediation: 'Immer dieselbe Meldung ausgeben, z. B. „E-Mail oder Passwort falsch“, und gleich schnell antworten.', location: cfg.loginUrl }));
@@ -263,13 +269,13 @@ async function runDeepWeb(targetUrl, { deep = false, login = null, rps = 4, sign
     const pages = await crawl(url, guard, { signal, max: deep ? MAX_PAGES : 12 });
     findings.push(...formFindings(pages));
     for (const p of pages) for (const m of String(p.html).matchAll(/<script\b[^>]*\bsrc\s*=\s*["']([^"']+)/gi)) { try { scripts.add(new URL(m[1], p.url).href); } catch { /* egal */ } }
-    ran.push('web-crawl');
+    if (pages.length) ran.push('web-crawl'); else notes.push('Webseite nicht erreichbar – Durchgang übersprungen, bestehende Befunde bleiben offen.');
     notes.push(`Webseite durchgegangen: ${pages.length} Seite(n), ${pages.reduce((n, p) => n + p.forms.length, 0)} Formular(e).`);
     if (deep) {
       const targets = paramTargets(pages);
       onProgress({ phase: 'webscan', message: `Schwachstellen-Proben: ${targets.length} Parameter …` });
       findings.push(...(await probe(guard, targets, { signal })));
-      ran.push('web-probe');
+      if (pages.length) ran.push('web-probe');
       notes.push(`Schwachstellen-Proben: ${targets.length} Parameter mit harmlosen Testwerten geprüft (nur GET).`);
       if (login && login.loginUrl && login.username && login.password) {
         const l = await loginAudit(login, guard, { signal, onProgress });

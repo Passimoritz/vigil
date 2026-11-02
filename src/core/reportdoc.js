@@ -92,7 +92,7 @@ const SHIELD = '<svg viewBox="0 0 1024 1024" width="34" height="34" aria-hidden=
 function toHtml(result, opts = {}) {
   if (typeof opts === 'string') opts = { title: opts };
   const all = result.findings || [];
-  const hidden = all.filter((f) => f.suppressed || f.status === 'FALSE_POSITIVE' || f.status === 'ACCEPTED_RISK');
+  const hidden = all.filter((f) => f.suppressed || f.status === 'FALSE_POSITIVE' || f.status === 'ACCEPTED_RISK' || f.status === 'RESOLVED');
   const findings = all.filter((f) => !hidden.includes(f));
   const meta = result.meta || {};
   const s = stats(findings);
@@ -268,7 +268,7 @@ function toHtml(result, opts = {}) {
     </div>
     <div class="box"><h4>Als Nächstes tun</h4>
       ${nextSteps.length ? `<ol class="nextlist">${nextSteps.map((t) => `<li>${esc(t)}</li>`).join('')}</ol>` : '<p class="muted">Regelmäßig weiter prüfen.</p>'}
-      ${hidden.length ? `<p class="muted" style="margin-top:10px">${hidden.length} Befund(e) sind als Fehlalarm oder akzeptiertes Risiko markiert und hier nicht aufgeführt.</p>` : ''}
+      ${hidden.length ? `<p class="muted" style="margin-top:10px">${hidden.length} Befund(e) sind als Fehlalarm oder akzeptiertes Risiko markiert bzw. bereits behoben und hier nicht aufgeführt.</p>` : ''}
     </div>
   </div>
 
@@ -311,7 +311,7 @@ function toHtml(result, opts = {}) {
 function toMarkdown(result, opts = {}) {
   if (typeof opts === 'string') opts = { title: opts };
   const all = result.findings || [];
-  const findings = all.filter((f) => !(f.suppressed || f.status === 'FALSE_POSITIVE' || f.status === 'ACCEPTED_RISK'));
+  const findings = all.filter((f) => !(f.suppressed || f.status === 'FALSE_POSITIVE' || f.status === 'ACCEPTED_RISK' || f.status === 'RESOLVED'));
   const s = stats(findings);
   const meta = result.meta || {};
   const targets = (opts.targets || []).map((t) => (typeof t === 'string' ? t : t.value)).filter(Boolean);

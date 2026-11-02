@@ -961,6 +961,33 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
+  // --- Korrekturen aus der Code-Pruefung ---
+  {
+    const AdmZip = require('adm-zip');
+    const http = require('http');
+    const { analyzeDocument } = require('../src/core/docaudit');
+    const { runDeepWeb } = require('../src/core/modules/webdeep');
+    const z = new AdmZip(); z.addFile('word/document.xml', Buffer.from('<w:document/>'));
+    z.addFile('word/_rels/document.xml.rels', Buffer.from('<Relationships><Relationship Id="r1" Type="http://x/hyperlink" Target="https://example.org/" TargetMode="External"/><Relationship Id="r2" Type="http://x/oleObject" Target="embeddings/oleObject1.bin"/></Relationships>'));
+    check('dokument: Link plus lokales Objekt ist kein Nachladen', !analyzeDocument(z.toBuffer(), 'a.docx').some((f) => f.ruleId === 'doc-remote-template'));
+    check('dokument: leere oder winzige Datei wirft keinen Fehler', analyzeDocument(Buffer.alloc(2), 'leer.doc').length === 0 && analyzeDocument(Buffer.alloc(0), 'leer.pdf').length === 0);
+    // Anmeldeformular, das an einen fremden Host sendet
+    const site = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(req.url.startsWith('/login') ? '<form method="post" action="https://idp.example.invalid/auth"><input name="email"><input type="password" name="password"></form>' : '<a href="/login">Login</a>');
+    });
+    await new Promise((r) => site.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${site.address().port}/`;
+    const off = await runDeepWeb(base, { deep: true, rps: 200, login: { loginUrl: base + 'login', username: 'a@b.c', password: 'x' } });
+    check('login: Testkonto geht nie an einen fremden Host', /anderen Host/.test(off.notes.join(' ')) && !off.ran.includes('web-login'));
+    site.close();
+    const down = await runDeepWeb('http://127.0.0.1:9/', { deep: true, rps: 200 });
+    check('web: nicht erreichbare Seite gilt nicht als geprüft (keine falsche Behebung)', !down.ran.includes('web-crawl') && !down.ran.includes('web-probe') && /nicht erreichbar/.test(down.notes.join(' ')));
+    const { toHtml } = require('../src/core/reportdoc');
+    const html = toHtml({ findings: [{ title: 'Behobenes Problem', severity: 'critical', status: 'RESOLVED', category: 'Other', location: 'x' }, { title: 'Offenes Problem', severity: 'low', status: 'OPEN', category: 'Other', location: 'y' }], meta: {} });
+    check('bericht: behobene Befunde zählen nicht als offen', !html.includes('Behobenes Problem') && html.includes('Offenes Problem'));
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

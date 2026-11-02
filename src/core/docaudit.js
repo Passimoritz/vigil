@@ -39,7 +39,7 @@ function macroFindings(text, label, kind) {
 function analyzeDocument(buf, label) {
   const ext = (String(label).match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase();
   const out = [];
-  if (!Buffer.isBuffer(buf) || !DOC_EXT.has(ext)) return out;
+  if (!Buffer.isBuffer(buf) || buf.length < 8 || !DOC_EXT.has(ext)) return out;
   const head = buf.subarray(0, 8);
   // Office Open XML (ZIP)
   if (head[0] === 0x50 && head[1] === 0x4b) {
@@ -51,8 +51,15 @@ function analyzeDocument(buf, label) {
     if (/\.(docx|xlsx|pptx)$/.test(ext) && vba) out.push(F({ ruleId: 'doc-macro-wrong-extension', severity: 'high', title: `${kind} mit Makros trotz Endung ${ext}`, description: `Die Endung ${ext} steht für „ohne Makros“, die Datei enthält aber trotzdem welche. Das ist ein bekannter Täuschungstrick.`, remediation: 'Datei nicht öffnen bzw. Makros nicht aktivieren.', location: label }));
     for (const n of names.filter((x) => /_rels\/.*\.rels$/i.test(x))) {
       let rels = ''; try { rels = zip.readAsText(n); } catch { continue; }
-      const ext2 = rels.match(/Target="(https?:\/\/[^"]+)"[^>]*TargetMode="External"|TargetMode="External"[^>]*Target="(https?:\/\/[^"]+)"/i);
-      if (ext2 && /attachedTemplate|oleObject|frame|subDocument/i.test(rels)) out.push(F({ ruleId: 'doc-remote-template', severity: 'high', title: `${kind} lädt Inhalte aus dem Internet nach`, description: `Beim Öffnen holt das Dokument eine Vorlage bzw. ein Objekt von ${(ext2[1] || ext2[2]).slice(0, 120)}. So wird Schadcode nachgeladen, ohne dass er in der Datei selbst steht („Remote Template Injection“).`, remediation: 'Datei nicht öffnen; Herkunft prüfen.', location: `${label}!/${n}` }));
+      // Jede Beziehung einzeln: nur wenn DIESELBE Beziehung eine Vorlage/ein Objekt ist UND extern zeigt.
+      // (Ein normaler Hyperlink plus ein lokales Objekt ist kein Nachladen.)
+      for (const rel of rels.match(/<Relationship\b[^>]*>/gi) || []) {
+        const type = (rel.match(/\bType="([^"]+)"/i) || [])[1] || '';
+        const target = (rel.match(/\bTarget="(https?:\/\/[^"]+)"/i) || [])[1];
+        if (!target || !/TargetMode="External"/i.test(rel) || !/attachedTemplate|oleObject|frame|subDocument/i.test(type)) continue;
+        out.push(F({ ruleId: 'doc-remote-template', severity: 'high', title: `${kind} lädt Inhalte aus dem Internet nach`, description: `Beim Öffnen holt das Dokument eine Vorlage bzw. ein Objekt von ${target.slice(0, 120)}. So wird Schadcode nachgeladen, ohne dass er in der Datei selbst steht („Remote Template Injection“).`, remediation: 'Datei nicht öffnen; Herkunft prüfen.', location: `${label}!/${n}` }));
+        break;
+      }
     }
     const ole = names.filter((x) => /embeddings\/.*(\.bin|oleObject)/i.test(x));
     if (ole.length) out.push(F({ ruleId: 'doc-embedded-object', severity: 'medium', confidence: 'medium', title: `${kind} enthält eingebettete Objekte (${ole.length})`, description: 'Eingebettete OLE-Objekte können Programme oder Skripte enthalten, die per Doppelklick starten.', remediation: 'Eingebettete Objekte nur aus bekannter Quelle öffnen.', location: label }));

@@ -333,9 +333,11 @@ ipcMain.handle('meta:providers', () => {
 ipcMain.handle('config:get', () => loadConfig());
 ipcMain.handle('config:save', async (_e, cfg) => {
   const prev = loadConfig();
-  // Das API-Token setzt nur der Main-Prozess; die Freigabeliste wird normalisiert.
+  // Geheimnisse setzt nur der Main-Prozess ueber eigene Handler (Testkonto, API-Rechtematrix,
+  // MalwareBazaar-Schluessel, API-Token). Die Kopie im Fenster kann veraltet sein – immer die
+  // gespeicherte Fassung behalten, sonst wuerde "Speichern" frisch eingetragene Zugaenge loeschen.
   cfg.allowlist = normalizeAllowlist(cfg.allowlist);
-  cfg.apiToken = prev.apiToken;
+  for (const k of ['apiToken', 'webLogins', 'apiMatrix', 'malwareBazaarKeyEnc']) { if (prev[k] !== undefined) cfg[k] = prev[k]; else delete cfg[k]; }
   const ok = saveConfig(cfg);
   applyProxySafe(cfg);
   if (prev.apiEnabled !== !!cfg.apiEnabled || prev.apiPort !== cfg.apiPort) await applyApi(loadConfig());
@@ -426,7 +428,7 @@ function resolveFindingFile(location) {
     const cands = stat.isFile() ? (rel.split('/').pop() === base ? [root] : [])
       : [path.resolve(root, rel), rel.startsWith(base + '/') ? path.resolve(root, rel.slice(base.length + 1)) : null].filter(Boolean);
     for (const c of cands) {
-      const inside = c === root || c.startsWith(root + path.sep);
+      const inside = c === root || c.startsWith(root.endsWith(path.sep) ? root : root + path.sep); // auch Laufwerks-Wurzel C:\
       try { if (inside && fs.statSync(c).isFile() && fs.statSync(c).size < 3 * 1024 * 1024) return { file: c, line, rel }; } catch { /* weiter */ }
     }
   }
@@ -524,7 +526,8 @@ const idOk = (s) => typeof s === 'string' && /^[\w-]{6,80}$/.test(s);
 ipcMain.handle('findings:delete', (_e, ids) => orchestrator.deleteFindings((Array.isArray(ids) ? ids : []).filter(idOk).slice(0, 5000)));
 ipcMain.handle('target:delete', (_e, id) => (idOk(id) ? orchestrator.deleteTarget(id) : { ok: false, error: 'Ungültige ID.' }));
 ipcMain.handle('run:delete', (_e, id) => (idOk(id) ? orchestrator.deleteRun(id) : { ok: false, error: 'Ungültige ID.' }));
-ipcMain.handle('findings:purgeResolved', (_e, targetId) => orchestrator.purgeResolved(idOk(targetId) ? targetId : ''));
+// Leer = alle Ziele; eine ungueltige ID wird abgelehnt statt still auf "alle" auszuweichen
+ipcMain.handle('findings:purgeResolved', (_e, targetId) => (!targetId ? orchestrator.purgeResolved('') : idOk(targetId) ? orchestrator.purgeResolved(targetId) : { ok: false, deleted: 0, error: 'Ungültige ID.' }));
 ipcMain.handle('api:info', () => { const c = loadConfig(); return { enabled: !!c.apiEnabled, port: c.apiPort, token: c.apiToken, running: !!(api && api.running()) }; });
 // --- Ziele: Verifizierung, Baseline, Einstellungen -------------------------
 ipcMain.handle('target:verify', async (_e, id) => {

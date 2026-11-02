@@ -118,7 +118,7 @@ function scanScriptUris(uris, libs, pageUrl) {
       if (!version || seen.has(lib.name + version)) continue;
       seen.add(lib.name + version);
       const vulns = lib.vulns.filter((v) => affects(v, version));
-      if (vulns.length) out.push(libFinding(lib.name, version, vulns, uri, `Die Webseite ${pageUrl || ''}`.trim()));
+      if (vulns.length) { const f = libFinding(lib.name, version, vulns, pageUrl || uri, `Die Webseite ${pageUrl || ''}`.trim()); f.evidence = String(uri).slice(0, 480); out.push(f); }
     }
   }
   return out;
