@@ -106,7 +106,7 @@ function updateRunState() {
   if (!state.targets.length) $('runHint').textContent = 'Füge oben zuerst etwas zur Prüfliste hinzu.';
   else if (!ready.ok) $('runHint').textContent = ready.why;
   else $('runHint').textContent = `Bereit – ${state.targets.length} ${state.targets.length === 1 ? 'Ziel' : 'Ziele'} mit ${ready.label}.`;
-  scheduleEstimate(ready.ok && needsAi());
+  scheduleEstimate(ready.ok && state.targets.length > 0);
   setRunEta();
   updateReady(ready);
   updateStatusBar();
@@ -155,12 +155,23 @@ function scheduleEstimate(show) {
   if (!show) { $('estimateCard').hidden = true; state.estimate = null; setRunEta(); return; }
   estTimer = setTimeout(refreshEstimate, 350);
 }
-// Grobe Dauer der KI-losen Pruefungen (Web, Server, Image) – je Ziel, passiv und gedrosselt.
-const PASSIVE_SECONDS = { url: 45, endpoint: 60, image: 90, path: 0 };
+// Dauer kommt komplett aus der Vorschau des Hauptprozesses (lernt aus echten Laeufen mit).
 function expectedSeconds() {
-  const passive = state.targets.reduce((s, t) => s + (PASSIVE_SECONDS[t.type] || 0), 0);
-  if (needsAi()) return state.estimate ? state.estimate.seconds + passive : null;
-  return state.targets.length ? Math.max(15, passive) : null;
+  return state.targets.length && state.estimate ? state.estimate.seconds : null;
+}
+// Restzeit waehrend des Laufs: Plan minus verbrauchte Zeit, ab dem ersten KI-Aufruf
+// hochgerechnet aus dem tatsaechlichen Tempo (die KI ist fast immer der groesste Teil).
+function remainingSeconds(elapsedS) {
+  const live = state.live || {};
+  const est = state.estimate;
+  if (live.aiDone > 0 && live.aiTotal) {
+    const rate = (Date.now() - live.aiStart) / 1000 / live.aiDone;
+    const left = live.aiTotal - live.aiDone;
+    const validate = est && est.calls ? Math.ceil(live.aiTotal / 4) : 0;
+    return rate * (left + (live.phase === 'validate' ? Math.max(0, (live.valTotal || validate) - (live.valDone || 0)) : validate));
+  }
+  const exp = expectedSeconds();
+  return exp == null ? null : exp - elapsedS;
 }
 // Checkliste "Startklar?" neben dem Start-Button
 function updateReady(ready) {
@@ -184,13 +195,16 @@ function setRunEta() {
 async function refreshEstimate() {
   const seq = ++estSeq;
   const card = $('estimateCard');
-  card.hidden = false;
+  // Ohne KI (nur Webadressen/Images) keine Karte, aber trotzdem die Dauer schaetzen
+  const showCard = needsAi();
+  card.hidden = !showCard;
   card.classList.add('loading');
   card.innerHTML = '<div class="est-head"><span>Vorschau dieses Laufs</span><span class="muted small">rechne …</span></div>';
   let r;
   try { r = await window.vigil.estimateAudit({ targets: state.targets, providerId: state.config.selected }); } catch (e) { r = { ok: false, error: e.message }; }
   if (seq !== estSeq) return; // inzwischen geaendert
   card.classList.remove('loading');
+  if (!showCard) { state.estimate = r && r.ok ? r.current : null; setRunEta(); updateReady({ ok: true }); return; }
   if (!r || !r.ok) { card.innerHTML = `<div class="est-head"><span>Vorschau</span></div><p class="muted small">Keine Schätzung möglich${r && r.error ? ': ' + esc(r.error) : ''}.</p>`; return; }
   const c = r.current, o = r.other;
   state.estimate = c;
@@ -213,6 +227,7 @@ async function refreshEstimate() {
       <div><span class="est-n">${fmtDur(c.seconds).replace('≈ ', '')}</span><span class="est-l">Dauer</span></div>
     </div>
     <div class="est-split muted small">${fmtK(c.inputTokens)} Eingang · ${fmtK(c.outputTokens)} Ausgang${c.truncated ? ' · große Projekte werden gekürzt' : ''}</div>
+    <div class="est-split muted small">${c.timeMeasured ? 'Dauer aus deinen bisherigen Läufen gelernt' : 'Dauer vorsichtig geschätzt – wird nach dem ersten Lauf mit diesem Modell genauer'}</div>
     ${warn ? `<div class="est-warn">Über deiner Kostengrenze von ${fmtUsd(state.config.costWarnUsd ?? 2)} – Vigil fragt vor dem Start nach.</div>` : ''}
     <button type="button" class="est-switch" id="estSwitch">${modeName(o.depth)}-Modus: ${esc(otherPrice)} – umstellen</button>`;
   $('estSwitch').onclick = () => { state.config.analysisDepth = o.depth; saveCfg(); refreshEstimate(); toast(`${modeName(o.depth)}-Modus aktiv`, 'ok'); };
@@ -246,14 +261,20 @@ async function runAudit() {
     const ms = Date.now() - state.runStartedAt;
     $('progressSub').textContent = `${state.targets.map((t) => t.value).join(', ')} · ${fmtElapsed(ms)}`;
     $('stageElapsed').textContent = fmtElapsed(ms);
-    if (expected == null) $('stageEta').textContent = '–';
-    else { const left = expected - ms / 1000; $('stageEta').textContent = left > 5 ? fmtDur(left).replace('≈ ', '') : 'gleich'; }
+    const left = remainingSeconds(ms / 1000);
+    if (left == null) $('stageEta').textContent = '–';
+    else $('stageEta').textContent = left > 5 ? fmtDur(left).replace('≈ ', '') : expected != null && ms / 1000 > expected * 1.15 ? 'dauert länger als geplant' : 'gleich';
   };
   tick();
   clearInterval(state.elapsedTimer);
   state.elapsedTimer = setInterval(tick, 1000);
 
+  state.live = {};
   const unsub = window.vigil.onProgress((p) => {
+    const live = state.live;
+    live.phase = p.phase;
+    if (p.phase === 'analyze' && p.total) { if (!live.aiStart) live.aiStart = Date.now(); live.aiTotal = p.total; live.aiDone = p.done || 0; }
+    if (p.phase === 'validate' && p.total) { live.valTotal = p.total; live.valDone = p.done || 0; }
     renderStepper(p.phase);
     updateStage(p);
     $('log').textContent += `[${p.phase}]${p.total ? ` ${p.done}/${p.total}` : ''} ${p.message}\n`;

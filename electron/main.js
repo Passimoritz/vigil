@@ -292,6 +292,11 @@ ipcMain.handle('provider:models', async (_e, { providerId, apiKey, baseUrl }) =>
   return fetchModels(eff);
 });
 
+// Gelernte Laufzeiten (timing.js) – eigene Datei, damit das Speichern der Einstellungen sie nicht ueberschreibt
+const timing = require('../src/core/timing');
+const TIMING_PATH = () => path.join(app.getPath('userData'), 'timing.json');
+const withVerified = (targets) => targets.map((t) => { const rec = orchestrator.getTarget(require('../src/core/store').targetIdOf(t)); return { ...t, verified: !!(rec && rec.ownershipVerified) }; });
+
 ipcMain.handle('audit:run', async (e, payload) => {
   const v = check(ScanRequestSchema, payload);
   if (!v.ok) return { ok: false, error: 'Ungültige Eingabe: ' + v.error };
@@ -300,12 +305,24 @@ ipcMain.handle('audit:run', async (e, payload) => {
   const scope = enforceScope(v.data.targets, cfg.allowlist, { interactive: true });
   if (!scope.ok) return { ok: false, error: scope.errors.join(' ') };
   if (scope.allow.length) { cfg.allowlist = normalizeAllowlist([...cfg.allowlist, ...scope.allow]); saveConfig(cfg); }
+  const clock = new timing.PhaseClock();
+  const providerId = v.data.providerId || cfg.selected;
   const job = orchestrator.enqueue({
-    targets: scope.targets, providerId: v.data.providerId || cfg.selected, origin: 'app',
-    onProgress: (p) => { try { e.sender.send('audit:progress', p); } catch { /* Fenster weg */ } },
+    targets: scope.targets, providerId, origin: 'app',
+    onProgress: (p) => { clock.tick(p); try { e.sender.send('audit:progress', p); } catch { /* Fenster weg */ } },
   });
   const out = await job.done;
   if (out.ok) { lastResult = out.result; recordHistory(out.result, scope.targets); }
+  // Aus vollstaendigen Laeufen lernen, wie lange welche Phase wirklich dauert
+  if (out.ok && !out.canceled) {
+    try {
+      const m = clock.finish();
+      const meta = (out.result && out.result.meta) || {};
+      const calib = timing.learn(timing.load(TIMING_PATH()), m, { targets: withVerified(scope.targets), files: meta.units || 0, deps: (meta.sbom || []).length, config: effectiveConfig(cfg, providerId) });
+      timing.save(TIMING_PATH(), calib);
+      out.timing = { seconds: Math.round(m.total) };
+    } catch (err) { console.warn('Laufzeit nicht gelernt:', err.message); }
+  }
   return out;
 });
 
@@ -316,10 +333,11 @@ ipcMain.handle('audit:estimate', async (_e, payload) => {
   const v = check(ScanRequestSchema, payload);
   if (!v.ok) return { ok: false, error: v.error };
   const cfg = loadConfig();
-  const eff = effectiveConfig(cfg, v.data.providerId || cfg.selected);
+  const eff = { ...effectiveConfig(cfg, v.data.providerId || cfg.selected), timingCalib: timing.load(TIMING_PATH()) };
+  const targets = withVerified(v.data.targets);
   try {
-    const current = await estimateAudit(v.data.targets, eff);
-    const other = await estimateAudit(v.data.targets, { ...eff, analysisDepth: eff.analysisDepth === 'thorough' ? 'standard' : 'thorough' });
+    const current = await estimateAudit(targets, eff);
+    const other = await estimateAudit(targets, { ...eff, analysisDepth: eff.analysisDepth === 'thorough' ? 'standard' : 'thorough' });
     return { ok: true, current, other, model: eff.model, provider: eff.provider };
   } catch (e) { return { ok: false, error: e.message }; }
 });

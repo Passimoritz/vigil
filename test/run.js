@@ -616,6 +616,25 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     try { fs.unlinkSync(file); } catch { /* egal */ }
   }
 
+  // --- Dauer-Schaetzung lernt aus echten Laeufen ---
+  {
+    const t = require('../src/core/timing');
+    const cfg = { provider: 'ollama', model: 'm', aiValidation: true };
+    const inp = { targets: [{ type: 'path' }], files: 40, deps: 10, calls: 2, local: true, config: cfg };
+    const before = t.estimate(inp, {});
+    check('timing: ohne Messung vorsichtig (>= 2 Min. fuer 2 lokale Aufrufe)', before.seconds >= 120 && !before.measured);
+    let now = 0; const clk = new t.PhaseClock(() => now);
+    clk.tick({ phase: 'prescan' }); now += 5000;
+    clk.tick({ phase: 'analyze', total: 2, done: 0 }); now += 150000; clk.tick({ phase: 'analyze', total: 2, done: 1 }); now += 150000; clk.tick({ phase: 'analyze', total: 2, done: 2 });
+    clk.tick({ phase: 'validate', total: 1, done: 0 }); now += 45000; clk.tick({ phase: 'validate', total: 1, done: 1 });
+    const m = clk.finish();
+    check('timing: Phasen gemessen', Math.round(m.total) === 350 && m.aiCalls === 2 && m.validateCalls === 1);
+    const after = t.estimate(inp, t.learn({}, m, { ...inp }));
+    check('timing: nach einem 6-Min-Lauf schaetzt Vigil ~6 Min.', after.measured && Math.abs(after.seconds - 350) < 40);
+    const web = t.estimate({ targets: [{ type: 'url' }], config: {} }, {});
+    check('timing: Webadresse ohne KI nicht unter einer Minute', web.seconds >= 60);
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

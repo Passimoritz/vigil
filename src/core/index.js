@@ -172,12 +172,19 @@ async function runAudit(targets, config, onProgress = () => {}) {
   return { result, ingest: ing, prescan: pre };
 }
 
-// Kosten-/Token-Vorschau vor dem Start: liest die Dateien ein (ohne Netz/KI) und rechnet hoch.
+// Kosten-/Token-/Zeit-Vorschau vor dem Start: liest die Dateien ein (ohne Netz/KI) und rechnet hoch.
+// Die Dauer kommt aus timing.js und beruecksichtigt gelernte Werte frueherer Laeufe (config.timingCalib).
 async function estimateAudit(targets, config) {
   const { estimateRun } = require('./analyze');
+  const timing = require('./timing');
   const ing = await ingestTargets(targets.filter((t) => t.type === 'path'), () => {});
   const pre = prescan(ing.units, { customSecrets: config.customRules, disabledRules: config.disabledRules });
-  return { ...estimateRun({ units: ing.units, facts: pre.facts, config }), files: ing.units.length, truncated: ing.notes.some((n) => /Limit|uebersprungen|Uebersprungen/i.test(n)) };
+  const run = estimateRun({ units: ing.units, facts: pre.facts, config });
+  const t = timing.estimate({
+    targets: targets.map((x) => ({ ...x, internal: (x.type === 'url' || x.type === 'endpoint') && isInternalHost(hostOf(x)) })),
+    files: ing.units.length, deps: pre.deps.length, calls: ing.units.length ? run.calls : 0, local: run.local, config,
+  }, config.timingCalib || {});
+  return { ...run, seconds: t.seconds, timeParts: t.parts, timeMeasured: t.measured, files: ing.units.length, deps: pre.deps.length, truncated: ing.notes.some((n) => /Limit|uebersprungen|Uebersprungen/i.test(n)) };
 }
 
 module.exports = { runAudit, estimateAudit, report, fingerprint, atOrAbove, ruleNames, PROVIDERS, callProvider, pingProvider, fetchModels };
