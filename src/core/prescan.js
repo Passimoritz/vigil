@@ -70,11 +70,7 @@ const PATTERN_RULES = [
   { cat: 'Transport', name: 'Java: alle Zertifikate/Hosts akzeptiert', re: /ALLOW_ALL_HOSTNAME_VERIFIER|TrustAllCerts|NoopHostnameVerifier/g, sev: 'high' },
   // Go
   { cat: 'XSS', name: 'Go: template.HTML (ungefiltertes HTML)', re: /template\.HTML\s*\(/g, sev: 'medium' },
-  // Ruby / Rails
-  { cat: 'XSS', name: 'Rails: html_safe', re: /\.html_safe\b/g, sev: 'medium' },
-  { cat: 'Injection', name: 'Rails: SQL-Interpolation in where', re: /\.where\s*\(\s*["'][^"']*#\{/g, sev: 'high' },
-  { cat: 'AccessControl', name: 'Rails: CSRF-Schutz uebersprungen', re: /skip_before_action\s*:verify_authenticity_token/g, sev: 'high' },
-  { cat: 'AccessControl', name: 'Rails: Mass Assignment (permit!)', re: /\.permit!/g, sev: 'medium' },
+  // Ruby / Rails: rules/rails.yml
   // PHP
   { cat: 'Injection', name: 'PHP: Eingabe in Query/Exec', re: /(?:->query|mysqli_query|shell_exec|\bsystem|\bexec)\s*\([^)]*\$_(?:GET|POST|REQUEST|COOKIE)/g, sev: 'high' },
   { cat: 'Injection', name: 'PHP: LFI/RFI (include aus Eingabe)', re: /(?:include|require)(?:_once)?\s*\(?\s*\$_(?:GET|POST|REQUEST)/g, sev: 'high' },
@@ -84,11 +80,7 @@ const PATTERN_RULES = [
   { cat: 'Deserialization', name: '.NET: BinaryFormatter', re: /\bBinaryFormatter\b/g, sev: 'high' },
   { cat: 'Transport', name: '.NET: Zertifikatspruefung umgangen', re: /ServerCertificateValidationCallback\s*[+=]/g, sev: 'high' },
   { cat: 'XSS', name: '.NET: Html.Raw', re: /Html\.Raw\s*\(/g, sev: 'medium' },
-  // Python / Django
-  { cat: 'XSS', name: 'Django: mark_safe', re: /mark_safe\s*\(/g, sev: 'medium' },
-  { cat: 'Injection', name: 'Django: raw/extra SQL', re: /\.(?:raw|extra)\s*\(/g, sev: 'medium' },
-  { cat: 'AccessControl', name: 'Django: csrf_exempt', re: /csrf_exempt/g, sev: 'high' },
-  { cat: 'Config', name: 'Django: ALLOWED_HOSTS Wildcard', re: /ALLOWED_HOSTS\s*=\s*\[\s*["']\*["']/g, sev: 'medium' },
+  // Python / Django: rules/django.yml
   // Allgemein
   { cat: 'Auth', name: 'Hartkodiertes JWT-Secret', re: /jwt\.(?:sign|verify|encode|decode)\s*\([^)]*,\s*["'][^"']{4,}["']/g, sev: 'medium' },
   // Docker
@@ -114,6 +106,10 @@ const PATTERN_RULES = [
   { cat: 'Injection', name: 'GitHub Actions: untrusted github.event im Ausdruck', re: /\$\{\{\s*github\.event\.(?:issue|pull_request|comment|review|head_commit)/g, sev: 'medium' },
   { cat: 'AccessControl', name: 'GitHub Actions: permissions write-all', re: /permissions\s*:\s*write-all/g, sev: 'medium' },
 ];
+// Weitere Musterregeln aus rules/*.yml|json (Zod-geprueft); kind: finding erzeugt eigene Befunde
+const RULE_FILES = require('./rulefiles').loadRuleFiles();
+PATTERN_RULES.push(...RULE_FILES.patterns);
+const FILE_FINDING_RULES = RULE_FILES.findings;
 
 function lineOf(content, index) {
   let line = 1;
@@ -260,6 +256,27 @@ function prescan(units, opts = {}) {
         if (rule.re.lastIndex === m.index) rule.re.lastIndex++;
       }
     }
+    // Regeldateien mit kind: finding -> direkte Befunde
+    for (const rule of FILE_FINDING_RULES) {
+      if (disabled.has(rule.name)) continue;
+      rule.re.lastIndex = 0;
+      let m, hits = 0;
+      while ((m = rule.re.exec(content)) && hits < 5) {
+        if (rule.re.lastIndex === m.index) rule.re.lastIndex++;
+        hits++;
+        findings.push(normalizeFinding({
+          ruleId: rule.id || 'rule-' + rule.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+          title: `Eigene Regel: ${rule.name}`,
+          severity: rule.sev,
+          category: rule.cat,
+          location: `${u.label}:${lineOf(content, m.index)}`,
+          description: rule.description || `Treffer der Regel „${rule.name}“ aus rules/${rule.file}.`,
+          remediation: rule.remediation || 'Fundstelle prüfen und nach der Beschreibung der Regel beheben.',
+          evidence: m[0].replace(/\s+/g, ' ').slice(0, 160),
+          confidence: 'medium',
+        }, 'prescan'));
+      }
+    }
     // Methode: hohe Entropie -> moegliches Secret ohne bekanntes Muster
     for (const h of findHighEntropy(content)) {
       findings.push(normalizeFinding({
@@ -310,7 +327,7 @@ function prescan(units, opts = {}) {
 
 // Namen aller eingebauten Regeln (fuer die „deaktivieren"-Auswahl in der UI).
 function ruleNames() {
-  return { secrets: SECRET_RULES.map((r) => r.name), patterns: PATTERN_RULES.map((r) => ({ cat: r.cat, name: r.name })) };
+  return { secrets: SECRET_RULES.map((r) => r.name), patterns: [...PATTERN_RULES, ...FILE_FINDING_RULES].map((r) => ({ cat: r.cat, name: r.name })) };
 }
 
-module.exports = { prescan, ruleNames, SECRET_RULES, PATTERN_RULES };
+module.exports = { prescan, ruleNames, SECRET_RULES, PATTERN_RULES, FILE_FINDING_RULES, ruleFileErrors: RULE_FILES.errors };

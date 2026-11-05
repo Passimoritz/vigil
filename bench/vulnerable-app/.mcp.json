@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "search": {
+      "command": "npx",
+      "args": ["-y", "@brave/brave-search-mcp-server"],
+      "env": { "BRAVE_API_KEY": "BSAvigil-uebung-0000000000" }
+    },
+    "files": {
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-filesystem@2025.8.21", "C:\\Users\\vigil"]
+    }
+  }
+}

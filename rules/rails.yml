@@ -1,0 +1,19 @@
+# Musterregeln fuer Ruby on Rails (Hinweise fuer die KI-Analyse, kind: pattern).
+# Aufbau siehe src/core/rulefiles.js. Regex in einfachen Anfuehrungszeichen: ' wird zu ''.
+rules:
+  - name: "Rails: html_safe"
+    category: XSS
+    severity: medium
+    regex: '\.html_safe\b'
+  - name: "Rails: SQL-Interpolation in where"
+    category: Injection
+    severity: high
+    regex: '\.where\s*\(\s*["''][^"'']*#\{'
+  - name: "Rails: CSRF-Schutz uebersprungen"
+    category: AccessControl
+    severity: high
+    regex: 'skip_before_action\s*:verify_authenticity_token'
+  - name: "Rails: Mass Assignment (permit!)"
+    category: AccessControl
+    severity: medium
+    regex: '\.permit!'

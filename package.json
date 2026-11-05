@@ -37,6 +37,7 @@
       "src/**/*",
       "assets/**/*",
       "bench/vulnerable-app/**/*",
+      "rules/**/*",
       "package.json",
       "!test/**",
       "!tools/**",

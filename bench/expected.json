@@ -19,6 +19,17 @@
     { "id": "s3", "label": "Öffentlicher S3-Bucket", "file": "infra/main.tf", "cats": ["AccessControl", "Config"], "rule": "s3" },
     { "id": "ssh", "label": "SSH für das ganze Internet offen", "file": "infra/main.tf", "cats": ["Config"], "rule": "sg-open|firewall" },
     { "id": "k8s-priv", "label": "Privilegierter Kubernetes-Container", "file": "k8s/deploy.yaml", "cats": ["Config"], "rule": "privileged" },
-    { "id": "k8s-latest", "label": "Kubernetes-Image ohne feste Version", "file": "k8s/deploy.yaml", "cats": ["Config"], "rule": "latest" }
+    { "id": "k8s-latest", "label": "Kubernetes-Image ohne feste Version", "file": "k8s/deploy.yaml", "cats": ["Config"], "rule": "latest" },
+    { "id": "next-action", "label": "Next.js Server Action ohne Anmeldeprüfung", "file": "src/actions.ts", "cats": ["AccessControl"], "rule": "server-action" },
+    { "id": "log-password", "label": "Passwort wird ins Log geschrieben", "file": "src/auth.js", "cats": ["Logging"], "rule": "log-" },
+    { "id": "c-gets", "label": "gets() und Formatstring in C", "file": "src/legacy.c", "cats": ["Other", "Injection"], "rule": "c-gets|format-string" },
+    { "id": "sql-grant", "label": "GRANT ALL für jeden Host mit Standard-Passwort", "file": "db/grants.sql", "cats": ["AccessControl", "Secrets"], "rule": "sql-" },
+    { "id": "nginx-tls", "label": "nginx erlaubt TLS 1.0", "file": "infra/nginx.conf", "cats": ["Transport"], "rule": "old-tls" },
+    { "id": "nginx-autoindex", "label": "nginx zeigt Verzeichnislisten", "file": "infra/nginx.conf", "cats": ["Config"], "rule": "autoindex" },
+    { "id": "openapi", "label": "API-Operation ohne Absicherung (OpenAPI)", "file": "openapi.yaml", "cats": ["Auth"], "rule": "openapi" },
+    { "id": "mcp-token", "label": "Schlüssel im Klartext in der MCP-Konfiguration", "file": ".mcp.json", "cats": ["Secrets"], "rule": "mcp-plaintext" },
+    { "id": "mcp-unpinned", "label": "MCP-Server per npx -y ohne feste Version", "file": ".mcp.json", "cats": ["Dependencies"], "rule": "unpinned" },
+    { "id": "mcp-fs", "label": "MCP-Dateisystem-Server mit ganzem Benutzerordner", "file": ".mcp.json", "cats": ["AccessControl"], "rule": "broad-fs" },
+    { "id": "ps-iex", "label": "PowerShell lädt Skript und führt es mit iex aus", "file": "deploy.ps1", "cats": ["Injection"], "rule": "download-exec|invoke-expression" }
   ]
 }

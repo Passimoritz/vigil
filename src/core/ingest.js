@@ -23,7 +23,9 @@ const TEXT_EXT = new Set([
   '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.json', '.json5',
   '.py', '.rb', '.php', '.java', '.kt', '.kts', '.go', '.rs', '.c', '.h',
   '.cpp', '.cc', '.hpp', '.cs', '.swift', '.m', '.mm', '.scala', '.clj',
-  '.sh', '.bash', '.zsh', '.ps1', '.psm1', '.bat', '.cmd',
+  '.cxx', '.hh', '.hxx', '.dart', '.sc', '.ex', '.exs', '.lua', '.erb', '.rake', '.cshtml', '.razor',
+  '.sh', '.bash', '.zsh', '.ps1', '.psm1', '.psd1', '.bat', '.cmd',
+  '.ipynb', '.gql',
   '.html', '.htm', '.css', '.scss', '.vue', '.svelte',
   '.sql', '.graphql', '.proto',
   '.yml', '.yaml', '.toml', '.ini', '.cfg', '.conf', '.env', '.properties',
@@ -36,6 +38,19 @@ const BINARY_EXE_EXT = new Set(['.exe', '.dll', '.so', '.dylib', '.bin', '.msi',
 const ARCHIVE_EXT = new Set(['.zip', '.jar', '.war', '.ear', '.apk', '.aar', '.nupkg', '.ipa', '.xapk']);
 const { decodeAxml, decodeBplist } = require('./modules/mobile');
 const { analyzeDocument, DOC_EXT } = require('./docaudit');
+const { analyzeModelFile, isModelExt } = require('./modelscan');
+
+// Modelldatei lesen: ZIP-Modelle (PyTorch) bis 512 MB ganz, sonst nur der Anfang (dort steht der Pickle)
+function readModel(full, size) {
+  const HEAD = 32 * 1024 * 1024;
+  if (size <= HEAD) return fs.readFileSync(full);
+  const fd = fs.openSync(full, 'r');
+  try {
+    const magic = Buffer.alloc(4); fs.readSync(fd, magic, 0, 4, 0);
+    if (magic.readUInt32BE(0) === 0x504b0304 && size <= 512 * 1024 * 1024) return fs.readFileSync(full);
+    const buf = Buffer.alloc(HEAD); const n = fs.readSync(fd, buf, 0, HEAD, 0); return buf.subarray(0, n);
+  } finally { fs.closeSync(fd); }
+}
 
 function extname(p) {
   const e = path.extname(p).toLowerCase();
@@ -52,6 +67,10 @@ function langFor(ext) {
     '.c': 'c', '.cpp': 'cpp', '.h': 'c', '.sh': 'bash', '.ps1': 'powershell',
     '.sql': 'sql', '.html': 'html', '.yml': 'yaml', '.yaml': 'yaml',
     '.xml': 'xml', '.gradle': 'gradle',
+    '.cc': 'cpp', '.cxx': 'cpp', '.hpp': 'cpp', '.hh': 'cpp', '.hxx': 'cpp',
+    '.dart': 'dart', '.scala': 'scala', '.sc': 'scala', '.ex': 'elixir', '.exs': 'elixir', '.lua': 'lua',
+    '.rake': 'ruby', '.erb': 'ruby', '.bash': 'bash', '.zsh': 'bash', '.psm1': 'powershell', '.psd1': 'powershell',
+    '.kts': 'kotlin', '.swift': 'swift', '.ipynb': 'json', '.json': 'json', '.graphql': 'graphql', '.gql': 'graphql',
   };
   return map[ext] || 'text';
 }
@@ -164,6 +183,11 @@ function ingestFile(col, full, root) {
     try { for (const f of analyzeDocument(fs.readFileSync(full), rel.replace(/\\/g, '/'))) col.findings.push(f); } catch (e) { col.notes.push(`Dokument nicht lesbar: ${rel}`); }
     if (ext !== '.pdf' && ext !== '.rtf') return; // Office-Binaerformate liefern keinen sinnvollen Text
   }
+  // KI-Modelldateien (Pickle): gefaehrliche Importe pruefen, ohne die Datei zu laden
+  if (isModelExt(ext)) {
+    try { for (const f of analyzeModelFile(readModel(full, stat.size), rel.replace(/\\/g, '/'))) col.findings.push(f); }
+    catch (e) { col.notes.push(`Modelldatei nicht lesbar: ${rel}`); }
+  }
   if (BINARY_EXE_EXT.has(ext)) {
     try {
       const buf = fs.readFileSync(full);
@@ -212,6 +236,7 @@ function ingestArchive(col, archivePath, label) {
       if (xml) { col.add({ label: `${label}!/${name}`, kind: 'archive-entry', language: 'xml', path: name, content: xml, meta: { note: 'aus dem Binärformat der App zurückgewandelt' } }); continue; }
     }
     if (DOC_EXT.has(ext)) { for (const f of analyzeDocument(buf, `${label}!/${name}`)) col.findings.push(f); if (ext !== '.pdf' && ext !== '.rtf') continue; }
+    if (isModelExt(ext)) { try { for (const f of analyzeModelFile(buf, `${label}!/${name}`)) col.findings.push(f); } catch { /* defekt */ } }
     addTextBuffer(col, `${label}!/${name}`, 'archive-entry', buf, name);
   }
 }
