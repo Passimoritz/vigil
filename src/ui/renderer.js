@@ -29,7 +29,9 @@ let RULE_NAMES = null; // Namen der eingebauten Regeln (lazy via IPC)
 
 // --- Ziele --------------------------------------------------------------
 const KIND_LABEL = { path: 'Datei/Ordner', url: 'Webadresse', endpoint: 'Server', image: 'Container-Image', system: 'System' };
-const SYSTEM_LABEL = { windows: 'Dieser Windows-PC', docker: 'Laufende Docker-Container', aws: 'AWS-Konto', azure: 'Azure-Abonnement', gcp: 'Google-Cloud-Projekt' };
+const SYSTEM_LABEL = { windows: 'Dieser Windows-PC', docker: 'Laufende Docker-Container', aws: 'AWS-Konto', azure: 'Azure-Abonnement', gcp: 'Google-Cloud-Projekt',
+  winapps: 'Installierte Programme', browserext: 'Browser-Erweiterungen', backup: 'Datensicherung (Windows)', macos: 'Dieser Mac', router: 'Router (Standard-Gateway)', lan: 'Geräte im lokalen Netz', linuxssh: 'Linux-Server (SSH)', dbdirect: 'Datenbanken', k8s: 'Kubernetes-Cluster (kubectl)', iam: 'Cloud-Berechtigungen (IAM)', cicd: 'GitHub / GitLab / Azure DevOps', m365: 'Microsoft 365 / Google Workspace', hosting: 'Cloudflare, Hetzner, DigitalOcean, Vercel, Netlify', hibp: 'Datenlecks der Domain (HIBP)' };
+const SYSTEM_RE = new RegExp(`^system:(${Object.keys(SYSTEM_LABEL).join('|')})$`, 'i');
 function addTarget(type, value, authorized = false) {
   if (!value) return;
   if (state.targets.some((t) => t.type === type && t.value === value)) return;
@@ -140,7 +142,7 @@ function renderTargets() {
 // Freitext deuten: lokaler Pfad, Webadresse, Container-Image oder Server (IP/Host).
 function classifyInput(v) {
   if (/^image:/i.test(v)) return { type: 'image', value: v.slice(6).trim() };
-  if (/^system:(windows|docker|aws|azure|gcp)$/i.test(v)) return { type: 'system', value: v.slice(7).toLowerCase() };
+  if (SYSTEM_RE.test(v)) return { type: 'system', value: v.slice(7).toLowerCase() };
   if (/^https?:\/\//i.test(v)) return { type: 'url', value: v };
   if (/^[a-z]:[\\/]|^\\\\|^\/|^\.{1,2}[\\/]|^~[\\/]/i.test(v)) return { type: 'path', value: v };
   // Image mit Tag (nginx:1.25, ghcr.io/org/app:2.1) oder Digest – ein reiner Zahlen-"Tag" ist ein Port.
@@ -219,6 +221,9 @@ function setupDropzone() {
   });
   // Schnellstart-Kacheln fuer Webseite/Image: Eingabefeld mit passendem Anfang fuellen
   // System-Pruefungen direkt zur Liste hinzufuegen bzw. wieder entfernen
+  // macOS-Pruefung nur auf einem Mac anbieten
+  const macChip = document.querySelector('.sys-chip[data-system="macos"]');
+  if (macChip) macChip.hidden = !/Mac/i.test(navigator.platform || navigator.userAgent || '');
   document.querySelectorAll('.sys-chip').forEach((b) => b.addEventListener('click', () => {
     const v = b.dataset.system;
     const i = state.targets.findIndex((t) => t.type === 'system' && t.value === v);
@@ -1698,7 +1703,7 @@ function renderWatch() {
 // Einstellungs-Bereiche: welche Karten gehoeren wohin (Reihenfolge = Anzeige)
 const SET_GROUPS = {
   general: ['presets', 'set-app', 'set-report'],
-  checks: ['set-analyse', 'set-privacy', 'set-malware', 'set-feeds', 'set-tools'],
+  checks: ['set-analyse', 'set-privacy', 'set-malware', 'set-feeds', 'set-tools', 'set-systems'],
   web: ['set-scope', 'set-deep', 'set-login', 'set-matrix'],
   advanced: ['set-rules', 'set-network', 'set-providers', 'set-rest', 'set-data'],
 };
@@ -1724,6 +1729,53 @@ function renderLoginStatus() {
 function renderMalwareStatus() {
   if (!window.vigil.malwareKeyInfo) return;
   window.vigil.malwareKeyInfo().then((k) => { $('mbStatus').textContent = k.hasKey ? 'Schlüssel ✓ hinterlegt.' : 'Kein Schlüssel hinterlegt – dieser Abgleich wird übersprungen.'; }).catch(() => {});
+}
+// Zugaenge fuer System-Pruefungen (Server, Datenbanken, Online-Konten). Geheimnisse gehen nur in den
+// Main-Prozess (verschluesselt) und kommen nie zurueck – angezeigt wird nur, ob etwas hinterlegt ist.
+const SYS_FIELDS_UI = [
+  { k: 'sshTarget', ph: 'Linux-Server: benutzer@server oder benutzer@server:port' },
+  { k: 'sshKeyPath', ph: 'Pfad zum privaten SSH-Schlüssel, z. B. C:\\Users\\du\\.ssh\\id_ed25519' },
+  { k: 'dbUrls', n: 'Datenbank-Verbindungen', ph: 'Datenbanken, eine Verbindung pro Zeile: postgres://, mysql://, mongodb://, redis:// (leer = unverändert)', secret: true, area: true },
+  { k: 'githubToken', n: 'GitHub-Token', ph: 'GitHub-Token mit Leserechten (leer = unverändert)', secret: true },
+  { k: 'githubOrg', ph: 'GitHub-Organisation (optional)' },
+  { k: 'gitlabToken', n: 'GitLab-Token', ph: 'GitLab-Token mit read_api (leer = unverändert)', secret: true },
+  { k: 'gitlabUrl', ph: 'GitLab-Server (leer = gitlab.com)' },
+  { k: 'gitlabGroup', ph: 'GitLab-Gruppe (optional)' },
+  { k: 'adoOrg', ph: 'Azure-DevOps-Organisation' },
+  { k: 'adoToken', n: 'Azure-DevOps-Token', ph: 'Azure-DevOps-Token mit Leserechten (leer = unverändert)', secret: true },
+  { k: 'm365Tenant', ph: 'Microsoft 365: Tenant-ID' },
+  { k: 'm365ClientId', ph: 'Microsoft 365: App-ID (Client-ID)' },
+  { k: 'm365Secret', n: 'Microsoft-365-App-Schlüssel', ph: 'Microsoft 365: geheimer App-Schlüssel (leer = unverändert)', secret: true },
+  { k: 'gwsAdmin', ph: 'Google Workspace: E-Mail eines Admins' },
+  { k: 'gwsServiceAccount', n: 'Google-Workspace-Dienstkonto', ph: 'Google Workspace: Dienstkonto-Schlüssel als JSON (leer = unverändert)', secret: true, area: true },
+  { k: 'cloudflareToken', n: 'Cloudflare-Token', ph: 'Cloudflare-API-Token mit Leserechten (leer = unverändert)', secret: true },
+  { k: 'hetznerToken', n: 'Hetzner-Token', ph: 'Hetzner-Cloud-Token, nur lesen (leer = unverändert)', secret: true },
+  { k: 'digitaloceanToken', n: 'DigitalOcean-Token', ph: 'DigitalOcean-Token, nur lesen (leer = unverändert)', secret: true },
+  { k: 'vercelToken', n: 'Vercel-Token', ph: 'Vercel-Token (leer = unverändert)', secret: true },
+  { k: 'netlifyToken', n: 'Netlify-Token', ph: 'Netlify-Token (leer = unverändert)', secret: true },
+  { k: 'hibpDomain', ph: 'Have I Been Pwned: eigene, dort verifizierte Domain' },
+  { k: 'hibpKey', n: 'HIBP-Schlüssel', ph: 'Have I Been Pwned: API-Schlüssel (leer = unverändert)', secret: true },
+];
+function renderSystems() {
+  if (!window.vigil.systemsGet || !$('sysFields')) return;
+  const box = $('sysFields');
+  if (!box.children.length) {
+    box.innerHTML = SYS_FIELDS_UI.map((f) => (f.area
+      ? `<textarea id="sys_${f.k}" rows="2" spellcheck="false" placeholder="${esc(f.ph)}" aria-label="${esc(f.ph)}"></textarea>`
+      : `<input id="sys_${f.k}" type="${f.secret ? 'password' : 'text'}" placeholder="${esc(f.ph)}" aria-label="${esc(f.ph)}" autocomplete="off" />`)).join('');
+  }
+  window.vigil.systemsGet().then((s) => {
+    for (const f of SYS_FIELDS_UI) $('sys_' + f.k).value = f.secret ? '' : s[f.k] || '';
+    $('lanPortChk').checked = !!s.lanPortCheck;
+    const stored = SYS_FIELDS_UI.filter((f) => f.secret && s['has_' + f.k]).map((f) => f.n);
+    $('sysStatus').textContent = stored.length ? `Verschlüsselt hinterlegt: ${stored.join(' · ')}` : 'Noch keine Zugänge hinterlegt.';
+  }).catch(() => {});
+}
+function saveSystems() {
+  if (!window.vigil.systemsSave || !$('sysFields') || !$('sysFields').children.length) return;
+  const patch = { lanPortCheck: $('lanPortChk').checked };
+  for (const f of SYS_FIELDS_UI) patch[f.k] = $('sys_' + f.k).value;
+  window.vigil.systemsSave(patch).then(renderSystems).catch(() => {});
 }
 function renderReportLogo() {
   const has = /^data:image\//.test(state.config.reportLogo || '');
@@ -1758,7 +1810,7 @@ function renderSettings() {
   $('watchCvesChk').checked = state.config.watchCves !== false;
   $('watchCtChk').checked = state.config.watchCt !== false;
   $('osvOfflineChk').checked = !!state.config.osvOffline;
-  renderLoginStatus(); renderMalwareStatus(); renderFeeds();
+  renderLoginStatus(); renderMalwareStatus(); renderFeeds(); renderSystems();
   applyAppearance();
   if (window.vigil.crashInfo) window.vigil.crashInfo().then((c) => { $('crashInfo').textContent = c.count ? `Bisher ${c.count} Bericht(e) gespeichert.` : 'Bisher keine Abstürze.'; }).catch(() => {});
   renderReportLogo();
@@ -1819,6 +1871,7 @@ function collectSettings() {
   if ($('wlUrl').value.trim()) {
     window.vigil.webLoginSave([{ loginUrl: $('wlUrl').value, username: $('wlUser').value, password: $('wlPass').value, userField: $('wlUserField').value, passField: $('wlPassField').value }]).then(() => { $('wlPass').value = ''; renderLoginStatus(); });
   } else if (state.hadLogin) window.vigil.webLoginSave([]).then(renderLoginStatus);
+  saveSystems();
   if ($('mbKey').value.trim()) window.vigil.malwareSetKey($('mbKey').value.trim()).then(() => { $('mbKey').value = ''; renderMalwareStatus(); });
   // API-Rechtematrix separat speichern – Tokens gehen verschluesselt in den Main-Prozess
   if ($('amHost').value.trim() || $('amEndpoints').value.trim()) {
@@ -1979,6 +2032,10 @@ async function init() {
   if (window.vigil.onWatchUpdate) window.vigil.onWatchUpdate(() => { renderWatch(); });
   if (window.vigil.onUsbScan) window.vigil.onUsbScan((drive) => { if (!/^[A-Z]:\\$/.test(drive)) return; addTarget('path', drive); showView('scan'); toast(`${drive} zur Prüfliste hinzugefügt`, 'ok'); });
   $('cacheClearBtn').onclick = async () => { await window.vigil.aiCacheClear(); $('cacheInfo').textContent = ''; toast('KI-Zwischenspeicher geleert – der nächste Lauf prüft alles neu', 'ok'); };
+  // Port-Pruefung im lokalen Netz nur nach ausdruecklicher Bestaetigung einschalten
+  if ($('lanPortChk')) $('lanPortChk').addEventListener('change', (e) => {
+    if (e.target.checked && !confirm('Vigil baut dann zu jedem gefundenen Gerät im eigenen Netz kurze Verbindungen zu wenigen Verwaltungs-Ports auf (z. B. Telnet, Weboberfläche, Fernwartung).\nNur private Adressen im eigenen Subnetz, keine Anmeldeversuche, kein Port-Scan. Prüfe nur Netze, die dir gehören.\nEinschalten?')) e.target.checked = false;
+  });
   ['depthSelect', 'validateChk', 'cveChk', 'activeChk', 'domChk', 'malwareChk', 'crawlChk'].forEach((id) => $(id).addEventListener('change', () => { collectSettings(); renderPresets(); }));
   // Einstellungen: vier Bereiche statt einer langen Seite
   $('setNav').querySelectorAll('[data-group]').forEach((b) => b.onclick = () => setGroup(b.dataset.group));

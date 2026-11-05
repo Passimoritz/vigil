@@ -173,7 +173,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   for (const t of targets.filter((x) => x.type === 'system')) {
     if (aborted()) break;
     try {
-      const r = await require('./hostaudit').auditSystem(t.value, { signal: config.signal, onProgress });
+      const r = await require('./hostaudit').auditSystem(t.value, { signal: config.signal, onProgress, settings: config.systemSettings || {} });
       webFindings.push(...r.findings); webNotes.push(...r.notes);
       if (r.ok) scannersRun.push({ target: t.value, source: `system-${t.value}` });
     } catch (e) { webNotes.push(`System-Prüfung ${t.value}: ${e.message}`); }

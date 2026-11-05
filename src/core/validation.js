@@ -8,6 +8,7 @@ const { z } = require('zod');
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 const FINDING_STATUSES = ['OPEN', 'IN_PROGRESS', 'ACCEPTED_RISK', 'FALSE_POSITIVE', 'RESOLVED'];
 const TARGET_TYPES = ['path', 'url', 'endpoint', 'image', 'system'];
+const SYSTEM_KINDS = ['windows', 'docker', 'aws', 'azure', 'gcp', 'winapps', 'browserext', 'backup', 'macos', 'router', 'lan', 'linuxssh', 'dbdirect', 'k8s', 'iam', 'cicd', 'm365', 'hosting', 'hibp'];
 
 // Einheitliches Befund-Format (Vigil-Schreibweise der Spec "UnifiedFinding").
 const UnifiedFindingSchema = z.object({
@@ -34,7 +35,7 @@ const TargetSchema = z.object({
   if (/[\0\r\n]/.test(t.value)) ctx.addIssue({ code: 'custom', message: 'Steuerzeichen sind nicht erlaubt.' });
   if (t.type === 'url' && !/^https?:\/\/[^\s/]+/i.test(t.value)) ctx.addIssue({ code: 'custom', message: 'Webadresse muss mit http:// oder https:// beginnen.' });
   if (t.type === 'image' && !IMAGE_RE.test(t.value)) ctx.addIssue({ code: 'custom', message: 'Ungültige Container-Image-Referenz.' });
-  if (t.type === 'system' && !/^(windows|docker|aws|azure|gcp)$/.test(t.value)) ctx.addIssue({ code: 'custom', message: 'Unbekannte System-Prüfung (erlaubt: windows, docker, aws, azure, gcp).' });
+  if (t.type === 'system' && !SYSTEM_KINDS.includes(t.value)) ctx.addIssue({ code: 'custom', message: `Unbekannte System-Prüfung (erlaubt: ${SYSTEM_KINDS.join(', ')}).` });
   if (t.type === 'endpoint' && !/^[\w.\-:[\]]+$/.test(t.value)) ctx.addIssue({ code: 'custom', message: 'Ungültiger Hostname bzw. IP-Adresse.' });
 });
 
