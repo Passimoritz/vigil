@@ -100,17 +100,55 @@ async function generatePatch({ finding = {}, code = null, config }) {
 
 // --- 2. Erklaerung je Stufe ---------------------------------------------------
 const LEVELS = {
-  lay: 'fuer einen Laien ohne Programmierkenntnisse (z. B. Geschaeftsfuehrung): Alltagsvergleich, was konkret passieren kann, wie dringend – keine Fachbegriffe, kein Code. 4-6 Saetze.',
-  dev: 'fuer eine Entwicklerin: Ursache im Code, Datenfluss von der Quelle zur Senke, wie man es richtig macht (kurzes Code-Beispiel), wie man den Fix testet. Hoechstens 8 Stichpunkte plus ein kurzer Codeblock.',
-  expert: 'fuer einen Security-Experten: Schwachstellenklasse (CWE), Voraussetzungen und Erreichbarkeit konzeptionell, Schwere-Einordnung (CVSS-Faktoren), Grenzfaelle/Umgehungen von naiven Fixes, Defense-in-Depth. Knapp und praezise, ohne einsatzfertige Payloads.',
+  lay: 'fuer einen Laien ohne Programmierkenntnisse (z. B. Geschaeftsfuehrung): Alltagsvergleich, was konkret passieren kann, wie dringend – keine Fachbegriffe, kein Code.',
+  dev: 'fuer eine Entwicklerin: Ursache, wie es ausgenutzt wird (Ablauf, ohne Payload), wie man es richtig macht (kurzes Beispiel), wie man den Fix testet.',
+  expert: 'fuer einen Security-Experten: Einordnung (CWE/OWASP), Voraussetzungen, Schwere-Einschaetzung, Fallstricke naiver Fixes, Defense in Depth. Knapp und praezise.',
 };
+// Feste Abschnitte je Stufe: die KI fuellt nur die Inhalte, Ueberschriften und Reihenfolge kommen von uns.
+// So sieht jede Erklaerung gleich aus und das Modell kann die Frage nicht einfach wiederholen.
+const SECTIONS = {
+  lay: [['what', 'Was ist los?', '1-2 Saetze in Alltagssprache'], ['compare', 'Vergleich aus dem Alltag', '1 Satz'], ['risk', 'Was kann passieren?', '1-3 Stichpunkte'], ['urgency', 'Wie dringend?', '1 Satz: sofort / bald / bei Gelegenheit, mit Grund'], ['todo', 'Was ist zu tun?', '1-3 Stichpunkte, was man der IT sagt']],
+  dev: [['cause', 'Ursache', '1-3 Stichpunkte'], ['flow', 'So wird es ausgenutzt', '2-4 Schritte als Ablauf, ohne Payload'], ['fix', 'So machst du es richtig', '2-4 Stichpunkte'], ['test', 'So testest du den Fix', '1-3 Stichpunkte']],
+  expert: [['class', 'Einordnung', 'CWE und OWASP-Kategorie mit Namen, 1-2 Stichpunkte'], ['preconditions', 'Voraussetzungen', '1-4 Stichpunkte: was ein Angreifer braucht'], ['severity', 'Schwere-Einschätzung', '1-3 Stichpunkte in Worten (Angriffsweg, noetige Rechte, Nutzer-Interaktion, Folgen). Erfinde KEINEN CVSS-Vektor oder Score; nur wenn unter "Befund" ein CVSS steht, darfst du ihn nennen.'], ['pitfalls', 'Fallstricke bei naiven Fixes', '1-3 Stichpunkte'], ['defense', 'Defense in Depth', '1-3 Stichpunkte']],
+};
+const sectionSpec = (level) => SECTIONS[level].map(([k, , hint]) => `"${k}": [${hint}]`).join(',\n  ');
 const EXPLAIN_PROMPT = `Du bist ein defensiver Sicherheitsberater und erklaerst EINEN Befund aus der Sicherheitspruefung des eigenen Projekts des Nutzers.
-- Formatiere mit Markdown: **fett**, "- " fuer Stichpunkte, Backticks fuer Namen, Codebloecke mit drei Backticks. Keine Tabellen, keine Ueberschriften.
-- Beginne direkt mit der Erklaerung, keine Einleitung, keine Wiederholung der Frage.
+- Antworte AUSSCHLIESSLICH mit einem JSON-Objekt im verlangten Format. Kein Text davor oder danach.
+- Wiederhole NICHT die Angaben zum Befund (Titel, Schwere, Ort …) – der Nutzer sieht sie bereits.
+- Jeder Stichpunkt ist ein kurzer, vollstaendiger Satz. In Texten sind **fett** und \`Code\` erlaubt, sonst kein Markdown.
+- Bleib bei dem, was aus den Angaben folgt; erfinde keine Details ueber das Projekt.
 - Keine einsatzfertigen Angriffs-Payloads oder Schritt-fuer-Schritt-Anleitungen. Schwerpunkt: verstehen und beheben.`;
 
 function explainKey(finding, level, config) {
-  return 'explain:' + sha(['v1', level, en(config) ? 'en' : 'de', config.provider, config.model, finding.id || '', finding.title || '', finding.location || '', String(finding.description || '').slice(0, 500), config.aiFocus || ''].join('\u0000'));
+  return 'explain:' + sha(['v2', level, en(config) ? 'en' : 'de', config.provider, config.model, finding.id || '', finding.title || '', finding.location || '', String(finding.description || '').slice(0, 500), config.aiFocus || ''].join('\u0000'));
+}
+
+// Vom Modell wiederholte Befund-Angaben am Anfang entfernen ("Befund", "Titel: …", "Erklärung für …")
+const ECHO = /^\s*(?:#+\s*)?(?:\*\*)?(?:Befund|Finding|Aufgabe|Task|Titel|Title|Schwere|Severity|Ort|Location|Kategorie|Category|CWE|Beschreibung|Description|Auswirkung|Impact|Erreichbarkeit|Reachability|Behebung|Remediation|Erkl(?:ä|ae)r(?:e|ung)[^\n]{0,80}(?:Laie|Entwickler|Experte|Security)[^\n]*|Explanation for[^\n]*)(?:\*\*)?\s*(?::[^\n]*)?$/i;
+function stripEcho(text) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n');
+  let i = 0;
+  while (i < lines.length && (ECHO.test(lines[i]) || !lines[i].trim())) i++;
+  return lines.slice(i).join('\n').trim();
+}
+
+// JSON-Antwort -> { summary, sections: [{ key, title, points[] }], code: { lang, text } | null }
+function normalizeExplanation(j, level) {
+  if (!j || typeof j !== 'object') return null;
+  const src = j.sections && typeof j.sections === 'object' && !Array.isArray(j.sections) ? j.sections : j;
+  const pts = (v) => (Array.isArray(v) ? v : typeof v === 'string' ? v.split(/\n+/) : [])
+    .map((x) => String(typeof x === 'object' && x ? (x.text || x.point || Object.values(x).join(' ')) : x).replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').trim())
+    .filter(Boolean).slice(0, 6).map((x) => x.slice(0, 600));
+  const sections = SECTIONS[level].map(([key, title]) => ({ key, title, points: pts(src[key]) })).filter((s) => s.points.length);
+  if (!sections.length) return null;
+  const c = j.code || src.code;
+  const ctext = c ? (typeof c === 'string' ? c : String(c.text || c.code || '')).replace(/^```[\w+.-]*\n?|\n?```$/g, '').trim() : '';
+  const code = ctext ? { lang: String((c && c.lang) || '').slice(0, 20), text: ctext.slice(0, 2500) } : null;
+  return { summary: String(j.summary || '').trim().slice(0, 400), sections, code };
+}
+// Strukturierte Erklaerung als Text (Fallback-Anzeige, Export, alte Aufrufer)
+function explanationText(s) {
+  return [s.summary, ...s.sections.map((x) => `**${x.title}**\n${x.points.map((p) => `- ${p}`).join('\n')}`), s.code ? '```' + (s.code.lang || '') + '\n' + s.code.text + '\n```' : ''].filter(Boolean).join('\n\n');
 }
 
 async function explainFinding({ finding = {}, level = 'dev', code = null, config, cache = null, refresh = false }) {
@@ -118,15 +156,23 @@ async function explainFinding({ finding = {}, level = 'dev', code = null, config
   const key = explainKey(finding, level, config);
   if (cache && !refresh) {
     const hit = cache.get(key);
-    if (hit && typeof hit.text === 'string') return { ok: true, level, text: hit.text, model: hit.model, cached: true };
+    if (hit && typeof hit.text === 'string') return { ok: true, level, text: hit.text, structured: hit.structured || null, model: hit.model, cached: true };
   }
-  const user = `## Befund\n${factsOf(finding)}\n\n${code ? '## Code\n```\n' + numbered(code) + '\n```\n\n' : ''}## Aufgabe\nErklaere den Befund ${LEVELS[level]}\n${langLine(config)}`;
-  const r = await aiCall(config, { system: EXPLAIN_PROMPT, user, json: false, kind: 'explain', maxTokens: 900 });
-  let text = r.text.trim();
-  const j = /^\s*\{/.test(text) ? parseJsonObject(text) : null; // manche lokalen Modelle antworten in JSON
-  if (j) text = String(j.answer || j.explanation || j.text || Object.values(j).find((v) => typeof v === 'string') || text);
-  if (cache && text) { cache.set(key, { text, model: config.model }); if (typeof cache.flush === 'function') cache.flush(); }
-  return { ok: true, level, text, model: config.model, cached: false, cost: r.cost, usage: r.usage };
+  const wantsCode = level === 'dev';
+  const format = `{\n  "summary": "ein Satz: das Wichtigste in Kuerze",\n  "sections": {\n  ${sectionSpec(level)}\n  }${wantsCode ? ',\n  "code": {"lang": "z. B. js, nginx, apache, http", "text": "kurzes Beispiel fuer die richtige Loesung (Code oder Konfiguration), hoechstens 15 Zeilen"}' : ''}\n}`;
+  const user = `## Befund\n${factsOf(finding)}${finding.cvss ? `\nCVSS: ${finding.cvss}` : ''}\n\n${code ? '## Code\n```\n' + numbered(code) + '\n```\n\n' : ''}## Aufgabe\nErklaere den Befund ${LEVELS[level]}\nAntwortformat (JSON, Werte in [] sind Listen von Stichpunkten):\n${format}\n${langLine(config)}`;
+  const r = await aiCall(config, { system: EXPLAIN_PROMPT, user, json: true, kind: 'explain', maxTokens: 1200 });
+  const raw = String(r.text || '').trim();
+  const structured = normalizeExplanation(parseJsonObject(raw), level);
+  let text;
+  if (structured) text = explanationText(structured);
+  else {
+    // Kein brauchbares JSON: Freitext ohne wiederholte Befund-Angaben
+    const j = /^\s*\{/.test(raw) ? parseJsonObject(raw) : null;
+    text = stripEcho(j ? String(j.answer || j.explanation || j.text || Object.values(j).find((v) => typeof v === 'string') || raw) : raw);
+  }
+  if (cache && text) { cache.set(key, { text, structured, model: config.model }); if (typeof cache.flush === 'function') cache.flush(); }
+  return { ok: true, level, text, structured, model: config.model, cached: false, cost: r.cost, usage: r.usage };
 }
 
 // --- 3. Zusammenfassung des Laufs --------------------------------------------
@@ -273,4 +319,4 @@ async function threatModel({ result = {}, targets = [], config }) {
   return tm;
 }
 
-module.exports = { generatePatch, explainFinding, summarizeRun, ruleSummary, threatModel, ruleThreatModel, normalizeThreatModel, checkDiff, normalizeDiff, extractDiff, aiCall, LEVELS, STRIDE, explainKey };
+module.exports = { generatePatch, explainFinding, normalizeExplanation, explanationText, stripEcho, SECTIONS, summarizeRun, ruleSummary, threatModel, ruleThreatModel, normalizeThreatModel, checkDiff, normalizeDiff, extractDiff, aiCall, LEVELS, STRIDE, explainKey };

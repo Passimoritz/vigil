@@ -82,6 +82,7 @@
       "uninstallerIcon": "assets/icon.ico",
       "installerHeaderIcon": "assets/icon.ico",
       "license": "build/license.txt",
+      "include": "build/installer.nsh",
       "language": "1031",
       "installerLanguages": [
         "de_DE"

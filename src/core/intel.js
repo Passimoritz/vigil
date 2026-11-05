@@ -106,11 +106,13 @@ const CHAINS = [
   {
     ruleId: 'toxic-container-escape', score: 100, possibleScore: 85, severity: 'critical', possibleSeverity: 'high',
     title: 'Angriffsweg: Vom Container auf den ganzen Server',
+    entry: 'Angreifer aus dem Internet', goal: 'Ganzer Server übernommen',
     parts: [
-      { test: rid(/^container-root-user$|^dockerfile-root-user$/), what: () => 'Der Container läuft mit Administratorrechten (root).', fix: 'Den Container mit einem normalen Benutzer starten (USER im Dockerfile bzw. user: in docker-compose).', effort: 1 },
-      { test: rid(/^container-(docker-sock|privileged|cap-sys-admin)$/), what: () => 'Der Container hat Sonderrechte auf den Server: Er darf Docker steuern (Docker-Socket) oder läuft „privileged“.', fix: 'Docker-Socket nicht in den Container einbinden und privileged/SYS_ADMIN entfernen.', effort: 2 },
+      { test: rid(/^container-root-user$|^dockerfile-root-user$/), stage: 'Im Container Administrator', why: 'Wer im Container landet, hat dort sofort alle Rechte.', what: () => 'Der Container läuft mit Administratorrechten (root).', fix: 'Den Container mit einem normalen Benutzer starten (USER im Dockerfile bzw. user: in docker-compose).', effort: 1 },
+      { test: rid(/^container-(docker-sock|privileged|cap-sys-admin)$/), stage: 'Vom Container auf den Server', why: 'Über diese Sonderrechte kommt man aus dem Container heraus auf den Server.', what: () => 'Der Container hat Sonderrechte auf den Server: Er darf Docker steuern (Docker-Socket) oder läuft „privileged“.', fix: 'Docker-Socket nicht in den Container einbinden und privileged/SYS_ADMIN entfernen.', effort: 2 },
       { test: (f) => f.category === 'SSRF' || /ssrf/i.test(f.ruleId || '') || (f.category === 'Dependencies' && ['critical', 'high'].includes(f.severity)),
         confirm: (f) => f.category === 'SSRF' || /ssrf/i.test(f.ruleId || ''),
+        stage: 'Einstieg in die Anwendung', why: 'Über diese Lücke kommt ein Angreifer überhaupt erst in die Anwendung hinein.', order: 0,
         what: (items) => `Es gibt einen möglichen Einstieg von außen: ${items.map((x) => `„${x.title}“`).slice(0, 2).join(', ')}.`, fix: 'Die gefundene Lücke in der Anwendung bzw. das verwundbare Paket beheben.', effort: 3 },
     ],
     story: 'Wer über die Lücke in die Anwendung kommt, ist im Container sofort Administrator. Mit den Sonderrechten des Containers kann er von dort aus Docker steuern – und damit den ganzen Server samt allen anderen Anwendungen übernehmen.',
@@ -118,9 +120,11 @@ const CHAINS = [
   {
     ruleId: 'toxic-sourcemap-api', score: 98, severity: 'critical',
     title: 'Angriffsweg: Offener Quellcode verrät Zugänge',
+    entry: 'Beliebiger Besucher', goal: 'Interne Zugänge benutzt',
     parts: [
-      { test: rid(/^web-sourcemap-exposed$/), what: () => 'Der ursprüngliche Quellcode der Webseite ist öffentlich abrufbar (SourceMap-Dateien).', fix: 'SourceMaps nicht mit ausliefern (im Build abschalten oder *.map auf dem Server sperren).', effort: 1 },
+      { test: rid(/^web-sourcemap-exposed$/), stage: 'Quellcode mitlesen', why: 'Der Quellcode verrät Adressen, Schnittstellen und manchmal Schlüssel.', what: () => 'Der ursprüngliche Quellcode der Webseite ist öffentlich abrufbar (SourceMap-Dateien).', fix: 'SourceMaps nicht mit ausliefern (im Build abschalten oder *.map auf dem Server sperren).', effort: 1 },
       { test: (f) => /^api-(bola|unauthenticated)/.test(f.ruleId || '') || (f.category === 'Secrets' && f.severity !== 'info'),
+        stage: 'Ungeschützten Zugang nutzen', why: 'Was im Code steht, lässt sich direkt ausprobieren, weil der Zugang nicht abgesichert ist.',
         what: (items) => `Darin bzw. dahinter liegt ein Zugang, der nicht geschützt ist: ${items.map((x) => `„${x.title}“`).slice(0, 2).join(', ')}.`, fix: 'Den Zugang absichern: Schlüssel widerrufen und neu erzeugen bzw. die API-Route mit Rechteprüfung versehen.', effort: 2 },
     ],
     story: 'Aus dem offenen Quellcode liest ein Angreifer in Minuten alle internen Adressen und Schlüssel heraus – und benutzt den ungeschützten Zugang direkt.',
@@ -128,14 +132,17 @@ const CHAINS = [
   {
     ruleId: 'toxic-session-hijack', score: 92, possibleScore: 55, severity: 'high', possibleSeverity: 'medium',
     title: 'Angriffsweg: Anmeldungen von Besuchern könnten übernommen werden',
+    entry: 'Eingeschleuster Code (z. B. über ein Eingabefeld oder ein manipuliertes Fremdskript)', goal: 'Konto des Besuchers übernommen',
     parts: [
       { test: (f) => /^(missing-csp-header|unsafe-csp-directive|csp-wildcard-script-src)$/.test(f.ruleId || '') || f.category === 'XSS',
         confirm: (f) => f.category === 'XSS',
+        stage: 'Fremder Code läuft in der Seite', why: 'Ohne Content-Security-Policy hält der Browser eingeschleusten Code nicht auf – er läuft mit denselben Rechten wie die Seite selbst.',
         what: (items) => (items.some((x) => x.category === 'XSS')
           ? `Über eine gefundene Lücke lässt sich fremder Code in die Seite einschleusen: „${items.find((x) => x.category === 'XSS').title}“.`
           : 'Die Seite legt nicht fest, welche Skripte darauf laufen dürfen (keine wirksame Content-Security-Policy). Eingeschleuster Code würde also nicht blockiert.'),
         fix: 'Eine Content-Security-Policy setzen, die nur eigene Skripte erlaubt – zuerst im Beobachtungsmodus testen.', effort: 2 },
       { test: (f) => /^dom-token-in-storage$/.test(f.ruleId || '') || isSessionCookie(f),
+        stage: 'Anmeldung auslesen', why: 'Der laufende Code kann das Anmelde-Cookie bzw. -Token lesen und an den Angreifer schicken.',
         what: (items) => {
           const c = items.filter(isSessionCookie).map(cookieName);
           return c.length
@@ -150,10 +157,11 @@ const CHAINS = [
   {
     ruleId: 'toxic-db-breach', score: 99, severity: 'critical',
     title: 'Angriffsweg: Datenbank direkt aus dem Internet erreichbar',
+    entry: 'Automatischer Scanner im Internet', goal: 'Daten ausgelesen, verschlüsselt oder gelöscht',
     parts: [
       { test: (f) => /^container-db-port-public$/.test(f.ruleId || '') || (f.source === 'nmap' && /PostgreSQL|MySQL|Redis|MongoDB|Elasticsearch/i.test(f.title || '')),
-        what: () => 'Die Datenbank nimmt Verbindungen von allen Netzwerken an, nicht nur vom eigenen Server.', fix: 'Die Datenbank nur an 127.0.0.1 bzw. ein internes Netz binden.', effort: 1 },
-      { test: rid(/^host-firewall-inactive$/), what: () => 'Auf dem Server ist keine Firewall aktiv, die solche Verbindungen abblockt.', fix: 'Firewall einschalten und nur SSH, HTTP und HTTPS freigeben.', effort: 1 },
+        stage: 'Datenbank lauscht nach außen', why: 'Die Datenbank wartet auf Verbindungen aus jedem Netz.', what: () => 'Die Datenbank nimmt Verbindungen von allen Netzwerken an, nicht nur vom eigenen Server.', fix: 'Die Datenbank nur an 127.0.0.1 bzw. ein internes Netz binden.', effort: 1 },
+      { test: rid(/^host-firewall-inactive$/), stage: 'Keine Firewall dazwischen', why: 'Nichts blockt die Verbindung ab, bevor sie die Datenbank erreicht.', what: () => 'Auf dem Server ist keine Firewall aktiv, die solche Verbindungen abblockt.', fix: 'Firewall einschalten und nur SSH, HTTP und HTTPS freigeben.', effort: 1 },
     ],
     story: 'Automatische Scanner durchsuchen das Internet ständig nach offenen Datenbanken. Ein solcher Server wird meist innerhalb von Stunden gefunden und dann ausgelesen, verschlüsselt oder gelöscht.',
   },
@@ -185,6 +193,15 @@ function correlate(findings) {
       steps,
       confidence: confirmed ? 'high' : 'medium', sourceModule: 'attack-path-correlator', linkedKeys: linked.map(key),
     }, 'correlator');
+    // Ablauf fuer die Grafik: Einstieg -> Schritte (in Angriffsreihenfolge) -> Ziel; je Schritt die Befunde und die Unterbrechung
+    const minEffort = Math.min(...matched.map((m) => m.p.effort));
+    f.chain = {
+      entry: ch.entry || '', goal: ch.goal || '', confirmed,
+      steps: [...matched].sort((a, b) => (a.p.order ?? 1) - (b.p.order ?? 1)).map((m) => ({
+        stage: m.p.stage || '', why: m.p.why || '', what: m.p.what(m.items), fix: m.p.fix, effort: m.p.effort, easiest: m.p.effort === minEffort,
+        proven: !m.p.confirm || m.items.some(m.p.confirm), keys: m.items.slice(0, 2).map(key),
+      })),
+    };
     f.contextualRiskScore = confirmed ? ch.score : (ch.possibleScore || ch.score);
     f.category = 'AttackPath'; // eigene Kategorie nur fuer Angriffswege (nicht Teil der KI-Kategorien)
     f.toxic = true;

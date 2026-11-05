@@ -140,6 +140,7 @@
     if (o.versionPatch) o.versionPatch = { ...o.versionPatch, title: translate(o.versionPatch.title), note: translate(o.versionPatch.note), command: translateCode(o.versionPatch.command), manifest: translateCode(o.versionPatch.manifest) };
     if (o.snippets && typeof o.snippets === 'object') o.snippets = Object.fromEntries(Object.entries(o.snippets).map(([k, v]) => [k, translateCode(v)]));
     if (typeof o.patch === 'string') o.patch = translateCode(o.patch);
+    if (o.chain && Array.isArray(o.chain.steps)) o.chain = { ...o.chain, entry: translate(o.chain.entry), goal: translate(o.chain.goal), steps: o.chain.steps.map((st) => ({ ...st, stage: translate(st.stage), why: translate(st.why), what: translate(st.what), fix: translate(st.fix) })) };
     return o;
   }
   function localizeResult(r) {

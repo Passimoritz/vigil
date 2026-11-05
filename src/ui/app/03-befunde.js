@@ -86,6 +86,29 @@ const CATEGORY_LABEL = {
   DNS: 'DNS & E-Mail', LLM: 'KI-Sicherheit', Logging: 'Protokollierung', License: 'Lizenz', AttackPath: 'Angriffsweg',
 };
 // Beteiligte Befunde eines Angriffswegs (verknuepft ueber ruleId@location)
+// Angriffsweg als Ablauf: Einstieg -> Schritte (je mit Befunden und "hier unterbrechen") -> Ziel
+function chainHtml(f) {
+  const c = f.chain;
+  const rows = state.lastFindings.map((x, i) => ({ x, k: findingKey(x, i), id: x.ruleId + '@' + x.location }));
+  const EFFORT = { 1: 'wenig Aufwand', 2: 'mittlerer Aufwand', 3: 'größerer Aufwand' };
+  const step = (st, i) => {
+    const items = rows.filter((r) => (st.keys || []).includes(r.id));
+    return '<li class="ch-step' + (st.proven ? '' : ' ch-unproven') + '">'
+      + '<div class="ch-num" aria-hidden="true">' + (i + 1) + '</div>'
+      + '<div class="ch-body">'
+      + '<div class="ch-stage">' + esc(st.stage || ('Schritt ' + (i + 1))) + (st.proven ? '' : ' <span class="ch-tag">möglich, nicht bewiesen</span>') + '</div>'
+      + (st.why ? '<p class="ch-why">' + esc(st.why) + '</p>' : '')
+      + '<p class="ch-what">' + esc(st.what) + '</p>'
+      + (items.length ? '<div class="ch-items">' + items.map(({ x, k }) => '<button type="button" class="linked-row sev-' + x.severity + '" data-key="' + esc(k) + '"><span class="sev-tag">' + SEV_LABEL[x.severity] + '</span><span class="linked-title">' + esc(cleanTitle(x.title)) + '</span><span class="linked-go" aria-hidden="true">›</span></button>').join('') + '</div>' : '')
+      + '<div class="ch-cut' + (st.easiest ? ' easiest' : '') + '"><span class="ch-cut-ico" aria-hidden="true">✂</span><span><b>' + (st.easiest ? 'Hier am einfachsten unterbrechen' : 'Hier unterbrechen') + '</b>' + (EFFORT[st.effort] ? ' · ' + EFFORT[st.effort] : '') + '<br>' + esc(st.fix) + '</span></div>'
+      + '</div></li>';
+  };
+  return '<div class="f-sec chain-sec full"><h4>So hängt der Angriffsweg zusammen</h4><ol class="ch-flow">'
+    + '<li class="ch-end ch-start"><div class="ch-num" aria-hidden="true">⚑</div><div class="ch-body"><div class="ch-stage">Start</div><p class="ch-what">' + esc(c.entry || 'Angreifer') + '</p></div></li>'
+    + c.steps.map(step).join('')
+    + '<li class="ch-end ch-goal"><div class="ch-num" aria-hidden="true">✕</div><div class="ch-body"><div class="ch-stage">Ziel des Angreifers</div><p class="ch-what">' + esc(c.goal || '') + '</p></div></li>'
+    + '</ol><p class="muted small">' + (c.confirmed ? 'Jeder Schritt braucht den vorherigen. Behebst du einen davon, ist der ganze Weg unterbrochen.' : 'Jeder Schritt braucht den vorherigen. Behebst du einen davon, ist der ganze Weg unterbrochen. Gestrichelte Schritte sind nicht bewiesen – der Weg ist bisher nur möglich.') + '</p></div>';
+}
 function linkedOf(f) {
   if (!Array.isArray(f.linkedKeys) || !f.linkedKeys.length) return [];
   const want = new Set(f.linkedKeys);
@@ -131,14 +154,14 @@ function findingDetail(f) {
   const ctx = (f.context || []).filter((c) => CONTEXT[c]);
   const danger = [f.impact, f.reachability].filter(Boolean).join(' ');
   const secs = [
-    f.description && `<div class="f-sec${danger ? '' : ' full'}"><h4>Was ist los?</h4><p>${glossify(esc(f.description))}</p></div>`,
-    danger && `<div class="f-sec${f.description ? '' : ' full'}"><h4>Was kann passieren?</h4><p>${glossify(esc(danger))}</p></div>`,
+    f.description && !f.chain && `<div class="f-sec${danger ? '' : ' full'}"><h4>Was ist los?</h4><p>${glossify(esc(f.description))}</p></div>`,
+    danger && `<div class="f-sec${f.description && !f.chain ? '' : ' full'}"><h4>Was kann passieren?</h4><p>${glossify(esc(danger))}</p></div>`,
   ].filter(Boolean).join('');
   const check = f.validation && f.validation.reason
     ? `<div class="f-sec check-sec"><h4>${f.validation.by === 'ai-review' ? 'KI-Gegencheck' : 'Gegenprüfung'}: ${f.validation.verdict === 'confirmed' ? 'bestätigt' : f.validation.verdict === 'doubted' ? 'wahrscheinlich Fehlalarm' : 'nicht eindeutig'}</h4><p>${esc(f.validation.reason)}${f.severityOriginal ? ` <span class="muted">(Schwere von „${esc(SEV_LABEL[f.severityOriginal] || f.severityOriginal)}“ herabgestuft)</span>` : ''}</p></div>` : '';
   // Angriffsweg: die beteiligten Einzelbefunde zum Anklicken
   const linked = linkedOf(f);
-  const linkedHtml = linked.length ? `<div class="f-sec linked-sec"><h4>Beteiligte Befunde</h4><div class="linked-list">${linked.map(({ x, k }) => `<button type="button" class="linked-row sev-${x.severity}" data-key="${esc(k)}"><span class="sev-tag">${SEV_LABEL[x.severity]}</span><span class="linked-title">${esc(cleanTitle(x.title))}</span><span class="linked-go" aria-hidden="true">›</span></button>`).join('')}</div></div>` : '';
+  const linkedHtml = f.chain && f.chain.steps && f.chain.steps.length ? chainHtml(f) : linked.length ? `<div class="f-sec linked-sec"><h4>Beteiligte Befunde</h4><div class="linked-list">${linked.map(({ x, k }) => `<button type="button" class="linked-row sev-${x.severity}" data-key="${esc(k)}"><span class="sev-tag">${SEV_LABEL[x.severity]}</span><span class="linked-title">${esc(cleanTitle(x.title))}</span><span class="linked-go" aria-hidden="true">›</span></button>`).join('')}</div></div>` : '';
   return `
     <header class="fd-head">
       <div class="fd-top">${chips}</div>
@@ -152,8 +175,9 @@ function findingDetail(f) {
     <div class="fd-body">
       ${f.locationDetail ? `<p class="loc-detail"><span>Fundort</span>${esc(f.locationDetail)}</p>` : ''}
       ${ctx.length ? `<div class="ctx-row">${ctx.map((c) => `<span class="ctx-chip ctx-${c}">${CONTEXT[c]}</span>`).join('')}</div>` : ''}
+      ${f.chain ? linkedHtml : ''}
       ${secs ? `<div class="f-cols">${secs}</div>` : ''}
-      ${linkedHtml}
+      ${f.chain ? '' : linkedHtml}
       ${check}
       ${f.evidence ? `<div class="f-sec evidence"><h4>Fundstelle</h4><code>${esc(f.evidence)}</code></div>` : ''}
       ${/:\d+(:\d+)?$/.test(f.location || '') && !/^https?:/i.test(f.location || '') ? '<div class="f-sec code-sec" hidden><h4>Betroffener Code</h4><div class="code-view"></div></div>' : ''}
@@ -270,6 +294,12 @@ const dots = '<span class="ask-dots"><i></i><i></i><i></i></span>';
 function diffHtml(d) {
   return `<pre class="diff-view">${String(d).split('\n').map((l) => `<span class="${/^(\+\+\+|---)/.test(l) ? 'd-file' : /^@@/.test(l) ? 'd-hunk' : /^\+/.test(l) ? 'd-add' : /^-/.test(l) ? 'd-del' : 'd-ctx'}">${esc(l) || ' '}</span>`).join('')}</pre>`;
 }
+// Strukturierte KI-Erklaerung: Kernaussage oben, darunter feste Abschnitte als Karten, Beispiel zuletzt
+const EXPLAIN_ICON = { what: '?', compare: '≈', risk: '!', urgency: '⏱', todo: '✓', cause: '⚙', flow: '→', fix: '✓', test: '✔', class: '#', preconditions: '◇', severity: '!', pitfalls: '⚠', defense: '⛨' };
+function explainHtml(x) {
+  const card = (sec) => `<section class="xp-card xp-${esc(sec.key)}"><h5><span class="xp-ico" aria-hidden="true">${EXPLAIN_ICON[sec.key] || '•'}</span>${esc(sec.title)}</h5>${sec.key === 'flow' ? `<ol class="xp-flow">${sec.points.map((p) => `<li>${mdInline(p)}</li>`).join('')}</ol>` : sec.points.length === 1 ? `<p>${mdInline(sec.points[0])}</p>` : `<ul>${sec.points.map((p) => `<li>${mdInline(p)}</li>`).join('')}</ul>`}</section>`;
+  return `<div class="xp">${x.summary ? `<p class="xp-sum">${mdInline(x.summary)}</p>` : ''}<div class="xp-grid">${x.sections.map(card).join('')}</div>${x.code ? `<div class="xp-code"><h5>Beispiel${x.code.lang ? ` <span class="muted small">${esc(x.code.lang)}</span>` : ''}</h5><pre class="md-code"><code>${esc(x.code.text)}</code></pre></div>` : ''}</div>`;
+}
 function hydrateAiHelp(root, f) {
   const box = root.querySelector('.ai-help');
   if (!box) return;
@@ -282,7 +312,7 @@ function hydrateAiHelp(root, f) {
     out.hidden = !e;
     if (!e) return;
     out.innerHTML = e.pending ? dots : e.error ? `<p class="err small">${esc(e.error)}</p>`
-      : `${miniMarkdown(e.text)}<p class="muted small">${esc(e.model || 'KI')}${e.cached ? ' · aus dem Zwischenspeicher' : ''} · <a href="#" class="re-explain">neu erklären</a></p>`;
+      : `${e.structured ? explainHtml(e.structured) : miniMarkdown(e.text)}<p class="muted small">${esc(e.model || 'KI')}${e.cached ? ' · aus dem Zwischenspeicher' : ''} · <a href="#" class="re-explain">neu erklären</a></p>`;
     const re = out.querySelector('.re-explain');
     if (re) re.onclick = (ev) => { ev.preventDefault(); explain(mem.level, true); };
   };
@@ -292,7 +322,7 @@ function hydrateAiHelp(root, f) {
     mem.explain[level] = { pending: true };
     paintExplain();
     const r = await window.vigil.explainFinding(findingPayload(f), level, refresh);
-    mem.explain[level] = r && r.ok ? { text: r.text, model: r.model, cached: r.cached } : { error: `Keine Antwort: ${(r && r.error) || 'unbekannter Fehler'}` };
+    mem.explain[level] = r && r.ok ? { text: r.text, structured: r.structured || null, model: r.model, cached: r.cached } : { error: `Keine Antwort: ${(r && r.error) || 'unbekannter Fehler'}` };
     if (root.contains(box)) paintExplain();
   };
   box.querySelectorAll('.lvl-seg button').forEach((b) => b.onclick = () => explain(b.dataset.level));
@@ -393,10 +423,14 @@ function bindSolutionControls(root) {
 }
 
 // Banner fuer Angriffspfade (Toxic Combinations) – ganz oben, weil am dringendsten.
+function toxicItem(t) {
+  const mini = t.chain && t.chain.steps ? '<span class="toxic-mini">' + [...t.chain.steps.map((st) => '<span class="tm-step' + (st.proven ? '' : ' unproven') + '">' + esc(st.stage) + '</span>'), '<span class="tm-step goal">' + esc(t.chain.goal) + '</span>'].join('<span class="tm-arrow" aria-hidden="true">→</span>') + '</span>' : '';
+  return '<li><button type="button" class="toxic-open" data-key="' + esc(findingKey(t, state.lastFindings.indexOf(t))) + '">' + esc(t.title.replace(/^(Möglicher )?Angriffsweg:\s*/, '')) + '</button>' + mini + '</li>';
+}
 function toxicBanner(list) {
   const toxic = list.filter((f) => /^toxic-/.test(f.ruleId || '') && !f.suppressed);
   if (!toxic.length) return '';
-  return `<div class="toxic-banner" role="alert"><div class="toxic-ico">⚠</div><div><b>${toxic.length} ${toxic.length === 1 ? 'Angriffsweg' : 'Angriffswege'} erkannt</b><ul>${toxic.map((t) => `<li>${esc(t.title.replace(/^(Möglicher )?Angriffsweg:\s*/, ''))}</li>`).join('')}</ul><span class="muted small">Mehrere Schwächen ergeben zusammen einen kompletten Weg für einen Angriff. Schon eine einzige Behebung unterbricht ihn.</span></div></div>`;
+  return `<div class="toxic-banner" role="alert"><div class="toxic-ico">⚠</div><div><b>${toxic.length} ${toxic.length === 1 ? 'Angriffsweg' : 'Angriffswege'} erkannt</b><ul class="toxic-list">${toxic.map(toxicItem).join('')}</ul><span class="muted small">Mehrere Schwächen ergeben zusammen einen kompletten Weg für einen Angriff. Schon eine einzige Behebung unterbricht ihn.</span></div></div>`;
 }
 
 function visibleList() {
@@ -423,6 +457,7 @@ function renderFindings() {
   if (!keyed.some((x) => x.key === state.selected)) state.selected = keyed[0].key;
   box.innerHTML = toxicBanner(state.lastFindings) + groupFindings(keyed).map((g) => `<div class="group-head${g.sev ? ' sev-' + g.sev : ' gb'}" title="${esc(g.label)}">${esc(g.label)} <span class="gcount">${g.items.length}</span></div>` + g.items.map((x) => findingRow(x.f, x.key)).join('')).join('');
   box.querySelectorAll('.frow').forEach((r) => r.onclick = () => selectFinding(r.dataset.key));
+  box.querySelectorAll('.toxic-open').forEach((b) => b.onclick = () => selectFinding(b.dataset.key));
   renderDetail();
 }
 function selectFinding(key, focus) {

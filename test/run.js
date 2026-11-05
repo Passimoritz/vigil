@@ -543,6 +543,11 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('correlate: Tracking-Cookie ergibt keinen Angriffsweg', !tracking.some((c) => c.ruleId === 'toxic-session-hijack'));
     const [possible] = correlate([csp, W('cookie-missing-httponly-phpsessid', 'Cookie „PHPSESSID“ ist für Skripte lesbar')]);
     check('correlate: ohne XSS-Lücke nur "möglich" und abgeschwächt', possible && /^Möglicher Angriffsweg/.test(possible.title) && possible.severity === 'medium' && possible.contextualRiskScore < 70);
+    const pc = possible.chain;
+    check('correlate: Ablauf mit Start, Schritten, Ziel; unbewiesener Einstieg markiert, einfachste Unterbrechung', pc && pc.entry && pc.goal && pc.steps.length === 2 && pc.steps[0].stage === 'Fremder Code läuft in der Seite' && !pc.steps[0].proven && pc.steps[1].proven && pc.steps[1].easiest && !pc.steps[0].easiest && pc.steps[1].keys[0] === 'cookie-missing-httponly-phpsessid@https://shop.example/');
+    const esc = chains.find((c) => c.ruleId === 'toxic-container-escape').chain;
+    check('correlate: Container-Weg beginnt mit dem Einstieg von außen', esc.steps[0].stage === 'Einstieg in die Anwendung' && esc.steps.length === 3);
+    check('correlate: Ablauf wird übersetzt', require('../src/core/findings-i18n').localizeFinding(possible).chain.steps[1].stage === 'Reading the login');
     check('correlate: nennt das konkrete Cookie und den Host', /PHPSESSID/.test(possible.description) && /shop\.example/.test(possible.description));
     const [real] = correlate([csp, W('xss-reflected', 'Reflektiertes XSS im Suchfeld', { category: 'XSS' }), W('cookie-missing-httponly-session', 'Cookie „session“ ist für Skripte lesbar')]);
     check('correlate: mit echter XSS-Lücke bestätigt', real && /^Angriffsweg/.test(real.title) && real.severity === 'high');
@@ -1880,6 +1885,11 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('stufen: Experten-Stufe fragt nach CWE/CVSS, auf Deutsch', /CWE/.test(lastUser) && /Antworte auf Deutsch/.test(lastUser));
     const e4 = await aifix.explainFinding({ finding: fx, level: 'lay', config: ecfg, cache: ecache, refresh: true });
     check('stufen: "neu erklären" umgeht den Zwischenspeicher', !e4.cached && ecalls === 3);
+    providers.callProvider = async () => ({ text: '```json\n{"summary":"Fremde Skripte werden nicht blockiert.","sections":{"class":["CWE-1021 …"],"preconditions":["- Eine Einschleuse-Lücke."],"severity":"Mittel, weil eine zweite Lücke nötig ist.","pitfalls":[],"defense":["Nonces nutzen."]}}\n```', usage: {} });
+    const es = await aifix.explainFinding({ finding: fx, level: 'expert', config: ecfg, refresh: true });
+    check('stufen: JSON wird zu festen Abschnitten (Reihenfolge, leere weg, Aufzählungszeichen weg)', es.structured && es.structured.sections.map((s) => s.key).join() === 'class,preconditions,severity,defense' && es.structured.sections[1].points[0] === 'Eine Einschleuse-Lücke.' && es.structured.sections[1].title === 'Voraussetzungen' && /\*\*Einordnung\*\*/.test(es.text));
+    check('stufen: wiederholte Befund-Angaben werden entfernt', aifix.stripEcho('Befund\nTitel: X\nSchwere: medium\nOrt: https://a\nErklärung für einen Security-Experten\n- **CWE-16**: echt') === '- **CWE-16**: echt');
+    check('stufen: kein erfundener CVSS-Vektor verlangt', /Erfinde KEINEN CVSS/.test(aifix.SECTIONS.expert.map((s) => s[2]).join(' ')));
     check('stufen: Schlüssel hängt an Sprache und Modell', aifix.explainKey(fx, 'dev', ecfg) !== aifix.explainKey(fx, 'dev', { ...ecfg, lang: 'en' }) && aifix.explainKey(fx, 'dev', ecfg) !== aifix.explainKey(fx, 'dev', { ...ecfg, model: 'n' }));
 
     // Zusammenfassung des Laufs
