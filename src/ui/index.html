@@ -112,6 +112,23 @@
             <button type="button" class="sys-chip" data-system="azure">Azure</button>
             <button type="button" class="sys-chip" data-system="gcp">Google Cloud</button>
           </div>
+          <div class="sys-row" role="group" aria-label="Weitere Systeme prüfen">
+            <span class="sys-label">PC, Netz, Server &amp; Konten:</span>
+            <button type="button" class="sys-chip" data-system="winapps">Installierte Programme</button>
+            <button type="button" class="sys-chip" data-system="browserext">Browser-Erweiterungen</button>
+            <button type="button" class="sys-chip" data-system="backup">Datensicherung</button>
+            <button type="button" class="sys-chip" data-system="macos" hidden>Dieser Mac</button>
+            <button type="button" class="sys-chip" data-system="router">Router</button>
+            <button type="button" class="sys-chip" data-system="lan">Geräte im Netz</button>
+            <button type="button" class="sys-chip" data-system="linuxssh">Linux-Server (SSH)</button>
+            <button type="button" class="sys-chip" data-system="dbdirect">Datenbanken</button>
+            <button type="button" class="sys-chip" data-system="k8s">Kubernetes</button>
+            <button type="button" class="sys-chip" data-system="iam">Cloud-Berechtigungen</button>
+            <button type="button" class="sys-chip" data-system="cicd">GitHub / GitLab / Azure DevOps</button>
+            <button type="button" class="sys-chip" data-system="m365">Microsoft 365 / Google Workspace</button>
+            <button type="button" class="sys-chip" data-system="hosting">Cloudflare &amp; Hosting</button>
+            <button type="button" class="sys-chip" data-system="hibp">Datenlecks (HIBP)</button>
+          </div>
           <div id="knownBox" class="known" hidden>
             <button type="button" id="knownToggle" class="known-toggle" aria-expanded="false" aria-controls="knownPanel">
               <span class="known-ico" aria-hidden="true">★</span>
@@ -685,6 +702,17 @@
             <div class="set-label"><b>Installierte Tools einbeziehen</b><span>gitleaks, trufflehog, trivy, grype, semgrep, bandit, checkov, retire.js, hadolint, osv-scanner. Bei freigegebenen Servern zusätzlich nmap und nuclei, ohne DoS und ohne Brute-Force. Fehlende Tools werden übersprungen.</span></div>
             <label class="switch"><input type="checkbox" id="activeChk" /><span></span></label>
           </div>
+        </section>
+
+        <section class="card set-block" id="set-systems">
+          <h2>Systeme &amp; Konten</h2>
+          <p class="hint">Zugänge für die System-Prüfungen auf der Startseite. Vigil nutzt sie nur lesend: feste Abfragen, keine Änderungen, keine Anmelde-Rateversuche. Schlüssel und Tokens werden verschlüsselt gespeichert und nie wieder angezeigt. „-“ eintragen und speichern entfernt einen gespeicherten Wert.</p>
+          <div class="set-row">
+            <div class="set-label"><b>Verwaltungs-Ports im lokalen Netz prüfen</b><span>Für „Geräte im Netz“: zusätzlich je Gerät ein Verbindungsversuch zu wenigen Verwaltungs-Ports (z. B. Telnet, Weboberfläche). Nur private Adressen im eigenen Subnetz, kein Port-Scan.</span></div>
+            <label class="switch"><input type="checkbox" id="lanPortChk" aria-label="Verwaltungs-Ports im lokalen Netz prüfen" /><span></span></label>
+          </div>
+          <div class="api-row" id="sysFields"></div>
+          <p id="sysStatus" class="hint"></p>
         </section>
 
         <section class="card set-block" id="set-rules">

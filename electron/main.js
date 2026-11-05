@@ -84,6 +84,16 @@ function apiMatrixFor(cfg) {
     return runApiMatrix(targetUrl, { endpoints: entry.endpoints, resourceIdA: entry.resourceIdA, tokenA: dec(entry.tokenAEnc), tokenB: dec(entry.tokenBEnc) }, { ...opts, rps: cfg.maxRequestsPerSecond || 3 });
   };
 }
+// System-Pruefungen: Klartext-Felder plus entschluesselte Zugaenge fuer den Lauf (nie an die UI)
+const SYS_FIELDS = require('../src/core/systems');
+function systemSettingsFor(cfg) {
+  const s = cfg.systemsCfg || {};
+  const out = {};
+  for (const k of SYS_FIELDS.PLAIN_FIELDS) if (s[k]) out[k] = s[k];
+  for (const k of SYS_FIELDS.BOOL_FIELDS) out[k] = s[k] === true;
+  for (const k of SYS_FIELDS.SECRET_FIELDS) { const v = dec(s[k + 'Enc'] || ''); if (v) out[k] = v; }
+  return out;
+}
 // Login-Pruefung: Testkonto je Host (Passwort verschluesselt), nur fuer nachgewiesene Domains genutzt
 function webLoginFor(cfg) {
   return (targetUrl) => {
@@ -321,7 +331,7 @@ app.whenReady().then(() => {
     runAudit,
     buildConfig: (providerId) => {
       const c = loadConfig(); applyProxySafe(c);
-      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), webCrawl: c.webCrawl !== false, malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4 };
+      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), webCrawl: c.webCrawl !== false, malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4, systemSettings: systemSettingsFor(c) };
     },
   });
   api = createApi({ orchestrator, getConfig: loadConfig, enforceScope });
@@ -348,7 +358,7 @@ ipcMain.handle('config:save', async (_e, cfg) => {
   // MalwareBazaar-Schluessel, API-Token). Die Kopie im Fenster kann veraltet sein – immer die
   // gespeicherte Fassung behalten, sonst wuerde "Speichern" frisch eingetragene Zugaenge loeschen.
   cfg.allowlist = normalizeAllowlist(cfg.allowlist);
-  for (const k of ['apiToken', 'webLogins', 'apiMatrix', 'malwareBazaarKeyEnc']) { if (prev[k] !== undefined) cfg[k] = prev[k]; else delete cfg[k]; }
+  for (const k of ['apiToken', 'webLogins', 'apiMatrix', 'malwareBazaarKeyEnc', 'systemsCfg']) { if (prev[k] !== undefined) cfg[k] = prev[k]; else delete cfg[k]; }
   const ok = saveConfig(cfg);
   applyProxySafe(cfg);
   if (prev.apiEnabled !== !!cfg.apiEnabled || prev.apiPort !== cfg.apiPort) await applyApi(loadConfig());
@@ -602,7 +612,31 @@ ipcMain.handle('weblogin:save', (_e, list) => {
   }).filter((m) => m.host && /^https?:/i.test(m.loginUrl));
   return { ok: saveConfig(c), encrypted: safeStorage.isEncryptionAvailable() };
 });
-ipcMain.handle('malware:keyInfo', () => ({ hasKey: !!loadConfig().malwareBazaarKeyEnc }));
+// --- System-Pruefungen: Zugaenge fuer Server, Datenbanken und Online-Konten ---
+// Tokens, Schluessel und Verbindungs-URLs nur verschluesselt; an die UI gehen nur "hinterlegt ja/nein".
+// Ein einzelnes "-" als Wert entfernt einen gespeicherten Schluessel.
+ipcMain.handle('systems:get', () => {
+  const s = loadConfig().systemsCfg || {};
+  const out = {};
+  for (const k of SYS_FIELDS.PLAIN_FIELDS) out[k] = s[k] || '';
+  for (const k of SYS_FIELDS.BOOL_FIELDS) out[k] = s[k] === true;
+  for (const k of SYS_FIELDS.SECRET_FIELDS) out['has_' + k] = !!s[k + 'Enc'];
+  return out;
+});
+ipcMain.handle('systems:save', (_e, patch) => {
+  const c = loadConfig();
+  const s = { ...(c.systemsCfg || {}) };
+  const p = patch && typeof patch === 'object' ? patch : {};
+  for (const k of SYS_FIELDS.PLAIN_FIELDS) if (typeof p[k] === 'string') s[k] = p[k].trim().slice(0, 500);
+  for (const k of SYS_FIELDS.BOOL_FIELDS) if (typeof p[k] === 'boolean') s[k] = p[k];
+  for (const k of SYS_FIELDS.SECRET_FIELDS) {
+    if (typeof p[k] !== 'string' || !p[k].trim()) continue;
+    s[k + 'Enc'] = p[k].trim() === '-' ? '' : enc(p[k].trim().slice(0, 20000));
+  }
+  c.systemsCfg = s;
+  return { ok: saveConfig(c), encrypted: safeStorage.isEncryptionAvailable() };
+});
+ipcMain.handle('malware:keyInfo',() => ({ hasKey: !!loadConfig().malwareBazaarKeyEnc }));
 ipcMain.handle('malware:setKey', (_e, key) => { const c = loadConfig(); c.malwareBazaarKeyEnc = key ? enc(String(key).trim().slice(0, 200)) : ''; return { ok: saveConfig(c) }; });
 
 ipcMain.handle('api:regenerateToken', () => { const c = loadConfig(); c.apiToken = crypto.randomBytes(24).toString('base64url'); saveConfig(c); return { token: c.apiToken }; });

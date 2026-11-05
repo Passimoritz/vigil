@@ -10,7 +10,8 @@
 const { spawn } = require('child_process');
 const { normalizeFinding } = require('./schema');
 
-const SYSTEMS = { windows: 'Dieser Windows-PC', docker: 'Laufende Docker-Container', aws: 'AWS-Konto', azure: 'Azure-Abonnement', gcp: 'Google-Cloud-Projekt' };
+const EXTENDED = require('./systems');
+const SYSTEMS = { windows: 'Dieser Windows-PC', docker: 'Laufende Docker-Container', aws: 'AWS-Konto', azure: 'Azure-Abonnement', gcp: 'Google-Cloud-Projekt', ...EXTENDED.LABELS };
 const RISKY = { 22: 'SSH', 3389: 'Remotedesktop', 3306: 'MySQL', 5432: 'PostgreSQL', 1433: 'MSSQL', 6379: 'Redis', 27017: 'MongoDB', 9200: 'Elasticsearch', 23: 'Telnet', 21: 'FTP', 445: 'SMB', 11211: 'Memcached' };
 
 function run(cmd, args, { signal, timeoutMs = 60000 } = {}) {
@@ -146,7 +147,9 @@ function parseGcp({ buckets = [], firewalls = [] }) {
 
 const BUCKET_RE = /^[a-z0-9][a-z0-9._-]{1,220}$/;
 
-async function auditSystem(kind, { signal, onProgress = () => {} } = {}) {
+async function auditSystem(kind, { signal, onProgress = () => {}, settings = {} } = {}) {
+  // Weitere Pruefungen (Programme, Browser, Netz, Server, Datenbanken, Konten) in src/core/systems
+  if (EXTENDED.AUDITS[kind]) return EXTENDED.auditExtended(kind, { signal, onProgress, settings });
   const say = (m) => onProgress({ phase: 'webscan', message: m });
   if (kind === 'windows') {
     if (process.platform !== 'win32') return { findings: [], notes: ['Windows-Prüfung ist nur unter Windows möglich.'] };

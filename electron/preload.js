@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld('vigil', {
   webLoginSave: (list) => ipcRenderer.invoke('weblogin:save', list),
   malwareKeyInfo: () => ipcRenderer.invoke('malware:keyInfo'),
   malwareSetKey: (key) => ipcRenderer.invoke('malware:setKey', key),
+  systemsGet: () => ipcRenderer.invoke('systems:get'),
+  systemsSave: (patch) => ipcRenderer.invoke('systems:save', patch),
 
   historyList: () => ipcRenderer.invoke('history:list'),
   historyOpen: (id) => ipcRenderer.invoke('history:open', id),

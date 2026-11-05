@@ -47,6 +47,12 @@
   await t('Ergebnis: Suche filtert die Liste', async () => { $('findingSearch').value = 'AWS'; $('findingSearch').dispatchEvent(new Event('input')); await wait(80); const n = document.querySelectorAll('#findings .frow').length; $('findingSearch').value = ''; $('findingSearch').dispatchEvent(new Event('input')); return (n >= 1 && n < 10) || `${n} Treffer`; });
   await t('Ergebnis: Exportmenü öffnet und schließt', async () => { $('exportBtn').click(); const open = !$('exportMenu').hidden; document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await wait(30); return (open && $('exportMenu').hidden) || 'Menü reagiert nicht'; });
   await t('Einstellungen: Profil anwenden', async () => { showView('settings'); document.querySelector('#presetGrid [data-preset="fast"]').click(); await wait(100); return state.config.analysisDepth === 'standard' || state.config.analysisDepth; });
+  await t('Einstellungen: Zugänge für System-Prüfungen (Geheimnisse leer, Status sichtbar)', async () => {
+    showView('settings'); setGroup('checks'); renderSettings(); await until(() => $('sysStatus').textContent, 3000);
+    const f = $('sysFields');
+    const secretsEmpty = [...f.querySelectorAll('input[type="password"], textarea')].every((x) => !x.value);
+    return (f.children.length >= 20 && secretsEmpty && !!$('sysStatus').textContent && !!document.querySelector('.sys-chip[data-system="lan"]')) || `${f.children.length} Felder, Status „${$('sysStatus').textContent}“`;
+  });
   await t('Einstellungen: Hell/Dunkel und Schriftgröße', async () => {
     document.querySelector('#themeSeg [data-theme="light"]').click(); const light = document.documentElement.dataset.theme === 'light';
     document.querySelector('#scaleSeg [data-scale="1.25"]').click(); const big = document.documentElement.style.zoom === '1.25';

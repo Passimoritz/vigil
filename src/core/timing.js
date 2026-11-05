@@ -56,7 +56,7 @@ function estimate({ targets = [], files = 0, deps = 0, calls = 0, local = false,
   }
   const images = targets.filter((t) => t.type === 'image').length;
   if (images) parts.image = images * learned(calib, 'image', DEFAULTS.image);
-  for (const s of targets.filter((t) => t.type === 'system')) parts.system = (parts.system || 0) + (/^(aws|azure|gcp)$/.test(s.value) ? DEFAULTS.cloud : DEFAULTS.system);
+  for (const s of targets.filter((t) => t.type === 'system')) parts.system = (parts.system || 0) + (/^(aws|azure|gcp|iam|cicd|m365|hosting|lan|linuxssh|winapps)$/.test(s.value) ? DEFAULTS.cloud : DEFAULTS.system);
   if (config.activeScan) {
     parts.active = paths.length * EXTERNAL_TOOLS * learned(calib, 'tool', DEFAULTS.tool) + webs.length * learned(calib, 'activeWeb', DEFAULTS.activeWeb);
   }

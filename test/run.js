@@ -1018,6 +1018,220 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('englisch: Code-Blöcke im Bericht bleiben unverändert', md0.split('```').filter((x, i) => i % 2).join() === md.split('```').filter((x, i) => i % 2).join());
   }
 
+  // --- Erweiterte System-Pruefungen: PC, Netz, Server, Cloud & Konten (alles mit Attrappen) ---
+  {
+    const fs = require('fs'), os = require('os'), path = require('path'), net = require('net'), crypto = require('crypto');
+    const L = require('../src/core/systems/local');
+    const N = require('../src/core/systems/network');
+    const R = require('../src/core/systems/remote');
+    const I = require('../src/core/systems/iam');
+    const S = require('../src/core/systems/saas');
+    const sys = require('../src/core/systems');
+    const i18n = require('../src/core/findings-i18n');
+    const all = [], allNotes = [];
+    const keep = (r) => { all.push(...(r.findings || [])); allNotes.push(...(r.notes || [])); return r; };
+    const ids = (arr) => arr.map((f) => f.ruleId);
+    const say = () => {};
+    const stubRun = (map, log = []) => async (cmd, args, o = {}) => { log.push({ cmd, args, o }); const key = [cmd, ...args].join(' '); const hit = Object.entries(map).find(([k]) => key.includes(k)); return hit ? { ok: true, code: 0, stdout: typeof hit[1] === 'function' ? hit[1](o) : hit[1], stderr: '' } : { ok: false, code: 1, stdout: '', stderr: 'nicht gefunden', error: 'nicht gefunden' }; };
+    const fakeFetch = (routes, log = []) => async (url, opts = {}) => { log.push({ url, method: opts.method || 'GET', headers: opts.headers || {} }); const hit = routes.find(([re]) => re.test(url)); const [, status = 404, body = {}, hdr = {}] = hit || []; return { ok: status >= 200 && status < 300, status, headers: { get: (k) => (hdr[k.toLowerCase()] ?? null) }, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) }; };
+
+    // Programme
+    const row = (a) => a[0].padEnd(14) + a[1].padEnd(22) + a[2].padEnd(10) + a[3].padEnd(11) + a[4];
+    const wgOut = '\r   - \r' + [row(['Name', 'Id', 'Version', 'Available', 'Source']), '-'.repeat(64), row(['7-Zip 23.01', '7zip.7zip', '23.01', '24.09', 'winget']), row(['Zoom', 'Zoom.Zoom', '5.0', '6.0', 'winget']), '2 upgrades available.'].join('\n');
+    check('programme: winget-Tabelle wird gelesen (mit Fortschrittszeichen)', JSON.stringify(L.parseWingetUpgrade(wgOut).map((u) => [u.name, u.available])) === '[["7-Zip 23.01","24.09"],["Zoom","6.0"]]');
+    const apps = [{ n: '7-Zip 23.01 (x64)', v: '23.01' }, { n: 'PuTTY release 0.81 (64-bit)', v: '0.81.0.0' }, { n: 'WinRAR 7.01 (64-bit)', v: '7.01.0' }];
+    const wa = keep(await L.auditWinApps({ say, platform: 'win32', run: stubRun({ 'powershell.exe': JSON.stringify(apps), winget: wgOut }) }));
+    check('programme: verwundbare Versionen (7-Zip, WinRAR), PuTTY aktuell, Updates per winget', ids(wa.findings).filter((x) => x === 'winapp-vulnerable').length === 2 && !wa.findings.some((f) => /PuTTY/.test(f.title)) && wa.findings.some((f) => f.ruleId === 'winapp-update-available' && /Zoom/.test(f.title)) && !wa.findings.some((f) => f.ruleId === 'winapp-update-available' && /7-Zip/.test(f.title)) && wa.ok);
+    check('programme: nur unter Windows', /nur unter Windows/.test((await L.auditWinApps({ say, platform: 'linux' })).notes[0]));
+
+    // Browser-Erweiterungen aus einem nachgebauten Profil
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-ext-'));
+    const ext = path.join(tmp, 'chrome', 'Default', 'Extensions', 'a'.repeat(32), '1.2.0');
+    fs.mkdirSync(path.join(ext, '_locales', 'en'), { recursive: true });
+    fs.writeFileSync(path.join(ext, 'manifest.json'), JSON.stringify({ name: '__MSG_appName__', default_locale: 'en', version: '1.2.0', permissions: ['webRequest', 'nativeMessaging', 'storage'], host_permissions: ['<all_urls>'] }));
+    fs.writeFileSync(path.join(ext, '_locales', 'en', 'messages.json'), JSON.stringify({ appName: { message: 'Super Helper' } }));
+    const ff = path.join(tmp, 'ff', 'abc.default');
+    fs.mkdirSync(ff, { recursive: true });
+    fs.writeFileSync(path.join(ff, 'extensions.json'), JSON.stringify({ addons: [{ id: 'x@y', type: 'extension', location: 'app-profile', version: '1', defaultLocale: { name: 'Fox Tool' }, userPermissions: { permissions: ['tabs'], origins: ['*://*/*'] } }, { id: 'sys@moz', type: 'extension', location: 'app-system-defaults' }] }));
+    const roots = { chromium: [['Chrome', path.join(tmp, 'chrome')]], firefox: path.join(tmp, 'ff') };
+    const exts = L.collectExtensions(roots);
+    check('browser: Erweiterungen aus Chrome- und Firefox-Profil gelesen (Name aus _locales)', exts.length === 2 && exts.some((e) => e.name === 'Super Helper') && exts.some((e) => e.name === 'Fox Tool'));
+    const be = keep(await L.auditBrowserExt({ say, roots, fetchImpl: fakeFetch([[/malicious-extensions-list/, 200, `# Liste\n${'a'.repeat(32)} # bad\n`]]) }));
+    check('browser: schädlich laut Feed, nativeMessaging, alle Seiten + webRequest, Firefox alle Seiten', ['browserext-malicious', 'browserext-native-messaging', 'browserext-broad-access', 'browserext-all-sites'].every((x) => ids(be.findings).includes(x)));
+    fs.rmSync(tmp, { recursive: true, force: true });
+
+    // Datensicherung und macOS
+    const bk = L.parseBackup({ fh: false, kfm: [], srInterval: 0, drives: [{ id: 'E:', type: 2, bl: 2 }, { id: 'D:', type: 3, bl: 2 }] });
+    all.push(...bk);
+    check('sicherung: keine Sicherung, Wiederherstellung aus, Wechsellaufwerk unverschlüsselt, Test-Hinweis', ['backup-none', 'backup-restore-off', 'backup-drive-unencrypted', 'backup-restore-test'].every((x) => ids(bk).includes(x)) && ids(bk).filter((x) => x === 'backup-drive-unencrypted').length === 1);
+    const bk2 = L.parseBackup({ fh: true, fhDays: 40, fhTarget: 'F:\\FileHistory', kfm: ['Documents'], srInterval: 1, rpDays: 3, drives: [{ id: 'F:', type: 3, bl: 0 }] });
+    all.push(...bk2);
+    check('sicherung: alte Dateiversionsverlauf-Sicherung, Ziel-Laufwerk unverschlüsselt', ids(bk2).includes('backup-filehistory-stale') && bk2.some((f) => /Sicherungslaufwerk F:/.test(f.title)) && !ids(bk2).includes('backup-none'));
+    const mac = keep(await L.auditMacos({ say, platform: 'darwin', run: stubRun({ fdesetup: 'FileVault is Off.', spctl: 'assessments disabled', csrutil: 'System Integrity Protection status: disabled.', socketfilterfw: 'Firewall is disabled. (State = 0)', 'defaults read': '0', sw_vers: '14.6', softwareupdate: 'Software Update found the following:\n* Label: macOS Sonoma 14.7\n* Label: Safari 18\n' }) }));
+    check('macos: FileVault, Gatekeeper, SIP, Firewall, Updates, Auto-Update', ['mac-filevault-off', 'mac-gatekeeper-off', 'mac-sip-off', 'mac-firewall-off', 'mac-updates-pending', 'mac-autoupdate-off'].every((x) => ids(mac.findings).includes(x)));
+    check('macos: läuft nur auf einem Mac', /nur auf einem Mac/.test((await L.auditMacos({ say, platform: 'win32' })).notes[0]));
+
+    // Router
+    check('router: Gateway aus Windows-, Linux- und macOS-Ausgabe', N.parseGateway('192.168.178.1\r\n') === '192.168.178.1' && N.parseGateway('default via 192.168.1.1 dev eth0') === '192.168.1.1' && N.parseGateway('   route to: default\n    gateway: 10.0.0.1\n') === '10.0.0.1');
+    const gets = [];
+    const routerHttp = async (url) => { gets.push(url); if (/jason_boxinfo/.test(url)) return { status: 200, headers: {}, body: '<j:BoxInfo><j:Name>FRITZ!Box 7490</j:Name><j:Version>113.07.29</j:Version></j:BoxInfo>' }; if (/^http:\/\/192\.168\.178\.1\/$/.test(url)) return { status: 200, headers: {}, body: '<title>FRITZ!Box</title><input type="password">' }; if (/desc\.xml/.test(url)) return { status: 200, headers: {}, body: '<manufacturer>AVM</manufacturer><modelName>FRITZ!Box 7490</modelName>' }; return null; };
+    const ssdpGw = async () => [{ ip: '192.168.178.1', headers: { st: 'urn:schemas-upnp-org:device:InternetGatewayDevice:1', location: 'http://192.168.178.1:49000/desc.xml' } }, { ip: '192.168.178.1', headers: { st: 'upnp:rootdevice', location: 'http://evil.example/x.xml' } }];
+    const rt = keep(await N.auditRouter({ say, platform: 'win32', run: stubRun({ 'powershell.exe': '192.168.178.1\r\n' }), deps: { httpGet: routerHttp, ssdp: ssdpGw } }));
+    check('router: HTTP-Oberfläche, UPnP an, veraltetes FRITZ!OS 7.29', ['router-info', 'router-admin-http', 'router-upnp', 'router-firmware-old'].every((x) => ids(rt.findings).includes(x)) && rt.findings.some((f) => /7490/.test(f.title)));
+    check('router: nur GET an das eigene Gateway (keine fremden Adressen)', gets.every((u) => /^https?:\/\/192\.168\.178\.1[:/]/.test(u)));
+    check('router: öffentliches Gateway wird übersprungen', /keine private Adresse/.test((await N.auditRouter({ say, platform: 'linux', run: stubRun({ 'ip route': 'default via 8.8.8.8 dev eth0' }), deps: { httpGet: routerHttp, ssdp: ssdpGw } })).notes[0]));
+
+    // Lokales Netz
+    check('netz: ARP-Tabelle (Windows und macOS/Linux), Broadcast/Multicast ignoriert', JSON.stringify(N.parseArp('  192.168.1.20          aa-bb-cc-dd-ee-01     dynamisch\n  192.168.1.255         ff-ff-ff-ff-ff-ff     statisch\n? (192.168.1.30) at aa:bb:cc:dd:ee:2 on en0\n  224.0.0.22  01-00-5e-00-00-16 statisch').map((a) => a.ip)) === '["192.168.1.20","192.168.1.30"]');
+    const lbl = (n) => Buffer.concat([...n.split('.').map((l) => Buffer.concat([Buffer.from([l.length]), Buffer.from(l)])), Buffer.from([0])]);
+    const rdata = lbl('_ipp._tcp.local');
+    const ans = Buffer.concat([lbl('_services._dns-sd._udp.local'), Buffer.from([0, 12, 0, 1, 0, 0, 0, 120, 0, rdata.length]), rdata]);
+    const hdr = Buffer.alloc(12); hdr.writeUInt16BE(0x8400, 2); hdr.writeUInt16BE(1, 6);
+    check('netz: mDNS-Antwort wird gelesen (Dienst-Arten)', N.parseMdns(Buffer.concat([hdr, ans]))[0] === '_ipp._tcp.local' && N.mdnsQuery().length > 12);
+    const probed = [];
+    const tcp = async (ip, port) => { probed.push(`${ip}:${port}`); return (ip === '192.168.1.20' && port === 23) || (ip === '192.168.1.30' && port === 80); };
+    const lanDeps = { nets: [{ address: '192.168.1.10', bits: 24 }], ssdp: async () => [{ ip: '192.168.1.20', headers: { server: 'Linux UPnP/1.0 Sonos/70' } }, { ip: '10.9.9.9', headers: {} }], mdns: async () => ({ '192.168.1.30': ['_ipp._tcp.local'], '8.8.8.8': ['_x._tcp.local'] }), tcp, httpGet: async () => ({ status: 200, body: '<title>Drucker-Admin</title>' }) };
+    const arpTxt = '  192.168.1.20  aa-bb-cc-dd-ee-01  dynamisch\n  192.168.2.5  aa-bb-cc-dd-ee-03  dynamisch\n  192.168.1.10  aa-bb-cc-dd-ee-04  dynamisch';
+    const lanOff = keep(await N.auditLan({ say, run: stubRun({ arp: arpTxt }), settings: {}, deps: lanDeps }));
+    check('netz: ohne Bestätigung nur passiv (keine Verbindungsversuche)', probed.length === 0 && ids(lanOff.findings).join() === 'lan-inventory' && /2 Geräte/.test(lanOff.findings[0].title));
+    const lan = keep(await N.auditLan({ say, run: stubRun({ arp: arpTxt }), settings: { lanPortCheck: true }, deps: lanDeps }));
+    check('netz: Telnet und Weboberfläche ohne HTTPS gefunden', ['lan-inventory', 'lan-telnet', 'lan-admin-http'].every((x) => ids(lan.findings).includes(x)) && lan.findings.some((f) => /Drucker-Admin/.test(f.title)));
+    check('netz: Ports nur an privaten Adressen im eigenen Subnetz, nie am eigenen PC', probed.length > 0 && probed.every((p) => /^192\.168\.1\.(20|30):/.test(p)));
+
+    // Linux per SSH
+    check('ssh: festes Skript nur aus nur-lesenden Befehlen', !/(?<![/@\w-])(rm|mv|cp|tee|chmod|chown|useradd|usermod|passwd|kill|reboot|shutdown|install|systemctl\s+(start|stop|restart|enable|disable))(?![\w-])|sed\s+-i|>\s*(?!\/dev\/null|&)/.test(R.SSH_SCRIPT.replace(/2>&1|2>\/dev\/null|>\/dev\/null/g, '')) && R.SSH_SCRIPT === R.SSH_ALLOWED.join('\n') + '\n');
+    const sshOut = ['@@os', 'PRETTY_NAME="Ubuntu 22.04"', '@@updates', '12', '3', '@@reboot', 'yes', '@@sshd', 'PermitRootLogin yes', 'PasswordAuthentication yes', 'MaxAuthTries 6', '@@uid0', 'root', 'toor', '@@emptypw', 'guest', '@@sudoers', 'deploy ALL=(ALL) NOPASSWD: ALL', '@@firewall', 'Status: inactive', 'nft-input: 0', '-P INPUT ACCEPT', '@@listen', 'tcp   LISTEN 0 511 0.0.0.0:6379 0.0.0.0:*', 'tcp   LISTEN 0 128 0.0.0.0:22 0.0.0.0:*', 'tcp   LISTEN 0 128 127.0.0.1:5432 0.0.0.0:*', '@@end'].join('\n');
+    const sshLog = [];
+    const lx = keep(await R.auditLinuxSsh({ say, settings: { sshTarget: 'audit@srv.example.org:2222', sshKeyPath: __filename }, run: stubRun({ ssh: sshOut }, sshLog) }));
+    check('ssh: Updates, root-Login, Passwort, UID 0, leeres Passwort, NOPASSWD, Firewall, Redis offen', ['linux-security-updates', 'linux-reboot-required', 'linux-ssh-root-login', 'linux-ssh-password-auth', 'linux-ssh-maxauthtries', 'linux-uid0', 'linux-empty-password', 'linux-sudo-nopasswd', 'linux-no-firewall', 'linux-service-public'].every((x) => ids(lx.findings).includes(x)) && lx.findings.filter((f) => f.ruleId === 'linux-service-public').length === 1);
+    const sa = sshLog[0] || { args: [], o: {} };
+    check('ssh: System-ssh mit BatchMode, eigenem Schlüssel und festem Skript über stdin', sa.cmd === 'ssh' && sa.args.includes('BatchMode=yes') && sa.args.includes(__filename) && sa.args.includes('2222') && sa.args[sa.args.length - 1] === 'sh -s' && sa.o.input === R.SSH_SCRIPT);
+    check('ssh: ungültiges Ziel wird nicht verbunden', /kein SSH-Ziel/.test((await R.auditLinuxSsh({ say, settings: { sshTarget: '-oProxyCommand=x@y' }, run: stubRun({}) })).notes[0]));
+
+    // Datenbanken
+    const pg = R.parseDbUrl('postgresql://audit:geheim@db.example.org:5433/app');
+    check('db: Verbindungs-URL wird zerlegt', pg.kind === 'postgres' && pg.port === 5433 && pg.password === 'geheim' && pg.db === 'app' && R.parseDbUrl('rediss://h').tls === true && !R.parseDbUrl('ftp://x'));
+    const pgEnv = [];
+    const pgRun = async (cmd, args, o) => { pgEnv.push({ cmd, args, env: o.env }); const sql = args[args.length - 1]; const out = /server_version/.test(sql) ? '12.4' : /rolsuper AND/.test(sql) ? 'postgres\nadmin\nbackup' : /current_user/.test(sql) ? 't' : /has_schema_privilege/.test(sql) ? 't' : /trust/.test(sql) ? '1' : '2'; return { ok: true, stdout: out + '\n' }; };
+    const pgr = await R.probeDb(pg, { run: pgRun, wire: async () => ({ ok: true, data: Buffer.from('N') }) });
+    const pgf = R.assessDb(pg, pgr.facts);
+    all.push(...pgf);
+    check('db: PostgreSQL ohne TLS, veraltet, viele Superuser, public-Schema, trust', ['db-version-eol', 'db-no-tls', 'db-many-superusers', 'db-audit-user-superuser', 'db-pg-public-create', 'db-pg-trust'].every((x) => ids(pgf).includes(x)));
+    check('db: Passwort nur über Umgebungsvariable, nie in der Befehlszeile', pgEnv.every((e) => e.env.PGPASSWORD === 'geheim' && !e.args.some((a) => /geheim/.test(a))));
+    const greet = Buffer.alloc(60); greet[4] = 10; greet.write('5.7.44-log\0', 5); greet.writeUInt16LE(0x0000, 5 + 11 + 4 + 8 + 1);
+    check('db: MySQL-Begrüßung liefert Version und TLS-Fähigkeit', JSON.stringify(R.parseMysqlGreeting(greet)) === '{"version":"5.7.44-log","ssl":false}');
+    const my = R.parseDbUrl('mysql://root@10.0.0.7');
+    const myf = R.assessDb(my, (await R.probeDb(my, { run: stubRun({ 'require_secure_transport': 'require_secure_transport\tOFF', 'Super_priv': 'root@%', authentication_string: 'app@%' }), wire: async () => ({ ok: true, data: greet }) })).facts);
+    all.push(...myf);
+    check('db: MySQL veraltet, ohne TLS, Konto ohne Passwort', ['db-version-eol', 'db-no-tls', 'db-empty-password'].every((x) => ids(myf).includes(x)));
+    const mg = R.parseDbUrl('mongodb://10.0.0.8');
+    const mongoWire = async (h, p, { send }) => { const req = R.mongoReply(send); const doc = req.hello ? { ok: 1, isWritablePrimary: true } : req.buildInfo ? { ok: 1, version: '6.0.12' } : { ok: 1, databases: [{ name: 'shop' }] }; return { ok: true, data: R.mongoMsg(doc) }; };
+    check('db: BSON hin und zurück', R.bsonDecode(R.bsonEncode({ a: 'x', b: 2, c: true })).b === 2);
+    const mgf = R.assessDb(mg, (await R.probeDb(mg, { run: stubRun({}), wire: mongoWire })).facts);
+    all.push(...mgf);
+    check('db: MongoDB ohne Anmeldung lesbar, bekannte Lücke, unverschlüsselt', ['db-anonymous-access', 'db-version-vuln', 'db-no-tls', 'db-version-eol'].every((x) => ids(mgf).includes(x)) && mgf.find((f) => f.ruleId === 'db-anonymous-access').severity === 'critical');
+    // Redis gegen einen lokalen Test-Server (echtes Protokoll, kein fremdes System)
+    const srv = net.createServer((c) => c.on('data', (d) => { if (/INFO/.test(d.toString())) { const body = '# Server\r\nredis_version:7.2.4\r\n'; c.write(`$${body.length}\r\n${body}\r\n`); } }));
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const rd = { ...R.parseDbUrl(`redis://127.0.0.1:${srv.address().port}`) };
+    const rdp = await R.probeDb(rd, { run: stubRun({}) });
+    srv.close();
+    const rdf = R.assessDb({ ...rd, host: '10.0.0.9' }, rdp.facts || {});
+    all.push(...rdf);
+    check('db: Redis ohne Passwort lesbar, Version 7.2.4 mit bekannter Lücke', rdp.facts && rdp.facts.version === '7.2.4' && ['db-anonymous-access', 'db-version-vuln', 'db-no-tls'].every((x) => ids(rdf).includes(x)));
+    const dbr = keep(await R.auditDb({ say, settings: { dbUrls: 'redis://127.0.0.1:9\nkein-url' }, run: stubRun({}) }));
+    check('db: nicht erreichbar gilt nicht als geprüft', dbr.ok === false && /nicht erreichbar/.test(dbr.notes.join(' ')));
+
+    // Kubernetes
+    const pods = [{ metadata: { name: 'web-7d9f8c6b5d-abcde', namespace: 'shop', ownerReferences: [{ name: 'web-7d9f8c6b5d' }] }, spec: { hostNetwork: true, volumes: [{ hostPath: { path: '/var/run/docker.sock' } }], containers: [{ securityContext: { privileged: true }, env: [{ name: 'DB_PASS', valueFrom: { secretKeyRef: { name: 'db' } } }] }] } }, { metadata: { name: 'web-7d9f8c6b5d-fghij', namespace: 'shop', ownerReferences: [{ name: 'web-7d9f8c6b5d' }] }, spec: { containers: [{ securityContext: { privileged: true } }] } }, { metadata: { name: 'dns', namespace: 'kube-system' }, spec: { containers: [{ securityContext: { privileged: true } }] } }];
+    const k8sRun = stubRun({ 'current-context': 'prod', 'get pods': JSON.stringify({ items: pods }), clusterrolebindings: JSON.stringify({ items: [{ metadata: { name: 'dev-admin' }, roleRef: { name: 'cluster-admin' }, subjects: [{ kind: 'User', name: 'mia@example.org' }] }, { metadata: { name: 'sys' }, roleRef: { name: 'cluster-admin' }, subjects: [{ kind: 'Group', name: 'system:masters' }] }] }), networkpolicies: JSON.stringify({ items: [] }), namespaces: JSON.stringify({ items: [{ metadata: { name: 'shop' } }, { metadata: { name: 'kube-system' } }] }) });
+    const kl = [];
+    const k8 = keep(await R.auditK8s({ say, run: async (c, a, o) => { kl.push(a); return k8sRun(c, a, o); } }));
+    check('k8s: privilegiert (einmal je Workload), hostPath, Host-Netz, Secret-env, cluster-admin, ohne NetworkPolicy', ['k8s-live-privileged', 'k8s-live-hostpath', 'k8s-live-host-namespace', 'k8s-live-secret-env', 'k8s-live-cluster-admin', 'k8s-live-no-networkpolicy'].every((x) => ids(k8.findings).includes(x)) && ids(k8.findings).filter((x) => x === 'k8s-live-privileged').length === 1 && ids(k8.findings).filter((x) => x === 'k8s-live-cluster-admin').length === 1);
+    check('k8s: nur lesende kubectl-Befehle (config current-context / get)', kl.every((a) => a[0] === 'get' || (a[0] === 'config' && a[1] === 'current-context')));
+
+    // Cloud-IAM
+    const now = Date.parse('2026-11-01T00:00:00Z');
+    const csv = 'user,arn,user_creation_time,password_enabled,password_last_used,mfa_active,access_key_1_active,access_key_1_last_rotated,access_key_1_last_used_date,access_key_2_active,access_key_2_last_rotated,access_key_2_last_used_date\n<root_account>,arn,2020-01-01,not_supported,2026-10-20T10:00:00+00:00,true,false,N/A,N/A,false,N/A,N/A\nmia,arn,2021-01-01,true,2026-10-01,false,true,2025-01-01T00:00:00+00:00,2025-03-01T00:00:00+00:00,true,2025-06-01T00:00:00+00:00,2026-10-30T00:00:00+00:00';
+    const aw = I.parseAwsIam({ report: I.parseCredentialReport(csv), policies: [{ arn: 'arn:aws:iam::123456789012:policy/all', name: 'all', document: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } } }], trails: [{ Name: 't', TrailARN: 'arn:aws:cloudtrail:eu-central-1:123456789012:trail/t', IsMultiRegionTrail: false }], trailStatus: { 'arn:aws:cloudtrail:eu-central-1:123456789012:trail/t': false } }, now);
+    all.push(...aw);
+    check('iam: AWS root benutzt, ohne MFA, ungenutzter + alter Schlüssel, *-Richtlinie, Trail aus', ['iam-root-used', 'iam-user-no-mfa', 'iam-key-unused', 'iam-key-old', 'iam-wildcard-policy', 'iam-trail-stopped', 'iam-trail-not-multiregion'].every((x) => ids(aw).includes(x)));
+    const az = I.parseAzureIam({ assignments: ['a', 'b', 'c', 'd'].map((n) => ({ roleDefinitionName: 'Owner', scope: '/subscriptions/1', principalName: n })).concat([{ roleDefinitionName: 'Owner', scope: '/subscriptions/1', principalName: 'x_gmail.com#EXT#@t.onmicrosoft.com' }]), customRoles: [{ roleName: 'god', permissions: [{ actions: ['*'] }] }], diag: [] });
+    all.push(...az);
+    check('iam: Azure Gast-Besitzer, viele Besitzer, *-Rolle, kein Aktivitätsprotokoll', ['iam-guest-owner', 'iam-many-owners', 'iam-wildcard-policy', 'iam-no-audit-log'].every((x) => ids(az).includes(x)));
+    const gc = I.parseGcpIam({ policy: { bindings: [{ role: 'roles/owner', members: ['user:a@x', 'user:b@x', 'user:c@x', 'user:d@x', 'serviceAccount:ci@p.iam.gserviceaccount.com'] }, { role: 'roles/viewer', members: ['allUsers'] }] }, keys: [{ account: 'ci@p.iam.gserviceaccount.com', validAfterTime: '2025-01-01T00:00:00Z' }] }, now);
+    all.push(...gc);
+    check('iam: GCP viele Besitzer, Dienstkonto-Owner, öffentlich, keine Datenzugriffs-Logs, alter Schlüssel', ['iam-many-owners', 'iam-sa-owner', 'iam-public-binding', 'iam-no-data-access-logs', 'iam-key-old'].every((x) => ids(gc).includes(x)));
+    const iamLog = [];
+    const iamR = keep(await I.auditIam({ say, run: stubRun({ 'sts get-caller-identity': '{}', 'get-credential-report': JSON.stringify({ Content: Buffer.from(csv).toString('base64') }), 'list-policies': JSON.stringify({ Policies: [{ Arn: 'arn:aws:iam::123456789012:policy/all', PolicyName: 'all', DefaultVersionId: 'v1' }, { Arn: 'arn:aws:iam::1:policy/x & calc', DefaultVersionId: 'v1' }] }), 'get-policy-version': JSON.stringify({ PolicyVersion: { Document: encodeURIComponent(JSON.stringify({ Statement: [{ Effect: 'Allow', Action: ['*'], Resource: '*' }] })) } }), 'describe-trails': JSON.stringify({ trailList: [] }) }, iamLog) }));
+    check('iam: Ablauf über aws-CLI, nur list/get/describe, ungültige ARNs nicht weitergereicht', ids(iamR.findings).includes('iam-wildcard-policy') && ids(iamR.findings).includes('iam-no-audit-log') && iamLog.every((l) => /^(sts|iam|cloudtrail|account|config)$/.test(l.args[0]) && /^(get|list|describe|show)/.test(l.args[1] || 'get')) && !iamLog.some((l) => l.args.some((a) => /calc/.test(a))));
+
+    // CI/CD
+    const ghLog = [];
+    const gh = fakeFetch([[/\/user$/, 200, { login: 'mia' }, { 'x-oauth-scopes': 'repo, delete_repo' }], [/\/orgs\/acme\/members/, 200, [{ login: 'bob' }]], [/\/orgs\/acme\/repos/, 200, [{ full_name: 'acme/app', default_branch: 'main', private: false }, { full_name: 'acme/old', archived: true }]], [/\/orgs\/acme$/, 200, { login: 'acme', two_factor_requirement_enabled: false }], [/branches\/main\/protection/, 404, { message: 'Branch not protected' }], [/rules\/branches/, 200, []], [/\/keys$/, 200, [{ title: 'ci', read_only: false }]], [/\/repos\/acme\/app$/, 200, { security_and_analysis: { secret_scanning: { status: 'disabled' }, secret_scanning_push_protection: { status: 'disabled' } } }]], ghLog);
+    const cc = keep(await S.auditCicd({ say, settings: { githubToken: 'ghp_test', githubOrg: 'acme' }, fetchImpl: gh }));
+    check('cicd: GitHub Token-Rechte, 2FA nicht Pflicht, Mitglied ohne 2FA, ohne Branch-Schutz, Secret-Scanning, Deploy-Key', ['cicd-token-broad', 'cicd-org-no-2fa-required', 'cicd-members-no-2fa', 'cicd-no-branch-protection', 'cicd-no-secret-scanning', 'cicd-no-push-protection', 'cicd-deploy-key-write'].every((x) => ids(cc.findings).includes(x)) && cc.ok);
+    check('cicd: nur GET-Abrufe an api.github.com, archivierte Repos übersprungen', ghLog.every((l) => l.method === 'GET' && /^https:\/\/api\.github\.com\//.test(l.url)) && !ghLog.some((l) => /acme\/old/.test(l.url)));
+    const gl = S.parseGitlab({ token: { scopes: ['api'], expires_at: null }, group: { full_path: 'acme', require_two_factor_authentication: false }, projects: [{ path_with_namespace: 'acme/app', default_branch: 'main', protected: false, keys: [{ title: 'ci', can_push: true }], pre_receive_secret_detection_enabled: false }] });
+    all.push(...gl);
+    check('cicd: GitLab Token, 2FA, Branch-Schutz, Deploy-Key, Push-Schutz', ['cicd-token-broad', 'cicd-token-no-expiry', 'cicd-org-no-2fa-required', 'cicd-no-branch-protection', 'cicd-deploy-key-write', 'cicd-no-push-protection'].every((x) => ids(gl).includes(x)));
+    const ado = S.parseAdo({ org: 'acme', repos: [{ id: 'r1', name: 'app', project: 'P', defaultBranch: 'refs/heads/main' }, { id: 'r2', name: 'lib', project: 'P', defaultBranch: 'refs/heads/main' }], policies: [{ isEnabled: true, isBlocking: true, type: { id: 'fa4e907d-c16b-4a4c-9dfa-4906e5d171dd' }, settings: { scope: [{ repositoryId: 'r2', refName: 'refs/heads/main' }] } }] });
+    all.push(...ado);
+    check('cicd: Azure DevOps Hauptzweig ohne Review-Pflicht (nur ungeschütztes Repo)', ado.length === 1 && /P\/app/.test(ado[0].title));
+    check('cicd: ohne Token übersprungen', /übersprungen/.test((await S.auditCicd({ say, settings: {} })).notes[0]));
+
+    // Microsoft 365 / Google Workspace
+    const msLog = [];
+    const ms = fakeFetch([[/oauth2\/v2\.0\/token/, 200, { access_token: 'tok' }], [/identitySecurityDefaults/, 200, { isEnabled: false }], [/conditionalAccess/, 200, { value: [{ state: 'enabled', grantControls: { builtInControls: ['mfa'] }, conditions: { users: { includeUsers: ['admins'] } } }] }], [/userRegistrationDetails/, 200, { value: [{ userPrincipalName: 'a@x.de', isMfaRegistered: false }, { userPrincipalName: 'b@x.de', isMfaRegistered: true }] }], [/sharepoint\/settings/, 200, { sharingCapability: 'externalUserAndGuestSharing' }]], msLog);
+    const m3 = keep(await S.auditM365({ say, settings: { m365Tenant: 'contoso.onmicrosoft.com', m365ClientId: 'id', m365Secret: 'sec' }, fetchImpl: ms }));
+    check('m365: keine MFA-Pflicht, Legacy-Auth offen, Benutzer ohne MFA, Jeder-Links', ['m365-no-mfa-policy', 'm365-legacy-auth', 'm365-users-no-mfa', 'm365-anyone-links'].every((x) => ids(m3.findings).includes(x)) && m3.ok);
+    check('m365: nur der Token-Abruf ist POST, Graph nur GET', msLog.filter((l) => l.method !== 'GET').length === 1 && /oauth2\/v2\.0\/token/.test(msLog.find((l) => l.method === 'POST').url));
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const jwt = S.googleJwt({ client_email: 'sa@p.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }) }, 'admin@x.de', 'scope', 1000);
+    const [jh, jb, js] = jwt.split('.');
+    check('m365: Google-JWT korrekt signiert (RS256, Admin als sub)', crypto.verify('RSA-SHA256', Buffer.from(`${jh}.${jb}`), publicKey, Buffer.from(js, 'base64url')) && JSON.parse(Buffer.from(jb, 'base64url')).sub === 'admin@x.de');
+    const gw = S.parseGws({ users: [{ primaryEmail: 'a@x.de', isEnrolledIn2Sv: false, isEnforcedIn2Sv: false }, { primaryEmail: 'old@x.de', suspended: true, isEnrolledIn2Sv: false }] });
+    all.push(...gw);
+    check('m365: Google Workspace ohne 2SV (gesperrte Konten ignoriert)', ['gws-users-no-2sv', 'gws-2sv-not-enforced'].every((x) => ids(gw).includes(x)) && !/old@/.test(gw[0].description));
+
+    // Hosting
+    const hs = S.parseHosting({
+      cloudflare: { user: { two_factor_authentication_enabled: false }, zones: [{ name: 'x.de', ssl: 'flexible', alwaysHttps: 'off', minTls: '1.0' }] },
+      hetzner: { firewalls: [{ name: 'fw', rules: [{ direction: 'in', protocol: 'tcp', port: '3306', source_ips: ['0.0.0.0/0'] }], applied_to: [{ server: { id: 1 } }] }], servers: [{ id: 1, name: 'a', public_net: { ipv4: {}, firewalls: [{ id: 9 }] } }, { id: 2, name: 'b', public_net: { ipv4: {}, firewalls: [] } }] },
+      digitalocean: { firewalls: [{ name: 'do', inbound_rules: [{ protocol: 'tcp', ports: 'all', sources: { addresses: ['0.0.0.0/0'] } }], droplet_ids: [5] }], droplets: [{ id: 5, name: 'web' }, { id: 6, name: 'db' }], databases: [{ name: 'pg', rules: [] }] },
+      vercel: { projects: [{ name: 'shop', ssoProtection: null, passwordProtection: null, env: [{ key: 'NEXT_PUBLIC_STRIPE_SECRET', type: 'encrypted' }, { key: 'DB_PASSWORD', type: 'plain' }, { key: 'NODE_ENV', type: 'plain' }] }] },
+      netlify: { sites: [{ name: 'blog', ssl_url: 'https://b', force_ssl: false, env: [{ key: 'API_TOKEN', is_secret: false }] }] },
+    });
+    all.push(...hs);
+    check('hosting: Cloudflare 2FA/SSL/HTTPS/TLS, offene Firewalls, Server ohne Firewall, öffentliche DB, Secrets in Variablen, Vorschau, HTTPS', ['hosting-no-2fa', 'cf-ssl-weak', 'cf-no-always-https', 'cf-old-tls', 'cloud-firewall-open', 'hosting-server-no-firewall', 'hosting-db-public', 'hosting-secret-public-env', 'hosting-secret-plain-env', 'hosting-preview-public', 'hosting-no-force-https'].every((x) => ids(hs).includes(x)) && ids(hs).filter((x) => x === 'cloud-firewall-open').length === 2 && ids(hs).filter((x) => x === 'hosting-server-no-firewall').length === 2 && !hs.some((f) => /NODE_ENV/.test(f.title)));
+    const hzLog = [];
+    const hz = keep(await S.auditHosting({ say, settings: { hetznerToken: 'hz' }, fetchImpl: fakeFetch([[/firewalls/, 200, { firewalls: [] }], [/servers/, 200, { servers: [{ id: 3, name: 'c', public_net: { ipv4: {}, firewalls: [] } }] }]], hzLog) }));
+    check('hosting: Hetzner-API nur GET mit Token', ids(hz.findings).includes('hosting-server-no-firewall') && hzLog.every((l) => l.method === 'GET' && l.headers.Authorization === 'Bearer hz'));
+
+    // Have I Been Pwned
+    const hbLog = [];
+    const hb = keep(await S.auditHibp({ say, settings: { hibpKey: 'k', hibpDomain: 'Example.org' }, fetchImpl: fakeFetch([[/breacheddomain\/example\.org$/, 200, { alice: ['Adobe'], bob: ['Adobe', 'Canva'] }], [/\/breaches$/, 200, [{ Name: 'Adobe', Title: 'Adobe', BreachDate: '2013-10-04', DataClasses: ['Email addresses', 'Passwords'] }, { Name: 'Canva', Title: 'Canva', BreachDate: '2019-05-24', DataClasses: ['Email addresses'] }]]], hbLog) }));
+    check('hibp: Datenlecks je Quelle mit betroffenen Adressen, Passwort-Lecks hoch', hb.findings.length === 2 && hb.findings[0].severity === 'high' && /2 Adressen von example\.org/.test(hb.findings[0].title) && hbLog[0].headers['hibp-api-key'] === 'k');
+    check('hibp: nicht verifizierte Domain wird gemeldet', /nicht als eigene Domain verifiziert/.test((await S.auditHibp({ say, settings: { hibpKey: 'k', hibpDomain: 'x.org' }, fetchImpl: fakeFetch([[/breacheddomain/, 403, {}]]) })).notes[0]));
+
+    // Einbindung
+    const { TargetSchema } = require('../src/core/validation');
+    const h = require('../src/core/hostaudit');
+    check('system: neue Prüfungen sind gültige Ziele mit Namen', Object.keys(sys.AUDITS).every((k) => TargetSchema.safeParse({ type: 'system', value: k }).success && h.SYSTEMS[k]) && !TargetSchema.safeParse({ type: 'system', value: 'lan;rm' }).success);
+    const disp = await h.auditSystem('hibp', { settings: {} });
+    check('system: hostaudit leitet an die neuen Prüfungen weiter (ohne Zugang übersprungen)', /übersprungen/.test(disp.notes[0]) && !disp.ok);
+    check('system: Geheimnis-Felder sind getrennt von Klartext-Feldern', sys.SECRET_FIELDS.every((k) => !sys.PLAIN_FIELDS.includes(k)) && sys.SECRET_FIELDS.includes('hibpKey') && sys.SECRET_FIELDS.includes('dbUrls'));
+
+    // Englisch: alle Befund- und Hinweistexte dieser Prüfungen übersetzt
+    const GER = /[äöüß]|\b(der|die|das|und|nicht|ist|mit|für|oder|wird|werden|auf|eine?|zu|von|bei|nach|aus|sich)\b/;
+    const left = all.map(i18n.localizeFinding).flatMap((f) => [f.title, f.description, f.remediation]).filter((t) => t && GER.test(t));
+    check('system: alle neuen Befundtexte auf Englisch', left.length === 0, left.slice(0, 3).join(' | '));
+    const leftN = allNotes.map((n) => i18n.translate(n)).filter((t) => GER.test(t));
+    check('system: alle neuen Hinweise auf Englisch', leftN.length === 0, leftN.slice(0, 3).join(' | '));
+    if (left.length) console.log(left.slice(0, 15).join('\n'));
+    if (leftN.length) console.log(leftN.slice(0, 15).join('\n'));
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();
