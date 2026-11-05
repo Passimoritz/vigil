@@ -99,6 +99,106 @@
   }
   await t('Barrierefreiheit: Tastaturfokus sichtbar', () => { showView('scan'); const b = $('addTargetBtn'); b.focus(); const s = getComputedStyle(b); return (document.activeElement === b && (s.outlineStyle !== 'none' || s.boxShadow !== 'none')) || 'kein sichtbarer Fokusrahmen'; });
 
+
+  // --- Erweiterungen: Palette, Gruppierung, Layout, Notizen, Rueckgaengig, Glossar, Vergleich, Branding ---
+  await t('Befehlspalette: Strg K öffnet, Suche filtert, Enter führt aus, Esc schließt', async () => {
+    showView('scan');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true })); await wait(60);
+    if ($('palette').hidden) return 'nicht geöffnet';
+    const focused = document.activeElement === $('palInput');
+    $('palInput').value = 'verlauf'; $('palInput').dispatchEvent(new Event('input')); await wait(30);
+    const opts = document.querySelectorAll('#palList [role="option"]').length;
+    $('palInput').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await wait(150);
+    const nav = !$('historyView').hidden && $('palette').hidden;
+    openPalette(); await wait(30); $('palInput').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(30);
+    return (focused && opts >= 1 && nav && $('palette').hidden && $('palInput').getAttribute('role') === 'combobox') || `Fokus ${focused}, Treffer ${opts}, Navigation ${nav}`;
+  });
+  await t('Befehlspalette: Pfeiltasten wählen, Befunde sind auffindbar', async () => {
+    const r = await window.vigil.sampleDemo(); showView('results'); $('emptyState').hidden = true; renderResult(r.result);
+    openPalette('aws'); await wait(40);
+    const before = $('palInput').getAttribute('aria-activedescendant');
+    $('palInput').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); await wait(20);
+    const after = $('palInput').getAttribute('aria-activedescendant');
+    const hasFinding = [...document.querySelectorAll('#palList .pal-item')].some((li) => li.querySelector('.sev-dot'));
+    closePalette();
+    return (before !== after && hasFinding) || `aktiv ${before}→${after}, Befund ${hasFinding}`;
+  });
+  await t('Ergebnis: Gruppieren nach Datei und zurück nach Schwere', async () => {
+    $('groupBySelect').value = 'file'; $('groupBySelect').dispatchEvent(new Event('change')); await wait(80);
+    const fileHeads = document.querySelectorAll('#findings .group-head.gb').length;
+    const cfg = state.config.resultsGroupBy;
+    $('groupBySelect').value = 'severity'; $('groupBySelect').dispatchEvent(new Event('change')); await wait(80);
+    const sevHeads = document.querySelectorAll('#findings .group-head[class*="sev-"]').length;
+    return (fileHeads >= 2 && cfg === 'file' && sevHeads >= 1 && state.config.resultsGroupBy === 'severity') || `Datei ${fileHeads}, Schwere ${sevHeads}`;
+  });
+  await t('Glossar: Fachbegriffe im Befundtext erklärt, Glossar öffnet', async () => {
+    renderResult({ findings: [{ title: 'Fehlende CSP', severity: 'medium', category: 'Config', location: 'https://example.org', description: 'Ohne CSP kann XSS leichter ausgenutzt werden.' }], summary: { total: 1, counts: {} }, meta: {} });
+    await wait(60);
+    const abbr = document.querySelectorAll('#findingDetail abbr.gloss');
+    openGlossary(); await wait(30);
+    const open = !$('glossaryBg').hidden && $('glossaryList').querySelectorAll('dt').length >= 15;
+    $('glossaryClose').click();
+    return (abbr.length >= 2 && !!abbr[0].title && open && $('glossaryBg').hidden) || `${abbr.length} Begriffe, Glossar ${open}`;
+  });
+  await t('Notiz: Feld im Detail, Speichern meldet das Ergebnis', async () => {
+    renderResult({ findings: [{ id: 'abcdef1234567890', title: 'Testbefund', severity: 'high', category: 'Other', location: 'a.js:1', note: 'alt' }], summary: { total: 1, counts: {} }, meta: {} });
+    await wait(60);
+    const inp = document.querySelector('#findingDetail .note-input');
+    if (!inp || inp.value !== 'alt') return 'Notizfeld fehlt';
+    inp.value = 'neu'; inp.dispatchEvent(new Event('input'));
+    const dirty = /nicht gespeichert/.test(document.querySelector('#findingDetail .note-state').textContent);
+    const n = $('toasts').children.length;
+    document.querySelector('#findingDetail .note-save').click();
+    const toasted = await until(() => $('toasts').children.length > n, 3000); // leerer Speicher: Fehler-Toast
+    return (dirty && toasted) || 'kein Feedback';
+  });
+  await t('Rückgängig: Toast mit Knopf, ungültiges Token wird gemeldet', async () => {
+    const el = undoToast('1 Befund gelöscht', 'deadbeefdeadbeef', () => {});
+    const btn = el && el.querySelector('.toast-undo');
+    if (!btn) return 'kein Rückgängig-Knopf';
+    const n = $('toasts').querySelectorAll('.toast.err').length;
+    btn.click();
+    const ok = await until(() => $('toasts').querySelectorAll('.toast.err').length > n, 3000);
+    return ok || 'keine Rückmeldung';
+  });
+  await t('Übersicht: Karte ausblenden, verschieben und zurücksetzen', async () => {
+    showView('dash'); await wait(200);
+    $('dashLayoutBtn').click(); await wait(30);
+    if ($('dashLayoutMenu').hidden) return 'Menü öffnet nicht';
+    const cb = $('dashLayoutMenu').querySelector('.lm-row[data-id="kpis"] input'); cb.checked = false; cb.dispatchEvent(new Event('change'));
+    const hidden = $('dashTrendKpis').hidden && state.config.dashWidgets.find((w) => w.id === 'kpis').on === false;
+    $('dashLayoutMenu').querySelector('.lm-row[data-id="sev"] [data-act="up"]').click();
+    const first = document.querySelector('#dashView .dash-hero').firstElementChild.dataset.widget;
+    $('dashLayoutMenu').querySelector('[data-act="reset"]').click();
+    const reset = !$('dashTrendKpis').hidden && document.querySelector('#dashView .dash-hero').firstElementChild.dataset.widget === 'score';
+    closeLayoutMenu();
+    return (hidden && first === 'sev' && reset) || `ausgeblendet ${hidden}, erste Karte ${first}, zurück ${reset}`;
+  });
+  await t('Verlauf: zwei Läufe ankreuzen aktiviert den Vergleich', async () => {
+    showView('history'); await wait(150);
+    renderHistory([{ id: 'aaa111', at: '2026-11-01T10:00:00Z', targets: ['x'], total: 2, counts: {} }, { id: 'bbb222', at: '2026-11-02T10:00:00Z', targets: ['x'], total: 1, counts: {} }, { id: 'ccc333', at: '2026-11-03T10:00:00Z', targets: ['x'], total: 0, counts: {} }]);
+    const boxes = document.querySelectorAll('#historyList .hist-sel');
+    const click = (i) => { boxes[i].checked = true; boxes[i].dispatchEvent(new Event('change')); };
+    click(0); const one = $('histCompareBtn').disabled;
+    click(1); const two = !$('histCompareBtn').disabled;
+    click(2); const still2 = state.histSel.length === 2 && !boxes[0].checked;
+    state.histSel = []; loadHistory();
+    return (one && two && still2) || `eins ${one}, zwei ${two}, max zwei ${still2}`;
+  });
+  await t('Prüfung: Pause-Knopf nur während eines Laufs', () => (!!$('pauseBtn') && $('pauseBtn').hidden && $('pauseBtn').textContent.trim() === 'Pausieren') || 'Pause-Knopf falsch');
+  await t('Export: neue Formate im Menü', () => { const f = [...$('exportMenu').querySelectorAll('[data-fmt]')].map((b) => b.dataset.fmt).join(); return f === 'docx,xlsx,csv,auditzip,openvex,cdxvex,badge' || f; });
+  await t('Einstellungen: Branding und Normen-Auswahl werden gespeichert', async () => {
+    showView('settings'); setGroup('general'); await wait(80);
+    const fw = $('reportFrameworks').querySelectorAll('[data-fw]');
+    if (fw.length !== 9) return `${fw.length} Normen`;
+    $('reportFooterInput').value = 'Nur intern'; $('reportFooterInput').dispatchEvent(new Event('change'));
+    fw[4].checked = false; fw[4].dispatchEvent(new Event('change'));
+    const ok = state.config.reportFooterText === 'Nur intern' && state.config.reportFrameworks.length === 8 && !state.config.reportFrameworks.includes('cra');
+    fw[4].checked = true; fw[4].dispatchEvent(new Event('change'));
+    $('reportFooterInput').value = ''; $('reportFooterInput').dispatchEvent(new Event('change'));
+    return (ok && Array.isArray(state.config.reportFrameworks) && !state.config.reportFrameworks.length && !!$('signChk') && !!$('verifyBtn')) || 'nicht gespeichert';
+  });
+
   await t('Englisch: Befundtexte im Ergebnis übersetzt', async () => {
     const r = await window.vigil.sampleDemo();
     state.config.lang = 'en'; window.applyLanguage('en');

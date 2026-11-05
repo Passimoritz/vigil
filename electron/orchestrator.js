@@ -11,6 +11,13 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
   let db = store.load(storeFile);
   const queue = [];
   let current = null; // { job, ctrl }
+  // Pause: der Lauf wartet an den Haltepunkten (zwischen Phasen bzw. KI-Bloecken), bis fortgesetzt wird
+  let paused = null; // { promise, resolve }
+  const checkpoint = async () => { while (paused && current && !current.ctrl.signal.aborted) await paused.promise; };
+  // Papierkorb nach Ablauf der Rueckgaengig-Frist leeren
+  if (store.purgeTrash(db, store.UNDO_MS + 5000)) persist();
+  const trashTimers = new Set();
+  const schedulePurge = () => { const t = setTimeout(() => { trashTimers.delete(t); if (store.purgeTrash(db)) persist(); }, store.UNDO_MS + 500); trashTimers.add(t); };
   const persist = () => { try { store.save(storeFile, db); } catch (e) { console.warn('Befund-Speicher nicht gespeichert:', e.message); } };
 
   // job: { targets (scope-geprueft), providerId, origin: 'app'|'api', onProgress? }
@@ -42,6 +49,7 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
     try {
       const cfg = buildConfig(job.providerId);
       cfg.signal = ctrl.signal;
+      cfg.checkpoint = checkpoint;
       // Domain-Nachweis aus dem Speicher mitgeben – entscheidet ueber tiefe Web-Pruefungen.
       const targets = job.targets.map((t) => { const rec = db.targets[store.targetIdOf(t)]; return { ...t, verified: !!(rec && rec.ownershipVerified) }; });
       // Aus Fehlalarmen lernen: bestaetigte Fehlalarme dieser Ziele gehen als Hinweis an die KI
@@ -77,6 +85,7 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
     } finally {
       persist();
       current = null;
+      if (paused) { paused.resolve(); paused = null; }
     }
     job.resolve(outcome);
     pump();
@@ -84,7 +93,16 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
 
   return {
     enqueue,
-    cancel() { if (current) { current.ctrl.abort(); return true; } return false; },
+    cancel() { if (current) { current.ctrl.abort(); if (paused) { paused.resolve(); paused = null; } return true; } return false; },
+    pause() { if (!current || paused) return false; let resolve; const promise = new Promise((r) => { resolve = r; }); paused = { promise, resolve }; return true; },
+    resume() { if (!paused) return false; paused.resolve(); paused = null; return true; },
+    isPaused: () => !!paused,
+    isRunning: () => !!current,
+    setNote(id, note) { const r = store.setNote(db, id, note); if (r.ok) persist(); return r; },
+    softDeleteFindings(ids) { const r = store.softDeleteFindings(db, ids); if (r.deleted) { persist(); schedulePurge(); } return r; },
+    softDeleteTarget(id) { const r = store.softDeleteTarget(db, id); if (r.ok) { persist(); schedulePurge(); } return r; },
+    softDeleteRun(id) { const r = store.softDeleteRun(db, id); if (r.ok) { persist(); schedulePurge(); } return r; },
+    undo(token) { const r = store.restoreTrash(db, String(token || '')); if (r.ok) persist(); return r; },
     getRun: (id) => db.runs.find((r) => r.id === id) || null,
     listFindings: (filter) => store.listFindings(db, filter),
     stats: () => store.stats(db),

@@ -26,6 +26,13 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': 
 const clean = (t) => String(t || '').replace(/^(Möglicher )?Angriffsweg:\s*/, '').replace(/^(gitleaks|trufflehog|trivy|grype|semgrep|bandit|checkov|retire\.js|hadolint|osv-scanner|nuclei)\s*:\s*/i, '');
 const fmtDate = (iso) => { try { return new Date(iso || Date.now()).toLocaleString('de-DE', { dateStyle: 'long', timeStyle: 'short' }); } catch { return String(iso || ''); } };
 
+// Berichts-Branding aus den Einstellungen: Akzentfarbe (#rrggbb), Text auf dem Deckblatt, Fusszeile
+function branding(opts = {}) {
+  const accent = /^#[0-9a-f]{6}$/i.test(String(opts.accent || '')) ? String(opts.accent) : '#b7791f';
+  const clip = (t, n) => String(t || '').replace(/\r/g, '').trim().slice(0, n);
+  return { accent, coverText: clip(opts.coverText, 600), footerText: clip(opts.footerText, 200) };
+}
+
 function stats(findings) {
   const c = Object.fromEntries(SEV.map((s) => [s, 0]));
   for (const f of findings) c[f.severity] = (c[f.severity] || 0) + 1;
@@ -80,6 +87,7 @@ function findingCard(f, n) {
   </div>
   ${f.explanation ? `<p class="why">${esc(f.explanation)}</p>` : ''}
   <section class="fix"><h4>Lösung</h4>${fixText(f) ? `<p>${esc(fixText(f))}</p>` : ''}${steps}${patch}${snippets}</section>
+  ${f.note ? `<section class="note"><h4>Notiz</h4><p>${esc(f.note)}</p></section>` : ''}
   ${f.evidence ? `<p class="evidence"><b>Fundstelle:</b> <code>${esc(f.evidence)}</code></p>` : ''}
   <footer>Erkannt durch ${esc(sources(f).join(', ') || '–')}${f.confidence ? ` · Verlässlichkeit ${esc({ high: 'hoch', medium: 'mittel', low: 'niedrig' }[f.confidence] || f.confidence)}` : ''}${f.ruleId ? ` · Regel ${esc(f.ruleId)}` : ''}</footer>
   ${links}
@@ -88,7 +96,7 @@ function findingCard(f, n) {
 
 const SHIELD = '<svg viewBox="0 0 1024 1024" width="34" height="34" aria-hidden="true"><rect width="1024" height="1024" rx="224" fill="#0f1b2d" stroke="rgba(255,255,255,.18)" stroke-width="16"/><path fill="#f2b23a" d="M272 252 L392 252 L512 560 L632 252 L752 252 L752 500 C752 660 652 776 512 852 C372 776 272 660 272 500 Z"/></svg>';
 
-// opts: { title, targets: [{type,value}], company, logoDataUrl }
+// opts: { title, targets: [{type,value}], company, logoDataUrl, accent, coverText, footerText, frameworks }
 function toHtml(result, opts = {}) {
   if (typeof opts === 'string') opts = { title: opts };
   const all = result.findings || [];
@@ -102,7 +110,8 @@ function toHtml(result, opts = {}) {
   const nextSteps = [...new Set((top.length ? top : findings.slice(0, 3)).slice(0, 4).map((f) => (Array.isArray(f.steps) && f.steps[0]) || fixText(f)).filter(Boolean))];
   const idx = new Map(findings.map((f, i) => [f, i + 1]));
   const groups = SEV.map((sv) => ({ sv, list: findings.filter((f) => f.severity === sv) })).filter((g) => g.list.length);
-  const comp = complianceReport(findings);
+  const comp = complianceReport(findings, opts.frameworks);
+  const b = branding(opts);
   const ST = { ok: ['erfüllt (keine offenen Befunde)', SEV_COLOR.low], warn: ['offene Befunde', SEV_COLOR.medium], fail: ['dringende Befunde', SEV_COLOR.critical] };
   const logo = opts.logoDataUrl && /^data:image\/(png|jpe?g|svg\+xml|webp);base64,/.test(opts.logoDataUrl) ? `<img class="logo" src="${esc(opts.logoDataUrl)}" alt="Logo">` : '';
   const modules = (meta.modulesRun || []).filter(Boolean);
@@ -112,7 +121,7 @@ function toHtml(result, opts = {}) {
 <title>${esc(title)}${targets[0] ? ' – ' + esc(targets[0]) : ''}</title>
 <style>
   @page { size: A4; margin: 15mm 14mm 17mm; }
-  :root { --ink:#0f172a; --text:#1e293b; --muted:#64748b; --line:#e2e8f0; --soft:#f8fafc; --accent:#b7791f; }
+  :root { --ink:#0f172a; --text:#1e293b; --muted:#64748b; --line:#e2e8f0; --soft:#f8fafc; --accent:${b.accent}; }
   * { box-sizing: border-box; }
   html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body { margin: 0; font: 13.5px/1.6 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; color: var(--text); background: #eef1f5; }
@@ -132,6 +141,11 @@ function toHtml(result, opts = {}) {
   .brand .logo { margin-left: auto; max-height: 40px; max-width: 180px; background: #fff; border-radius: 6px; padding: 4px 8px; }
   .cover h1 { font-size: 30px; margin: 30px 0 4px; color: #fff; letter-spacing: -.01em; }
   .cover .sub { color: #b6c3d6; font-size: 13px; }
+  .cover { border-top: 6px solid var(--accent); }
+  .cover-text { margin-top: 12px; color: #dfe6f0; font-size: 13.5px; white-space: pre-line; }
+  .note { margin-top: 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 8px 12px; }
+  .note h4 { color: #92400e; }
+  .note p { white-space: pre-line; }
   .cover .targets { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
   .cover .targets span { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14); border-radius: 6px; padding: 2px 8px; word-break: break-all; }
   .cover .conf { margin-top: 26px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.12); font-size: 11.5px; color: #9fb0c8; display: flex; justify-content: space-between; gap: 12px; }
@@ -235,6 +249,7 @@ function toHtml(result, opts = {}) {
   <div class="brand">${SHIELD}<div>Vigil<small>Sicherheits-Prüfung</small></div>${logo}</div>
   <h1>${esc(title)}</h1>
   <div class="sub">${opts.company ? esc(opts.company) + ' · ' : ''}Erstellt am ${esc(fmtDate(meta.at))}</div>
+  ${b.coverText ? `<p class="cover-text">${esc(b.coverText)}</p>` : ''}
   ${targets.length ? `<div class="targets">${targets.slice(0, 8).map((t) => `<span>${esc(t)}</span>`).join('')}${targets.length > 8 ? `<span>+${targets.length - 8}</span>` : ''}</div>` : ''}
   <div class="facts">
     <div><b>${s.total}</b><span>offene Befunde</span></div>
@@ -251,7 +266,7 @@ function toHtml(result, opts = {}) {
     </div>
   </div>
   ${top.length ? `<div class="cover-top"><h4>Zuerst beheben</h4><ol>${top.slice(0, 4).map((f) => `<li>${esc(clean(f.title))}</li>`).join('')}</ol></div>` : ''}
-  <div class="conf"><span>Vertraulich – enthält Informationen über Schwachstellen.</span><span>Zugangsdaten sind gekürzt.</span></div>
+  <div class="conf"><span>Vertraulich – enthält Informationen über Schwachstellen.</span><span>${b.footerText ? esc(b.footerText) : 'Zugangsdaten sind gekürzt.'}</span></div>
 </section>
 
 <nav class="toolbar" aria-label="Filter">
@@ -294,7 +309,7 @@ function toHtml(result, opts = {}) {
     <div class="box"><h4>Was die Stufen bedeuten</h4><dl>${SEV.map((sv) => `<dt><span class="st" style="background:${SEV_COLOR[sv]}"></span>${SEV_LABEL[sv]}</dt><dd>${esc(SEV_HELP[sv])}</dd>`).join('')}</dl></div>
   </div>
   ${result.errors && result.errors.length ? `<div class="box" style="margin-top:14px"><h4>Hinweise zum Lauf</h4><ul class="notes">${result.errors.slice(0, 30).map((e) => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
-  <div class="end">Erstellt mit Vigil · ${esc(fmtDate(meta.at))} · Gefundene Zugangsdaten sind in diesem Bericht gekürzt.</div>
+  <div class="end">Erstellt mit Vigil · ${esc(fmtDate(meta.at))} · Gefundene Zugangsdaten sind in diesem Bericht gekürzt.</div>${b.footerText ? `<div class="end">${esc(b.footerText)}</div>` : ''}
 </main></div>
 <script>
 (function () {
@@ -316,7 +331,9 @@ function toMarkdown(result, opts = {}) {
   const meta = result.meta || {};
   const targets = (opts.targets || []).map((t) => (typeof t === 'string' ? t : t.value)).filter(Boolean);
   const L = [];
+  const b = branding(opts);
   L.push(`# ${opts.title || 'Sicherheitsbericht'}`, '');
+  if (b.coverText) L.push(b.coverText.split('\n').join(' '), '');
   L.push(`> **Note ${s.grade}** · Sicherheitswert ${s.posture}/100 · ${s.verdict}`, '');
   L.push(`Erstellt am ${fmtDate(meta.at)}${targets.length ? ` · Ziele: ${targets.map((t) => '`' + t + '`').join(', ')}` : ''}`, '');
   L.push('| Kritisch | Hoch | Mittel | Niedrig | Hinweis | Angriffswege |', '|:-:|:-:|:-:|:-:|:-:|:-:|', `| ${s.c.critical} | ${s.c.high} | ${s.c.medium} | ${s.c.low} | ${s.c.info} | ${s.toxic} |`, '');
@@ -336,12 +353,14 @@ function toMarkdown(result, opts = {}) {
       if (Array.isArray(f.steps) && f.steps.length) { f.steps.forEach((st, j) => L.push(`${j + 1}. ${st}`)); L.push(''); }
       const snip = f.versionPatch ? [f.versionPatch.command, f.versionPatch.manifest].filter(Boolean).join('\n\n') : Object.values(f.snippets || {})[0] || f.patch;
       if (snip) L.push('```', snip, '```', '');
+      if (f.note) L.push(`**Notiz:** ${String(f.note).split('\n').join(' ')}`, '');
       if (Array.isArray(f.links) && f.links.length) L.push('Mehr dazu: ' + f.links.slice(0, 4).map((l) => `[${l.label}](${l.url})`).join(' · '), '');
     });
   } else L.push('Keine offenen Befunde.', '');
   if (result.errors && result.errors.length) { L.push('<details><summary>Hinweise zum Lauf</summary>', ''); result.errors.forEach((e) => L.push(`- ${e}`)); L.push('', '</details>', ''); }
   L.push('---', '_Erstellt mit Vigil – zerstörungsfreie Prüfung eigener bzw. freigegebener Systeme._');
+  if (b.footerText) L.push('', b.footerText);
   return L.join('\n');
 }
 
-module.exports = { toHtml, toMarkdown, stats, SEV_LABEL, SEV_COLOR };
+module.exports = { toHtml, toMarkdown, stats, branding, fixText, clean, firstSentence, sources, SEV, SEV_LABEL, SEV_COLOR, SEV_HELP, CAT_LABEL };

@@ -156,6 +156,7 @@ function applyRun(store, run) {
       status,
       statusNote: prev && status === prev.status ? prev.statusNote : (regression ? 'Wieder aufgetaucht (Regression).' : undefined),
       ...(prev && prev.learned ? { learnedFalsePositive: true } : {}),
+      ...(prev && prev.note ? { note: prev.note, noteAt: prev.noteAt } : {}),
       isBaselineLegacy,
       linkedFindingIds: [],
       firstSeenAt: prev ? prev.firstSeenAt : now,
@@ -164,7 +165,7 @@ function applyRun(store, run) {
       statusChangedAt: prev && prev.status === status ? prev.statusChangedAt : now,
       finding: snapshot,
     };
-    return { ...f, id: fp, targetId, status, isNew, regression, isBaselineLegacy, suppressed: HIDDEN.has(status), firstSeenAt: store.findings[fp].firstSeenAt };
+    return { ...f, id: fp, targetId, status, isNew, regression, isBaselineLegacy, suppressed: HIDDEN.has(status), firstSeenAt: store.findings[fp].firstSeenAt, ...(prev && prev.note ? { note: prev.note } : {}), ...(store.findings[fp].statusNote ? { statusNote: store.findings[fp].statusNote } : {}) };
   });
 
   // Angriffspfade: Verknuepfung ueber ruleId@location auf die gespeicherten IDs abbilden.
@@ -232,6 +233,74 @@ function deleteRun(store, runId) {
 function purgeResolved(store, targetId) {
   const ids = Object.values(store.findings).filter((f) => f.status === 'RESOLVED' && (!targetId || f.targetId === targetId)).map((f) => f.id);
   return deleteFindings(store, ids);
+}
+
+// --- Papierkorb: Loeschen mit "Rueckgaengig" -----------------------------------------
+// Geloeschtes wandert mit Zeitstempel in store.trash und kann per Token zurueckgeholt werden;
+// purgeTrash() entfernt Eintraege endgueltig, sobald die Frist (Standard 10 s) abgelaufen ist.
+const UNDO_MS = 10000;
+function trashPut(store, kind, payload, now = Date.now()) {
+  const token = crypto.randomBytes(9).toString('hex');
+  store.trash = [...(store.trash || []), { token, kind, at: now, ...payload }].slice(-50);
+  return token;
+}
+function softDeleteFindings(store, ids, now) {
+  const recs = [...new Set((ids || []).map(String))].map((id) => store.findings[id]).filter(Boolean);
+  if (!recs.length) return { ok: true, deleted: 0 };
+  const links = Object.values(store.findings).filter((f) => Array.isArray(f.linkedFindingIds)).map((f) => ({ id: f.id, linked: [...f.linkedFindingIds] }));
+  const token = trashPut(store, 'findings', { findings: recs, links }, now);
+  const r = deleteFindings(store, recs.map((x) => x.id));
+  return { ...r, undoToken: token };
+}
+function softDeleteTarget(store, targetId, now) {
+  const t = store.targets[targetId];
+  if (!t) return { ok: false, error: 'Ziel nicht gefunden.' };
+  const findings = Object.values(store.findings).filter((f) => f.targetId === targetId);
+  const runRefs = store.runs.filter((r) => Array.isArray(r.targetIds) && r.targetIds.includes(targetId)).map((r) => r.id);
+  const token = trashPut(store, 'target', { target: t, findings, sbom: store.sboms ? store.sboms[targetId] : undefined, runRefs }, now);
+  return { ...deleteTarget(store, targetId), undoToken: token };
+}
+function softDeleteRun(store, runId, now) {
+  const i = store.runs.findIndex((r) => r.id === runId);
+  const run = store.runs[i];
+  const r = deleteRun(store, runId);
+  if (!r.ok) return r;
+  return { ...r, undoToken: trashPut(store, 'run', { run, index: i }, now) };
+}
+function restoreTrash(store, token) {
+  const list = store.trash || [];
+  const i = list.findIndex((e) => e.token === token);
+  if (i < 0) return { ok: false, error: 'Nicht mehr rückgängig zu machen.' };
+  const e = list[i];
+  store.trash = list.filter((_, k) => k !== i);
+  if (e.kind === 'findings') {
+    for (const f of e.findings) store.findings[f.id] = f;
+    for (const l of e.links || []) if (store.findings[l.id]) store.findings[l.id].linkedFindingIds = l.linked.filter((x) => store.findings[x]);
+    return { ok: true, kind: e.kind, restored: e.findings.length };
+  }
+  if (e.kind === 'target') {
+    store.targets[e.target.id] = e.target;
+    for (const f of e.findings) store.findings[f.id] = f;
+    if (e.sbom) { store.sboms = store.sboms || {}; store.sboms[e.target.id] = e.sbom; }
+    for (const r of store.runs) if (e.runRefs.includes(r.id) && Array.isArray(r.targetIds) && !r.targetIds.includes(e.target.id)) r.targetIds.push(e.target.id);
+    return { ok: true, kind: e.kind, restored: e.findings.length };
+  }
+  if (e.kind === 'run') { store.runs.splice(Math.min(e.index, store.runs.length), 0, e.run); return { ok: true, kind: e.kind, restored: 1 }; }
+  return { ok: false, error: 'Unbekannter Eintrag.' };
+}
+function purgeTrash(store, maxAgeMs = UNDO_MS, now = Date.now()) {
+  const before = (store.trash || []).length;
+  store.trash = (store.trash || []).filter((e) => now - e.at < maxAgeMs);
+  return before - store.trash.length;
+}
+
+// --- Notizen je Befund ----------------------------------------------------------------
+function setNote(store, id, note) {
+  const rec = store.findings[id];
+  if (!rec) return { ok: false, error: 'Befund nicht gefunden.' };
+  const n = String(note == null ? '' : note).replace(/\r/g, '').trim().slice(0, 4000);
+  if (n) { rec.note = n; rec.noteAt = new Date().toISOString(); } else { delete rec.note; delete rec.noteAt; }
+  return { ok: true, note: rec.note || '' };
 }
 
 const normTitle = (t) => String(t || '').toLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -348,4 +417,4 @@ function updateRun(store, id, patch) {
   return r;
 }
 
-module.exports = { emptyStore, load, save, targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, falsePositivesFor, deleteFindings, deleteTarget, deleteRun, purgeResolved, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };
+module.exports = { UNDO_MS, softDeleteFindings, softDeleteTarget, softDeleteRun, restoreTrash, purgeTrash, setNote, emptyStore, load, save, targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, falsePositivesFor, deleteFindings, deleteTarget, deleteRun, purgeResolved, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };

@@ -55,6 +55,9 @@ async function runAudit(targets, config, onProgress = () => {}) {
   let cveFindings = [];
   let cveNotes = [];
   const aborted = () => !!(config.signal && config.signal.aborted);
+  // Pause-Haltepunkt (Orchestrator): wartet hier, solange der Lauf pausiert ist
+  const checkpoint = async () => { if (typeof config.checkpoint === 'function') await config.checkpoint(); };
+  await checkpoint();
   if (config.cveLookup !== false && pre.deps.length && !aborted()) {
     try {
       const cve = await lookupCves(pre.deps, onProgress, config.signal);
@@ -70,6 +73,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   let webNotes = [];
   const webTargets = targets.filter((t) => t.type === 'url' || t.type === 'endpoint');
   for (const t of webTargets) {
+    await checkpoint();
     if (aborted()) break;
     // Scope: nur bestaetigte bzw. freigegebene Ziele (die App setzt `authorized` erst nach Pruefung).
     const authorized = !!t.authorized;
@@ -212,6 +216,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
     return { result: empty, ingest: ing, prescan: pre };
   }
 
+  await checkpoint();
   const result = await analyze({
     units: ing.units,
     facts: pre.facts,

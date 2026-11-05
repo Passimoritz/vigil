@@ -49,6 +49,30 @@ const PAIRS = [
   ['Regelmäßig weiter prüfen (z. B. monatlich) und neue Befunde zeitnah beheben.', 'Keep checking regularly (e.g. monthly) and fix new findings promptly.'],
   ['{0} mittlere Befunde im normalen Entwicklungsablauf abarbeiten.', 'Work through {0} medium findings in the normal development workflow.'], ['Normen auf einen Blick', 'Standards at a glance'],
   ['{0} Anforderung(en) mit dringenden Befunden', '{0} requirement(s) with urgent findings'], ['{0} Anforderung(en) mit offenen Befunden', '{0} requirement(s) with open findings'],
+  // Notizen, Tabellen-Exporte (CSV/Excel/Word), Vergleichsbericht
+  ['Notiz', 'Note'], ['Regel', 'Rule'], ['Erkannt durch', 'Detected by'], ['Offen', 'Open'], ['In Arbeit', 'In progress'], ['Risiko akzeptiert', 'Risk accepted'], ['Fehlalarm', 'False positive'], ['Behoben', 'Fixed'],
+  ['ja', 'yes'], ['Katalog', 'Catalogue'], ['Titel', 'Title'], ['Normen', 'Standards'], ['aktiv ausgenutzt', 'actively exploited'],
+  ['Vergleich zweier Prüfungen', 'Comparison of two scans'], ['Vorher', 'Before'], ['Nachher', 'After'], ['Vorher:', 'Before:'], ['Nachher:', 'After:'], ['Neu', 'New'], ['Unverändert', 'Unchanged'], ['Keine.', 'None.'],
+  ['neu', 'new'], ['behoben', 'fixed'], ['unverändert', 'unchanged'], ['offen vorher {0} · nachher {1}', 'open before {0} · after {1}'], ['Erstellt mit Vigil · {0}', 'Created with Vigil · {0}'],
+  // Normen-Kataloge: Cyber Resilience Act, SOC 2, PCI DSS, OWASP ASVS, HIPAA
+  ['Teil II {0}', 'Part II {0}'], ['Teil I {0}', 'Part I {0}'],
+  ['EU Cyber Resilience Act – Anhang I', 'EU Cyber Resilience Act – Annex I'],
+  ['Keine bekannten ausnutzbaren Schwachstellen bei Auslieferung', 'No known exploitable vulnerabilities on delivery'], ['Sichere Standardkonfiguration', 'Secure by default configuration'],
+  ['Schutz vor unbefugtem Zugriff (Authentisierung, Zugriffskontrolle)', 'Protection from unauthorised access (authentication, access control)'], ['Vertraulichkeit gespeicherter und übertragener Daten', 'Confidentiality of stored and transmitted data'],
+  ['Integrität von Daten, Befehlen und Programmen', 'Integrity of data, commands and programs'], ['Verfügbarkeit wesentlicher Funktionen', 'Availability of essential functions'], ['Begrenzung der Angriffsfläche', 'Limiting the attack surface'],
+  ['Protokollierung und Überwachung sicherheitsrelevanter Vorgänge', 'Recording and monitoring of security-relevant activity'], ['Schwachstellen und Komponenten erfassen (SBOM)', 'Identify and document vulnerabilities and components (SBOM)'],
+  ['Schwachstellen unverzüglich durch Sicherheitsupdates beheben', 'Remediate vulnerabilities without delay through security updates'],
+  ['Logische Zugriffskontrolle', 'Logical access controls'], ['Schutz vor Bedrohungen von außen', 'Protection against external threats'], ['Schutz bei der Übertragung', 'Protection of data in transmission'],
+  ['Schutz vor Schadsoftware und unautorisierter Software', 'Prevention of malicious and unauthorised software'], ['Erkennung von Schwachstellen und Fehlkonfigurationen', 'Detection of vulnerabilities and misconfigurations'],
+  ['Überwachung sicherheitsrelevanter Ereignisse', 'Monitoring of security events'], ['Änderungsmanagement und sichere Entwicklung', 'Change management and secure development'],
+  ['Systemkomponenten sicher konfiguriert', 'System components configured securely'], ['Gespeicherte Kontodaten geschützt', 'Stored account data protected'], ['Starke Kryptografie bei der Übertragung', 'Strong cryptography during transmission'],
+  ['Entwicklung verhindert typische Software-Angriffe', 'Development prevents common software attacks'], ['Bekannte Schwachstellen durch Patches behoben', 'Known vulnerabilities addressed by patches'],
+  ['Zugriff nach Bedarf vergeben und kontrolliert', 'Access granted on a need-to-know basis and controlled'], ['Starke Authentisierung', 'Strong authentication'], ['Zugangsdaten von Konten nicht im Code', 'Account credentials not hard-coded'], ['Protokollierung von Ereignissen', 'Logging of events'],
+  ['Architektur und Bedrohungsmodell', 'Architecture and threat modelling'], ['Authentisierung', 'Authentication'], ['Sitzungsverwaltung', 'Session management'], ['Zugriffskontrolle', 'Access control'],
+  ['Validierung, Bereinigung und Kodierung', 'Validation, sanitisation and encoding'], ['Gespeicherte Kryptografie', 'Stored cryptography'], ['Fehlerbehandlung und Protokollierung', 'Error handling and logging'], ['Datenschutz', 'Data protection'],
+  ['Kommunikation', 'Communication'], ['Schadcode', 'Malicious code'], ['Dateien und Ressourcen', 'Files and resources'], ['API und Webdienste', 'API and web services'],
+  ['Ver- und Entschlüsselung', 'Encryption and decryption'], ['Protokollierung (Audit Controls)', 'Audit controls'], ['Integrität', 'Integrity'], ['Authentisierung von Personen und Systemen', 'Person or entity authentication'],
+  ['Übertragungssicherheit', 'Transmission security'], ['Risikoanalyse und Risikomanagement', 'Risk analysis and risk management'],
 ];
 
 // Eigenes kleines Woerterbuch (vor dem Befund-Woerterbuch)

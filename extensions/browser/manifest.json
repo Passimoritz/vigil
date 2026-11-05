@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Vigil – check this site",
+  "short_name": "Vigil",
+  "version": "0.1.0",
+  "description": "Sends the current page address to the Vigil desktop app (local REST API on 127.0.0.1). The target still has to be confirmed in Vigil.",
+  "action": { "default_title": "Check this site with Vigil", "default_popup": "popup.html" },
+  "options_ui": { "page": "options.html", "open_in_tab": false },
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:*" }
+}

@@ -20,6 +20,17 @@ contextBridge.exposeInMainWorld('vigil', {
   cancelAudit: () => ipcRenderer.invoke('audit:cancel'),
   estimateAudit: (payload) => ipcRenderer.invoke('audit:estimate', payload),
   saveReport: (format) => ipcRenderer.invoke('report:save', { format }),
+  verifyReport: () => ipcRenderer.invoke('report:verify'),
+  signingInfo: () => ipcRenderer.invoke('signing:info'),
+  signingCreate: () => ipcRenderer.invoke('signing:create'),
+  pauseAudit: () => ipcRenderer.invoke('audit:pause'),
+  resumeAudit: () => ipcRenderer.invoke('audit:resume'),
+  setFindingNote: (id, note) => ipcRenderer.invoke('finding:setNote', id, String(note || '')),
+  undoDelete: (token) => ipcRenderer.invoke('undo:restore', token),
+  historyCompare: (a, b) => ipcRenderer.invoke('history:compare', a, b),
+  historyCompareSave: (a, b, format) => ipcRenderer.invoke('history:compareSave', a, b, format),
+  // Browser-Erweiterung: vorgemerkte Adresse (muss im Fenster bestaetigt werden)
+  onInbox: (cb) => { const h = (_e, url) => cb(String(url || '')); ipcRenderer.on('inbox:url', h); return () => ipcRenderer.removeListener('inbox:url', h); },
 
   // Befund-Lebenszyklus & Uebersicht
   setFindingStatus: (id, status, note) => ipcRenderer.invoke('finding:setStatus', id, { status, ...(note ? { note } : {}) }),

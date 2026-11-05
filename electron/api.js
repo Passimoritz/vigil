@@ -9,6 +9,8 @@
 //   GET    /api/scans/:id               Status eines Laufs
 //   POST   /api/targets/:id/baseline    aktuellen Stand als Baseline setzen
 //   GET    /api/sbom?q=lodash@4.17      wo ist ein Paket (in welcher Version) im Einsatz?
+//   POST   /api/inbox                   { url }  Adresse aus der Browser-Erweiterung vormerken – das Ziel
+//                                        muss in der App noch bestaetigt werden (kein Scan ueber diesen Weg)
 
 const http = require('http');
 const crypto = require('crypto');
@@ -17,7 +19,10 @@ const { check, ScanRequestSchema, StatusUpdateSchema } = require('../src/core/va
 const MAX_BODY = 64 * 1024;
 const RATE = { windowMs: 60000, max: 120, scansPerWindow: 10 };
 
-function createApi({ orchestrator, getConfig, enforceScope }) {
+// Erlaubte Herkunft fuer /api/inbox: nur Browser-Erweiterungen (keine Webseiten)
+const EXTENSION_ORIGIN = /^(chrome-extension|moz-extension|ms-browser-extension|safari-web-extension):\/\/[\w.-]+$/i;
+
+function createApi({ orchestrator, getConfig, enforceScope, onInbox }) {
   let server = null;
   const hits = [];
   const scanHits = [];
@@ -50,7 +55,9 @@ function createApi({ orchestrator, getConfig, enforceScope }) {
   async function handle(req, res) {
     const cfg = getConfig();
     // Nur lokale Aufrufer ohne Browser-Herkunft (keine Cross-Site-Anfragen aus Webseiten).
-    if (req.headers.origin) return send(res, 403, { error: 'Browser-Anfragen sind nicht erlaubt.' });
+    const path0 = String(req.url || '').split('?')[0].replace(/\/+$/, '');
+    const fromExtension = !!req.headers.origin && EXTENSION_ORIGIN.test(String(req.headers.origin)) && req.method === 'POST' && path0 === '/api/inbox';
+    if (req.headers.origin && !fromExtension) return send(res, 403, { error: 'Browser-Anfragen sind nicht erlaubt.' });
     if (!tokenOk(req, cfg.apiToken)) return send(res, 401, { error: 'Token fehlt oder ist falsch.' });
     if (overLimit(hits, RATE.max)) return send(res, 429, { error: 'Zu viele Anfragen – bitte kurz warten.' });
 
@@ -60,6 +67,15 @@ function createApi({ orchestrator, getConfig, enforceScope }) {
     const [, res1, id, sub] = parts;
 
     try {
+      if (req.method === 'POST' && res1 === 'inbox' && !id) {
+        const body = await readJson(req);
+        let u;
+        try { u = new URL(String(body.url || '').trim()); } catch { return send(res, 400, { error: 'Ungültige Adresse.' }); }
+        if (!/^https?:$/.test(u.protocol) || String(body.url).length > 2000) return send(res, 400, { error: 'Nur http(s)-Adressen.' });
+        const target = `${u.protocol}//${u.host}${u.pathname === '/' ? '' : u.pathname}`;
+        if (onInbox) onInbox(target);
+        return send(res, 202, { queued: true, target, needsConfirmation: true });
+      }
       if (req.method === 'GET' && res1 === 'stats' && !id) return send(res, 200, orchestrator.stats());
       if (req.method === 'GET' && res1 === 'targets' && !id) return send(res, 200, { targets: orchestrator.targets() });
       if (req.method === 'POST' && res1 === 'targets' && id && sub === 'baseline') {

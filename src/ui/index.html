@@ -284,6 +284,17 @@
             <button id="exportMdBtn" role="menuitem"><b>Markdown</b><span>für Tickets und Wikis</span></button>
             <button id="exportSarifBtn" role="menuitem"><b>SARIF</b><span>VS Code, GitHub Code Scanning, CI</span></button>
             <button id="exportJsonBtn" role="menuitem"><b>JSON</b><span>maschinenlesbar, inkl. Risiko und Lösungen</span></button>
+            <div class="menu-sep" role="separator"></div>
+            <button id="exportDocxBtn" role="menuitem" data-fmt="docx"><b>Word (.docx)</b><span>vollständiger Bericht zum Weiterbearbeiten</span></button>
+            <button id="exportXlsxBtn" role="menuitem" data-fmt="xlsx"><b>Excel (.xlsx)</b><span>Befunde als Tabelle mit Filter</span></button>
+            <button id="exportCsvBtn" role="menuitem" data-fmt="csv"><b>CSV</b><span>Befunde für jede Tabellenkalkulation</span></button>
+            <button id="exportZipBtn" role="menuitem" data-fmt="auditzip"><b>Audit-Paket (ZIP)</b><span>HTML, PDF, Rohdaten, SBOM und SHA-256-Manifest</span></button>
+            <div class="menu-sep" role="separator"></div>
+            <button id="exportVexBtn" role="menuitem" data-fmt="openvex"><b>OpenVEX</b><span>Fehlalarme und akzeptierte Risiken mit Begründung</span></button>
+            <button id="exportCdxVexBtn" role="menuitem" data-fmt="cdxvex"><b>CycloneDX VEX</b><span>dasselbe im CycloneDX-Format</span></button>
+            <button id="exportBadgeBtn" role="menuitem" data-fmt="badge"><b>Abzeichen (SVG)</b><span>Note und Datum für die README, Markdown wird kopiert</span></button>
+            <div class="menu-sep" role="separator"></div>
+            <button id="verifyReportBtn" role="menuitem"><b>Bericht prüfen …</b><span>Signatur und Prüfsummen eines Exports kontrollieren</span></button>
           </div>
         </div>
         <button id="newScanBtn" class="btn primary">Neue Prüfung</button>
@@ -335,6 +346,7 @@
         <div class="spinner" aria-hidden="true"></div>
         <div class="progress-title"><strong id="progressTitle">Prüfung läuft …</strong><span id="progressSub"></span></div>
         <div id="costPanel" class="cost-meter" hidden></div>
+        <button id="pauseBtn" class="btn" type="button" hidden aria-pressed="false">Pausieren</button>
         <button id="cancelBtn" class="btn" hidden>Abbrechen</button>
       </div>
       <div class="bar"><div id="barFill" class="bar-fill"></div></div>
@@ -351,7 +363,15 @@
         <label class="search">
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           <input id="findingSearch" type="search" placeholder="Befunde durchsuchen" aria-label="Befunde durchsuchen" />
-          <kbd>Strg K</kbd>
+          <kbd>Strg F</kbd>
+        </label>
+        <label class="group-by"><span>Gruppieren</span>
+          <select id="groupBySelect" aria-label="Befunde gruppieren nach">
+            <option value="severity">nach Schwere</option>
+            <option value="file">nach Datei</option>
+            <option value="category">nach Bereich</option>
+            <option value="target">nach Ziel</option>
+          </select>
         </label>
         <div class="chips" id="filters" role="tablist"></div>
         <div class="chips" id="viewToggles"></div>
@@ -375,6 +395,10 @@
       <div class="head-actions">
         <button type="button" class="btn ghost" id="dashRefresh" title="Neu laden">Aktualisieren</button>
         <div class="menu-wrap">
+          <button type="button" class="btn ghost" id="dashLayoutBtn" aria-haspopup="true" aria-expanded="false" aria-controls="dashLayoutMenu">Anpassen</button>
+          <div id="dashLayoutMenu" class="menu layout-menu" role="group" aria-label="Karten der Übersicht" hidden></div>
+        </div>
+        <div class="menu-wrap">
           <button type="button" class="btn" id="dashCleanBtn" aria-haspopup="menu" aria-expanded="false">Aufräumen ▾</button>
           <div id="dashCleanMenu" class="menu" role="menu" hidden>
             <button type="button" role="menuitem" id="dashPurgeResolved"><b>Behobene Befunde löschen</b><span>entfernt alles, was als behoben gilt</span></button>
@@ -386,7 +410,7 @@
 
     <!-- Lagebild -->
     <div class="dash-hero">
-      <div class="card hero-score">
+      <div class="card hero-score" data-widget="score">
         <div id="dashScore" class="score" role="img" aria-label="Sicherheitswert"><div class="score-inner"><span class="score-grade" id="dashGrade">–</span><span class="score-label" id="dashScoreLabel">Sicherheitswert</span></div></div>
         <div class="hero-score-text">
           <span class="eyebrow">Sicherheitswert</span>
@@ -395,15 +419,17 @@
           <div id="dashSpark" class="hero-spark"></div>
         </div>
       </div>
-      <div class="card hero-sev">
+      <div class="card hero-sev" data-widget="sev">
         <div class="hero-sev-head"><span class="eyebrow">Offene Befunde nach Schwere</span><span class="hero-total" id="dashOpenTotal">0</span></div>
         <div class="sev-bar" id="dashSevBar" role="img" aria-label="Verteilung der offenen Befunde"></div>
         <div class="sev-legend" id="dashStats"></div>
       </div>
-      <div class="card hero-kpis" id="dashTrendKpis"></div>
+      <div class="card hero-kpis" id="dashTrendKpis" data-widget="kpis"></div>
     </div>
-    <div id="dashToxic"></div>
-    <p class="intel-line muted small" id="intelLine"></p>
+    <div id="dashLow">
+      <div id="dashToxic" data-widget="toxic"></div>
+      <p class="intel-line muted small" id="intelLine" data-widget="intel"></p>
+    </div>
 
     <!-- Reiter -->
     <div class="dash-tabs" role="tablist" aria-label="Bereiche der Übersicht">
@@ -496,14 +522,6 @@
       <div id="dashDrawerBody" class="fdetail drawer-body"></div>
     </aside>
 
-    <!-- Bestaetigung zum Loeschen -->
-    <div id="confirmBg" class="ob-bg" hidden>
-      <div class="ob confirm-box" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmText">
-        <h2 id="confirmTitle">Löschen?</h2>
-        <p class="ob-lead" id="confirmText"></p>
-        <footer class="ob-foot"><button type="button" class="btn ghost" id="confirmNo">Abbrechen</button><button type="button" class="btn danger" id="confirmYes">Löschen</button></footer>
-      </div>
-    </div>
   </section>
 
   <!-- ===================== Verlauf ===================== -->
@@ -511,13 +529,29 @@
     <header class="page-head">
       <div>
         <h1 id="historyTitle">Verlauf</h1>
-        <p class="page-sub">Die letzten Läufe, lokal auf deinem Rechner gespeichert. Zum Öffnen anklicken.</p>
+        <p class="page-sub">Die letzten Läufe, lokal auf deinem Rechner gespeichert. Zum Öffnen anklicken, zum Vergleichen zwei Läufe ankreuzen.</p>
       </div>
       <div class="head-actions">
         <span id="historyStatus" class="hint"></span>
         <button id="historyClearBtn" class="btn ghost">Verlauf leeren</button>
       </div>
     </header>
+    <div class="hist-compare-bar" id="histCompareBar">
+      <span id="histCompareInfo" class="muted small">Zwei Läufe ankreuzen, um sie zu vergleichen.</span>
+      <button type="button" class="btn primary tiny" id="histCompareBtn" disabled>Vergleichen</button>
+    </div>
+    <section class="card hist-compare" id="histCompare" hidden aria-labelledby="histCompareTitle">
+      <header class="card-bar">
+        <h2 id="histCompareTitle">Vergleich</h2>
+        <span class="hc-actions">
+          <button type="button" class="btn tiny" data-cmp="html">HTML</button>
+          <button type="button" class="btn tiny" data-cmp="pdf">PDF</button>
+          <button type="button" class="btn tiny" data-cmp="md">Markdown</button>
+          <button type="button" class="btn tiny ghost" id="histCompareClose" aria-label="Vergleich schließen">✕ Schließen</button>
+        </span>
+      </header>
+      <div id="histCompareBody"></div>
+    </section>
     <div class="card flush"><div id="historyList" class="history-list"></div></div>
   </section>
 
@@ -748,6 +782,10 @@
             <div class="set-label"><b>Einführung</b><span>Die kurze Einführung vom ersten Start noch einmal zeigen.</span></div>
             <button id="onboardAgainBtn" type="button" class="btn tiny">Einführung zeigen</button>
           </div>
+          <div class="set-row">
+            <div class="set-label"><b>Glossar</b><span>Fachbegriffe wie CVE, CVSS, EPSS oder SBOM kurz erklärt. Im Befundtext genügt es, mit der Maus auf einen unterstrichenen Begriff zu zeigen.</span></div>
+            <button id="glossaryBtn" type="button" class="btn tiny">Glossar anzeigen</button>
+          </div>
         </section>
 
         <section class="card set-block" id="set-rest">
@@ -767,8 +805,8 @@
         </section>
 
         <section class="card set-block" id="set-report">
-          <h2>Kurzbericht für die Geschäftsführung</h2>
-          <p class="hint">Eine Seite in Klartext: Lage, wichtigste Risiken, nächste Schritte und Normen auf einen Blick. Firmenname und Logo erscheinen im Kopf.</p>
+          <h2>Berichte &amp; Branding</h2>
+          <p class="hint">Gilt für PDF, HTML, Word und den Kurzbericht für die Geschäftsführung. Firmenname und Logo erscheinen im Kopf.</p>
           <div class="set-row">
             <div class="set-label"><b>Firmenname</b><span>Erscheint oben im Bericht.</span></div>
             <input id="reportCompanyInput" type="text" class="set-input" placeholder="z. B. Muster GmbH" />
@@ -776,6 +814,30 @@
           <div class="set-row">
             <div class="set-label"><b>Logo</b><span id="reportLogoInfo">PNG, JPG, SVG oder WebP, höchstens 300 KB.</span></div>
             <span class="set-ctrl"><img id="reportLogoPreview" class="logo-preview" alt="" hidden /><button id="reportLogoClear" type="button" class="btn tiny ghost" hidden>Entfernen</button><label class="btn tiny">Logo wählen<input id="reportLogoFile" type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden /></label></span>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Akzentfarbe</b><span>Für Überschriften, Deckblatt-Leiste und Kurzbericht.</span></div>
+            <span class="set-ctrl"><input id="reportAccentInput" type="color" value="#b7791f" aria-label="Akzentfarbe" /><button id="reportAccentReset" type="button" class="btn tiny ghost">Standard</button></span>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Text auf dem Deckblatt</b><span>Zum Beispiel Auftrag, Prüfzeitraum oder Ansprechpartner.</span></div>
+            <textarea id="reportCoverInput" class="set-input" rows="3" maxlength="600" placeholder="z. B. Prüfung im Auftrag von …"></textarea>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Fußzeile</b><span>Erscheint unten auf jeder Seite, z. B. „Vertraulich – nur intern“.</span></div>
+            <input id="reportFooterInput" type="text" class="set-input" maxlength="200" placeholder="z. B. Vertraulich – nur intern" />
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Normen im Bericht</b><span>Welche Kataloge das Kapitel „Nachweise für Normen“ enthält.</span></div>
+            <span class="fw-list" id="reportFrameworks" role="group" aria-label="Normen im Bericht"></span>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Exporte signieren</b><span>Legt neben jeden Export eine Signatur (.sig.json: SHA-256 + Ed25519). Der Schlüssel entsteht lokal und wird verschlüsselt gespeichert. <span id="signInfo"></span></span></div>
+            <label class="switch"><input type="checkbox" id="signChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Bericht prüfen</b><span>Kontrolliert Signatur und Prüfsummen eines Berichts oder Audit-Pakets. <span id="verifyResult" aria-live="polite"></span></span></div>
+            <button id="verifyBtn" type="button" class="btn tiny">Datei wählen …</button>
           </div>
         </section>
 
@@ -791,6 +853,30 @@
   </main>
 </div>
 <div id="toasts" class="toasts" aria-live="polite"></div>
+    <!-- Bestaetigung zum Loeschen -->
+    <div id="confirmBg" class="ob-bg" hidden>
+      <div class="ob confirm-box" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmText">
+        <h2 id="confirmTitle">Löschen?</h2>
+        <p class="ob-lead" id="confirmText"></p>
+        <footer class="ob-foot"><button type="button" class="btn ghost" id="confirmNo">Abbrechen</button><button type="button" class="btn danger" id="confirmYes">Löschen</button></footer>
+      </div>
+    </div>
+<!-- Befehlspalette (Strg K) -->
+<div id="palette" class="pal-bg" hidden>
+  <div class="pal" role="dialog" aria-modal="true" aria-label="Befehlspalette">
+    <input id="palInput" type="text" role="combobox" aria-expanded="true" aria-controls="palList" aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="Befehl oder Befund suchen …" aria-label="Befehl oder Befund suchen" />
+    <ul id="palList" class="pal-list" role="listbox" aria-label="Befehle"></ul>
+    <div class="pal-foot muted small"><span><kbd>↑</kbd> <kbd>↓</kbd> auswählen</span><span><kbd>Enter</kbd> ausführen</span><span><kbd>Esc</kbd> schließen</span></div>
+  </div>
+</div>
+<!-- Glossar -->
+<div id="glossaryBg" class="ob-bg" hidden>
+  <div class="ob glossary-box" role="dialog" aria-modal="true" aria-labelledby="glossaryTitle">
+    <h2 id="glossaryTitle">Glossar</h2>
+    <dl id="glossaryList" class="glossary-list"></dl>
+    <footer class="ob-foot"><button type="button" class="btn" id="glossaryClose">Schließen</button></footer>
+  </div>
+</div>
 
 <div id="onboard" class="ob-bg" hidden>
   <div class="ob" role="dialog" aria-modal="true" aria-labelledby="obTitle">
