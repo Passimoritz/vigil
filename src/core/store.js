@@ -186,6 +186,11 @@ function applyRun(store, run) {
     f.linkedFindingIds = f.linkedKeys.map((k) => idByKey.get(k)).filter(Boolean);
     store.findings[f.id].linkedFindingIds = f.linkedFindingIds;
   }
+  // Aenderungs-Waechter: Skripte und Formularziele je Webseite (letzter vollstaendiger Stand)
+  if (run.webWatch && typeof run.webWatch === 'object') {
+    store.webWatch = store.webWatch || {};
+    for (const t of runTargets.filter((x) => x.type === 'url')) if (run.webWatch[t.value]) store.webWatch[t.id] = run.webWatch[t.value];
+  }
   // SBOM-Inventar je Ziel (letzter Stand) fuer die globale Paketsuche
   if (Array.isArray(run.sbom) && run.sbom.length) {
     store.sboms = store.sboms || {};
@@ -230,6 +235,7 @@ function deleteTarget(store, targetId) {
   deleteFindings(store, ids);
   delete store.targets[targetId];
   if (store.sboms) delete store.sboms[targetId];
+  if (store.webWatch) delete store.webWatch[targetId];
   for (const r of store.runs) if (Array.isArray(r.targetIds)) r.targetIds = r.targetIds.filter((x) => x !== targetId);
   return { ok: true, deletedFindings: ids.length };
 }
@@ -360,4 +366,11 @@ function updateRun(store, id, patch) {
   return r;
 }
 
-module.exports = { emptyStore, load, save, setCipher,targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, falsePositivesFor, deleteFindings, deleteTarget, deleteRun, purgeResolved, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };
+// Letzter Stand des Aenderungs-Waechters je Webadresse: { [targetValue]: {at, origin, scripts, forms} }
+function webWatchFor(store, targets) {
+  const out = {};
+  for (const t of targets || []) { const w = store.webWatch && store.webWatch[targetIdOf(t)]; if (t.type === 'url' && w) out[t.value] = w; }
+  return out;
+}
+
+module.exports = { webWatchFor, emptyStore, load, save, setCipher,targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, falsePositivesFor, deleteFindings, deleteTarget, deleteRun, purgeResolved, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };

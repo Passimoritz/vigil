@@ -1356,6 +1356,149 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     if (left2.length) console.log(left2.slice(0, 60).map((t) => '      ' + t).join('\n'));
   }
 
+  // --- Web-Zusatzpruefungen (security.txt, SEO, Impressum, Observatory, TLS/DNS/Mail, Shodan, Tippfehler,
+  //     JS-Bundles, SRI/CSP, Datenschutz, Barrierefreiheit, Ladezeit, Links, API, Aenderungs-Waechter) ---
+  {
+    const http = require('http');
+    const crypto = require('crypto');
+    const i18n = require('../src/core/findings-i18n');
+    const netc = require('../src/core/modules/webnet');
+    const pg = require('../src/core/modules/webpage');
+    const { runWebSuite } = require('../src/core/modules/websuite');
+    const { runDeepWeb } = require('../src/core/modules/webdeep');
+    const all = [];
+    const notesAll = [];
+    const ids = (fs) => fs.map((f) => f.ruleId);
+    const nx = () => Object.assign(new Error('nx'), { code: 'ENOTFOUND' });
+    // Fremder "CDN"-Server (andere Herkunft) mit versioniertem Skript
+    const cdn = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/javascript' }); res.end('/*! lib 1.2.3 */ window.lib = 1;'); });
+    await new Promise((r) => cdn.listen(0, '127.0.0.1', r));
+    const cdnBase = `http://127.0.0.1:${cdn.address().port}`;
+    const site = http.createServer((req, res) => {
+      const u = new URL(req.url, 'http://x');
+      const send = (code, type, body, h = {}) => { res.writeHead(code, { 'Content-Type': type, ...h }); res.end(req.method === 'HEAD' ? '' : body); };
+      if (u.pathname === '/') return send(200, 'text/html', `<html lang="de"><head><title>Testseite</title><script src="/app.js"></script><script src="${cdnBase}/lib-1.2.3.min.js"></script><script>var x=1;</script></head><body style="color:red"><img src="/logo.png"><form method="post" action="http://evil.example.invalid/collect"><input name="email"></form><a href="/impressum">Impressum</a> <a href="/datenschutz">Datenschutz</a> <a href="/kaputt">Alt</a> <a href="/ok">OK</a></body></html>`, { 'Set-Cookie': 'sid=1; Path=/', 'X-Content-Type-Options': 'nosniff' });
+      if (u.pathname === '/app.js') return send(200, 'application/javascript', 'const k="AKIAIOSFODNN7EXAMPLF";fetch("http://10.0.0.5:8080/api/intern");const pk="pk_live_abcdefghijk12345";');
+      if (u.pathname === '/impressum' || u.pathname === '/ok' || u.pathname === '/logo.png') return send(200, 'text/html', '<html><body>ok</body></html>');
+      if (u.pathname === '/.well-known/security.txt') return send(200, 'text/plain', 'Contact: mailto:security@example.org\nExpires: 2020-01-01T00:00:00Z\n');
+      if (u.pathname === '/robots.txt') return send(200, 'text/plain', 'User-agent: *\nDisallow: /\n');
+      if (u.pathname === '/openapi.json') return send(200, 'application/json', JSON.stringify({ openapi: '3.0.0', security: [{ bearer: [] }], paths: { '/api/users': { get: {} }, '/api/health': { get: { security: [] } }, '/api/users/{id}': { get: {} }, '/api/logout': { get: {} } } }));
+      if (u.pathname === '/api/users') return send(200, 'application/json', '[{"id":1,"email":"a@b.c"}]');
+      if (u.pathname === '/api/health') return send(200, 'application/json', '{"ok":true}');
+      if (u.pathname === '/api/logout') { calledLogout = true; return send(200, 'application/json', '{"bye":1}'); }
+      send(404, 'text/html', '<html><body>nein</body></html>');
+    });
+    let calledLogout = false;
+    await new Promise((r) => site.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${site.address().port}/`;
+    const dw = await runDeepWeb(base, { deep: true, rps: 200 });
+    const previous = { at: '2026-11-01T10:00:00Z', origin: base.slice(0, -1), scripts: [{ url: base + 'app.js' }], forms: [{ page: base, action: base + 'login' }] };
+    const s = await runWebSuite(base, { deep: true, pages: dw.pages, scripts: dw.scripts, previous, rps: 200 });
+    all.push(...s.findings); notesAll.push(...s.notes);
+    const got = ids(s.findings);
+    check('websuite: security.txt abgelaufen, robots sperrt alles, keine Beschreibung', ['sectxt-expired', 'seo-robots-disallow-all', 'seo-description-missing'].every((x) => got.includes(x)), got.join(','));
+    check('websuite: Impressum da, Datenschutz-Link defekt', got.includes('legal-privacy-broken') && !got.includes('legal-imprint-missing'));
+    check('websuite: Header-Note als Info mit Abzügen', s.findings.some((f) => f.ruleId === 'observatory-grade' && f.severity === 'info' && /Note [A-F]/.test(f.title) && f.steps.some((x) => /HSTS|Content-Security-Policy/.test(x))));
+    check('websuite: Zugangsdaten und interne Adresse im JS-Bundle, öffentlicher Stripe-Key ignoriert', got.includes('jsbundle-secret-aws-access-key-id') && got.includes('jsbundle-internal-urls') && !got.some((x) => /stripe-publishable/.test(x)) && !JSON.stringify(s.findings).includes('AKIAIOSFODNN7EXAMPLF'));
+    check('websuite: Barrierefreiheit (Alternativtext, Feldbeschriftung)', got.includes('a11y-img-alt-missing') && got.includes('a11y-form-label-missing') && !got.includes('a11y-lang-missing'));
+    check('websuite: defekter Link gefunden', s.findings.some((f) => f.ruleId === 'web-broken-links' && /kaputt/.test(f.description)));
+    check('websuite: API ohne Anmeldung, Pfade mit Platzhalter/Logout nicht aufgerufen', got.includes('api-live-unauth-data') && got.includes('api-live-public-data') && !calledLogout);
+    const csp = s.findings.find((f) => f.ruleId === 'csp-suggestion');
+    check('websuite: CSP-Vorschlag mit fremder Quelle und form-action', csp && csp.patch.includes(`script-src 'self' ${cdnBase}`) && /form-action 'self' http:\/\/evil\.example\.invalid/.test(csp.patch) && /object-src 'none'/.test(csp.patch));
+    check('websuite: Änderungs-Wächter – neues Fremdskript und umgebogenes Formular', got.includes('watch-new-third-party-script') && s.findings.some((f) => f.ruleId === 'watch-form-target-changed' && f.severity === 'high') && s.watch.scripts.some((x) => x.url.endsWith('lib-1.2.3.min.js') && x.sha256));
+    check('websuite: Prüfungen als gelaufen gemeldet', ['web-sectxt', 'web-seo', 'web-legal', 'web-observatory', 'js-secrets', 'web-a11y', 'web-links', 'api-live', 'web-privacy'].every((x) => s.ran.includes(x)), s.ran.join(','));
+    const again = await runWebSuite(base, { deep: false, pages: dw.pages, scripts: dw.scripts, previous: s.watch, rps: 200 });
+    check('websuite: ohne Nachweis keine API-Abrufe; zweiter Lauf ohne Änderungen', !again.ran.includes('api-live') && !ids(again.findings).some((x) => /^watch-/.test(x)));
+    const down = await runWebSuite('http://127.0.0.1:9/', { rps: 200 });
+    check('websuite: nicht erreichbar – nichts als gelaufen gemeldet', !down.ran.length && /nicht erreichbar/.test(down.notes.join(' ')));
+    site.close(); cdn.close();
+
+    // DNS/Mail mit Stub-Resolver
+    const txtMap = { '_mta-sts.example.com': [['v=STSv1; id=1']], '_dmarc.example.com': [['v=DMARC1; p=reject']] };
+    const dnsStub = { resolveMx: async (n) => (n === 'example.com' ? [{ exchange: 'mx1.example.com', priority: 10 }] : []), resolveTxt: async (n) => { if (txtMap[n]) return txtMap[n]; throw nx(); } };
+    const m1 = await netc.mailExtended('example.com', { dns: dnsStub }, { httpGet: async () => ({ ok: true, status: 200, body: 'version: STSv1\nmode: testing\nmx: mx2.example.com\nmax_age: 86400' }), allowFetch: () => true });
+    all.push(...m1.findings);
+    check('mail: MTA-STS Testmodus, MX passt nicht, TLS-RPT und BIMI fehlen', ['mail-mtasts-testing', 'mail-mtasts-mx-mismatch', 'mail-tlsrpt-missing', 'mail-bimi-missing'].every((x) => ids(m1.findings).includes(x)) && m1.ran);
+    const m2 = await netc.mailExtended('example.com', { dns: dnsStub }, { httpGet: async () => { throw new Error('darf nicht'); }, allowFetch: () => false });
+    check('mail: Richtlinie eines nicht freigegebenen Hosts wird nicht geladen', /nicht freigegeben/.test(m2.notes.join(' ')));
+    const m3 = await netc.mailExtended('nomail.example', { dns: { resolveMx: async () => { throw nx(); }, resolveTxt: async () => { throw nx(); } } });
+    const m4 = await netc.mailExtended('x.example', { dns: { resolveMx: async () => { throw Object.assign(new Error('t'), { code: 'ETIMEOUT' }); } } });
+    check('mail: ohne MX übersprungen, DNS-Fehler gilt nicht als gelaufen', m3.ran && !m3.findings.length && !m4.ran);
+    const jsonRes = (j, status = 200) => ({ ok: status < 400, status, json: async () => j });
+    const sec = await netc.dnssec('example.com', { fetch: async (u) => { check('dnssec: nur über dns.google', u.startsWith('https://dns.google/resolve?name=example.com')); return jsonRes({ Status: 0, Answer: [] }); } });
+    all.push(...sec.findings);
+    check('dnssec: fehlender DS-Eintrag gemeldet', ids(sec.findings).includes('dns-dnssec-missing'));
+    const day = 86400000;
+    const rdap = (d) => netc.domainExpiry('example.com', { fetch: async () => jsonRes({ events: [{ eventAction: 'expiration', eventDate: new Date(Date.now() + d * day + 3600000).toISOString() }] }) });
+    const [e10, e2, e90] = [await rdap(10), await rdap(2), await rdap(90)];
+    all.push(...e10.findings);
+    check('domain: Ablauf in 10 Tagen hoch, 2 Tagen kritisch, 90 Tage still', e10.findings[0].severity === 'high' && e2.findings[0].severity === 'critical' && !e90.findings.length && /läuft in 10 Tagen ab/.test(e10.findings[0].title));
+    let blocked = false; try { await netc.extFetch({ fetch: async () => ({}) }, 'https://evil.example/'); } catch { blocked = true; }
+    check('ausgehend: nur erlaubte Auskunftsdienste', blocked && netc.OUTBOUND_HOSTS.includes('internetdb.shodan.io'));
+    const idb = await netc.internetDb('shop.example.com', { dns: { resolve4: async () => ['93.184.216.34', '10.0.0.1'] }, fetch: async (u) => { check('internetdb: keine internen IPs abgefragt', !u.includes('10.0.0.1')); return jsonRes({ ports: [443, 80, 3306], vulns: ['CVE-2021-1234'] }); } });
+    all.push(...idb.findings);
+    check('internetdb: Ports, riskanter Port, bekannte CVEs', ['internetdb-ports', 'internetdb-risky-port-3306', 'internetdb-known-vulns'].every((x) => ids(idb.findings).includes(x)) && idb.ran);
+    const v = netc.typoVariants('beispiel.de');
+    check('tippfehler: Varianten ohne Original', v.length === 60 && !v.includes('beispiel.de') && v.includes('beispiel.com') && v.includes('beispil.de'));
+    const nsMap = { 'beispiel.de': ['ns1.mine.net'], 'beispiel.com': ['ns1.mine.net'], 'beispil.de': ['ns.other.net'] };
+    let contacted = false;
+    const typo = await netc.typoDomains('beispiel.de', { dns: { resolveNs: async (n) => { if (nsMap[n]) return nsMap[n]; throw nx(); }, resolveMx: async (n) => (n === 'beispil.de' ? [{ exchange: 'mx.other.net' }] : []), resolve4: async () => { contacted = true; return []; } } });
+    all.push(...typo.findings); notesAll.push(...typo.notes);
+    check('tippfehler: fremde Variante mit Mail gemeldet, eigene ignoriert, nur DNS', typo.findings.some((f) => f.ruleId === 'typo-domains-registered' && /beispil\.de/.test(f.evidence) && !/beispiel\.com/.test(f.evidence)) && ids(typo.findings).includes('typo-domain-mail') && !contacted);
+    let crtCalled = false;
+    const soon = new Date(Date.now() + 5 * day).toUTCString();
+    const subs = await netc.subdomains('example.com', { dns: { resolve4: async (n) => { if (n === 'api.example.com' || n === 'dev.example.com') return ['1.2.3.4']; throw nx(); }, resolve6: async () => { throw nx(); }, resolveCname: async () => { throw nx(); } } }, { host: 'www.example.com', deep: false, allowlist: ['api.example.com'], crtsh: async () => { crtCalled = true; return []; }, probe: async (h) => { check('subdomains: nur freigegebene Hosts kontaktiert', h === 'api.example.com'); return { ok: true, authorized: true, chain: [{ validTo: soon }] }; } });
+    all.push(...subs.findings); notesAll.push(...subs.notes);
+    check('subdomains: Zertifikat der freigegebenen läuft ab, andere nur als Vorschlag', subs.findings.some((f) => f.ruleId === 'tls-cert-expiring' && f.severity === 'high' && /api\.example\.com/.test(f.title)) && subs.findings.some((f) => f.ruleId === 'subdomains-not-allowed' && /dev\.example\.com/.test(f.evidence)) && !crtCalled);
+    const tlsF = netc.tlsDeepFindings('https://example.com', { ok: true, authorized: false, authError: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', chain: [{ validTo: new Date(Date.now() + 200 * day).toUTCString(), ocspUrl: 'http://ocsp.example' }, { subject: 'Example CA R1', validTo: new Date(Date.now() + 10 * day).toUTCString() }], ocspStapled: false }, 'h2=":443"');
+    all.push(...tlsF);
+    check('tls: Kette unvollständig, Zwischenzertifikat läuft ab, kein OCSP-Stapling, kein HTTP/3', ['tls-chain-incomplete', 'tls-intermediate-expiring', 'tls-no-ocsp-stapling', 'http3-not-advertised'].every((x) => ids(tlsF).includes(x)));
+    check('tls: HTTP/3 angekündigt -> kein Befund', !ids(netc.tlsDeepFindings('https://example.com', { ok: true, authorized: true, chain: [] }, 'h3=":443"; ma=86400')).includes('http3-not-advertised'));
+
+    // Seitenauswertung ohne Netz
+    const priv = pg.privacyFindings('https://shop.example', { observed: true, requests: [{ url: 'https://www.googletagmanager.com/gtag/js?id=G-1' }, { url: 'https://fonts.googleapis.com/css2?family=Roboto' }, { url: 'https://www.youtube.com/embed/x' }, { url: 'https://cdn.other.com/a.js' }, { url: 'https://img.shop.example/a.png' }], cookies: [{ name: '_ga', domain: '.shop.example' }, { name: 'sid', domain: 'shop.example' }] });
+    all.push(...priv);
+    check('datenschutz: Tracking, Google Fonts, Video, Fremdserver, Cookies vor Einwilligung', ['privacy-tracking-before-consent', 'privacy-external-fonts', 'privacy-embeds-before-consent', 'privacy-third-party-hosts', 'privacy-cookies-before-consent'].every((x) => ids(priv).includes(x)) && !priv.find((f) => f.ruleId === 'privacy-third-party-hosts').evidence.includes('img.shop.example'));
+    const gated = pg.pageResources([{ url: 'https://shop.example/', html: '<script type="text/plain" data-cookieconsent="statistics" src="https://www.googletagmanager.com/gtag/js"></script>' }]).resources.filter((r) => !/text\/plain/.test(r.type || ''));
+    check('datenschutz: per Consent-Tool blockiertes Skript zählt nicht', !pg.privacyFindings('https://shop.example', { requests: gated }).length);
+    const buf = Buffer.from('console.log(1)');
+    const sri = pg.sriSnippet('https://shop.example', [{ src: 'https://cdn.example/lib@1.2.3/x.min.js', integrity: '' }, { src: 'https://cdn.example/latest.js', integrity: '' }, { src: 'https://cdn.example/ok-2.0.0.js', integrity: 'sha384-abc' }], new Map([['https://cdn.example/lib@1.2.3/x.min.js', buf], ['https://cdn.example/latest.js', buf]]));
+    all.push(...sri);
+    check('sri: sha384 für versionierte Skripte, unversionierte nur genannt', sri.length === 1 && sri[0].patch.includes(`integrity="sha384-${crypto.createHash('sha384').update(buf).digest('base64')}"`) && !sri[0].patch.includes('latest.js') && /cdn\.example/.test(sri[0].description));
+    const good = new Headers({ 'content-security-policy': "default-src 'self'; frame-ancestors 'none'", 'strict-transport-security': 'max-age=63072000; includeSubDomains; preload', 'x-content-type-options': 'nosniff', 'referrer-policy': 'strict-origin-when-cross-origin' });
+    const og = pg.observatory('https://a.example', good, { https: true, redirectsToHttps: true, origin: 'https://a.example' })[0];
+    const ob = pg.observatory('https://a.example', new Headers(), { https: true, redirectsToHttps: false, origin: 'https://a.example' })[0];
+    all.push(og, ob);
+    check('observatory: gute Header A+, fehlende Header F', /Note A\+/.test(og.title) && /Note F/.test(ob.title) && ob.steps.length >= 5);
+    const sp = pg.speedFindings('https://a.example', { ttfb: 2100, dcl: 3000, lcp: 5200, cls: 0.4, bytes: 7 * 1024 * 1024, requests: 180 });
+    all.push(...sp);
+    check('ladezeit: langsame Seite als niedrig mit Messwerten', sp[0].severity === 'low' && /7168 KB, 180 Anfragen/.test(sp[0].title));
+    all.push(...pg.a11yFindings('https://a.example', { lang: '', imgNoAlt: 2, unlabeled: 1, contrast: 6, contrastEx: [{ text: 'grau', ratio: 2.1 }] }));
+    check('barrierefreiheit: Kontrast aus dem Browser', all.some((f) => f.ruleId === 'a11y-contrast-low' && f.severity === 'low') && all.some((f) => f.ruleId === 'a11y-lang-missing'));
+    const cw = pg.changeWatch({ origin: 'https://a.example', scripts: [{ url: 'https://cdn.example/lib-1.0.0.js', sha256: 'b'.repeat(64) }], forms: [] }, { at: '2026-11-01', scripts: [{ url: 'https://cdn.example/lib-1.0.0.js', sha256: 'a'.repeat(64) }], forms: [] });
+    all.push(...cw);
+    check('wächter: geänderter Inhalt einer festen Skript-Version', ids(cw).includes('watch-third-party-script-changed'));
+    check('browser: Sammel-Skript ist gültiges JavaScript', (() => { try { new Function('return ' + pg.DOM_COLLECT_SCRIPT); return true; } catch { return false; } })());
+    all.push(...pg.seoFindings('https://a.example/', '<html><head></head></html>', { robots: { status: 404 }, sitemap: { status: 404 } }), ...pg.legalFindings('https://a.example/', { imprint: null, privacy: null }));
+    all.push(...require('../src/core/modules/websuite').securityTxtFindings('https://a.example', { ok: true, status: 404, body: '' }));
+    // Store: Vergleichsstand je Ziel
+    const st = require('../src/core/store');
+    const db = st.emptyStore();
+    const tg = [{ type: 'url', value: 'https://a.example/' }];
+    st.applyRun(db, { targets: tg, findings: [], scannersRun: [], webWatch: { 'https://a.example/': { at: 'x', scripts: [{ url: 'u' }], forms: [] } } });
+    check('wächter: Stand wird je Ziel gespeichert und wieder geliefert', st.webWatchFor(db, tg)['https://a.example/'].scripts[0].url === 'u');
+
+    // Englisch: alle neuen Befund- und Hinweistexte uebersetzt
+    const GER = /[äöüß]|\b(der|die|das|und|nicht|ist|mit|für|oder|wird|werden|auf|eine?|zu|von|bei|nach|aus|sich)\b/;
+    const en = all.map(i18n.localizeFinding);
+    const left = en.flatMap((f) => [f.title, f.description, f.impact, f.remediation, ...(f.steps || [])]).filter((t) => t && GER.test(t));
+    check('englisch: neue Web-Befunde vollständig übersetzt', left.length === 0, left.slice(0, 3).join(' | '));
+    const leftNotes = notesAll.map((n) => i18n.translate(n)).filter((t) => GER.test(t));
+    check('englisch: neue Web-Hinweise übersetzt', leftNotes.length === 0, leftNotes.slice(0, 3).join(' | '));
+    if (left.length) console.log('    Unübersetzt:', left.slice(0, 6));
+    if (leftNotes.length) console.log('    Unübersetzt (Hinweise):', leftNotes.slice(0, 6));
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

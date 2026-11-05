@@ -46,11 +46,13 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
       const targets = job.targets.map((t) => { const rec = db.targets[store.targetIdOf(t)]; return { ...t, verified: !!(rec && rec.ownershipVerified) }; });
       // Aus Fehlalarmen lernen: bestaetigte Fehlalarme dieser Ziele gehen als Hinweis an die KI
       cfg.knownFalsePositives = store.falsePositivesFor(db, job.targets.map((t) => store.targetIdOf(t)));
+      // Aenderungs-Waechter: Skripte/Formularziele des letzten Laufs zum Vergleich
+      cfg.webWatch = store.webWatchFor(db, job.targets);
       const { result } = await runAudit(targets, cfg, (p) => { try { if (job.onProgress) job.onProgress(p); } catch { /* Fenster weg */ } });
       const scannersRun = (result.meta && result.meta.scannersRun) || [];
       // Abgebrochene oder gedrosselte Laeufe sind unvollstaendig: nichts automatisch schliessen.
       const complete = !ctrl.signal.aborted && !(result.meta && result.meta.throttled);
-      const applied = store.applyRun(db, { targets: job.targets, findings: result.findings, scannersRun: complete ? scannersRun : [], sbom: result.meta && result.meta.sbom });
+      const applied = store.applyRun(db, { targets: job.targets, findings: result.findings, scannersRun: complete ? scannersRun : [], sbom: result.meta && result.meta.sbom, webWatch: complete && result.meta ? result.meta.webWatch : null });
       result.findings = applied.findings;
       result.lifecycle = { ...applied.counters, resolved: applied.resolved, runId: job.id };
       result.hasBaseline = applied.counters.updated + applied.counters.reopened > 0;

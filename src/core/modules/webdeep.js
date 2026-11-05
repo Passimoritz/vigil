@@ -265,9 +265,11 @@ async function runDeepWeb(targetUrl, { deep = false, login = null, rps = 4, sign
   const scripts = new Set(); // eingebundene Skripte (fuer den Abgleich verwundbarer Bibliotheken)
   let cmsHints = []; // CMS-Kern/Plugins mit Version aus dem HTML (Abgleich in supplychain.js)
   const url = /^https?:\/\//i.test(targetUrl) ? targetUrl : 'https://' + targetUrl;
+  let crawled = []; // gefundene Seiten fuer die Zusatzpruefungen (websuite.js), nur im Speicher
   try {
     onProgress({ phase: 'webscan', message: `Unterseiten und Formulare: ${new URL(url).host} …` });
     const pages = await crawl(url, guard, { signal, max: deep ? MAX_PAGES : 12 });
+    crawled = pages;
     findings.push(...formFindings(pages));
     try { cmsHints = require('./cms').cmsFromHtml(pages); } catch { /* nur Zusatzinfo */ }
     for (const p of pages) for (const m of String(p.html).matchAll(/<script\b[^>]*\bsrc\s*=\s*["']([^"']+)/gi)) { try { scripts.add(new URL(m[1], p.url).href); } catch { /* egal */ } }
@@ -286,10 +288,10 @@ async function runDeepWeb(targetUrl, { deep = false, login = null, rps = 4, sign
       }
     } else notes.push('Schwachstellen-Proben und Login-Prüfung nur für nachgewiesene eigene Domains (Übersicht › Verifizieren).');
   } catch (e) {
-    if (e.throttled) return { findings, notes: [...notes, e.message], ran, throttled: true, scripts: [...scripts], cmsHints };
+    if (e.throttled) return { findings, notes: [...notes, e.message], ran, throttled: true, scripts: [...scripts], cmsHints, pages: crawled };
     notes.push('Tiefe Web-Prüfung: ' + e.message);
   }
-  return { findings, notes, ran, throttled: false, scripts: [...scripts], cmsHints };
+  return { findings, notes, ran, throttled: false, scripts: [...scripts], cmsHints, pages: crawled };
 }
 
-module.exports = { runDeepWeb, crawl, parseForms, formFindings, paramTargets, probe, loginAudit, Jar, buildLoginBody };
+module.exports = { runDeepWeb, crawl, parseForms, formFindings, paramTargets, probe, loginAudit, Jar, buildLoginBody, links, attr, sameSite, isLogout };
