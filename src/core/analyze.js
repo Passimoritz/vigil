@@ -235,6 +235,7 @@ async function analyze(opts) {
     const batchOk = batches.map(() => true);
     for (let i = 0; i < batches.length && !aborts; i++) {
       for (const pass of passes) {
+        if (typeof config.checkpoint === 'function') await config.checkpoint(); // Pause zwischen KI-Bloecken
         if (aborted()) { aborts = true; break; }
         const focusLine = pass.hint ? `\nSCHWERPUNKT dieses Durchgangs: ${pass.hint} Melde auch andere klare Funde, aber grabe bei diesem Schwerpunkt besonders tief.\n` : '';
         // Gleichbleibender Anfang (wird beim Anbieter zwischengespeichert) + wechselnder Block

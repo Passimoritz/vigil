@@ -33,6 +33,19 @@
     ['{0} Fundstelle: `{1}`', '{0} Location: `{1}`'], ['Fundstelle: {0}', 'Location: {0}'], ['Er {0}.', 'It {0}.'], ['auf {0}', 'on {0}'],
     ['Am schnellsten: {0}', 'Quickest: {0}'], ['(Befund: „{0}“)', '(finding: “{0}”)'], ['Möglicher Angriffsweg: {0}', 'Possible attack path: {0}'], ['Angriffsweg: {0}', 'Attack path: {0}'],
   ];
+  // Kommentare in Code-Schnipseln und Patches der Loesungen ("// …", "# …")
+  const CODE_COMMENTS = [
+    ['in server { … } bzw. location { … }', 'in server { … } or location { … }'], ['in VirtualHost oder .htaccess (mod_headers aktiv)', 'in VirtualHost or .htaccess (mod_headers enabled)'],
+    ['Node/Express – am einfachsten mit helmet: npm i helmet', 'Node/Express – easiest with helmet: npm i helmet'], ['Timer prüfen:', 'Check the timer:'],
+    ['Caddy holt und erneuert Zertifikate automatisch:', 'Caddy obtains and renews certificates automatically:'], ['versteckte Dateien und SourceMaps sperren', 'block hidden files and source maps'],
+    ['webpack.config.js (Produktion)', 'webpack.config.js (production)'], ['verwaisten Eintrag entfernen', 'remove the orphaned record'],
+    ['shop.example.com.  CNAME  alt-shop.herokuapp.com.   <- löschen', 'shop.example.com.  CNAME  alt-shop.herokuapp.com.   <- delete'], ['nicht 403 – verrät nichts über Existenz', 'not 403 – reveals nothing about existence'],
+    ['Passwörter', 'Passwords'], ['Verschlüsselung', 'Encryption'], ['oder: const safe = Object.assign(Object.create(null), src);', 'or: const safe = Object.assign(Object.create(null), src);'],
+    ['Eingabe getrennt, nicht im System-Prompt', 'input kept separate, not in the system prompt'], ['Ausgabe nur als Text anzeigen', 'show output as text only'], ['statt innerHTML', 'instead of innerHTML'],
+    ['Ollama nur lokal', 'Ollama local only'], ['aus der Historie entfernen', 'remove from the history'], ['statt im Code:', 'instead of in the code:'], ['aus .env / Secret-Manager', 'from .env / secret manager'],
+    ['statt im Code', 'instead of in the code'], ['Produktion', 'production'], ['nur lokal', 'local only'],
+  ];
+  for (const [de, en] of CODE_COMMENTS) exact.set(norm(de), en);
   for (const [de, en] of [['Zwei', 'Two'], ['Drei', 'Three'], ['Vier', 'Four'], ['Fünf', 'Five'], ['Sechs', 'Six']]) exact.set(de, en);
   for (const [de, en] of EXTRA) addTemplate(de, en, 1);
   for (const [de, en] of PAIRS || []) {
@@ -103,6 +116,19 @@
   // Leerzeichen am Rand erhalten (eingesetzte Teilsaetze wie " Er startet …")
   const withEdges = (input, core) => /^\s*/.exec(input)[0] + core + /\s*$/.exec(input)[0];
 
+  // Kommentarzeilen in Code uebersetzen: ganze Kommentarzeilen ("# …", "// …", "-- …", "; …") und
+  // Kommentare am Zeilenende ("code  // …"). Code selbst bleibt unveraendert.
+  const LETTERS = /[A-Za-zÄÖÜäöüß]{2}/;
+  function translateCode(code) {
+    if (typeof code !== 'string' || !LETTERS.test(code)) return code;
+    return code.split('\n').map((line) => {
+      let m = /^(\s*(?:\/\/+|#+|--|;+|\/\*+|\*|<!--)\s?)(.*?)(\s*(?:\*\/|-->)?\s*)$/.exec(line);
+      if (m && m[2] && LETTERS.test(m[2]) && !/^!/.test(m[2])) { const t = translate(m[2]); return t !== m[2] ? m[1] + t + m[3] : line; }
+      m = /^(.*?\S)(\s+(?:\/\/|#)\s?)([^'"`]*?)(\s*)$/.exec(line);
+      if (m && LETTERS.test(m[3])) { const t = translate(m[3]); if (t !== m[3]) return m[1] + m[2] + t + m[4]; }
+      return line;
+    }).join('\n');
+  }
   const FIELDS = ['title', 'description', 'impact', 'remediation', 'explanation', 'reachability'];
   function localizeFinding(f) {
     if (!f || typeof f !== 'object') return f;
@@ -111,12 +137,14 @@
     if (Array.isArray(o.steps)) o.steps = o.steps.map((x) => translate(x));
     if (o.validation && typeof o.validation.reason === 'string') o.validation = { ...o.validation, reason: translate(o.validation.reason) };
     if (Array.isArray(o.links)) o.links = o.links.map((l) => (l && typeof l.label === 'string' ? { ...l, label: translate(l.label) } : l));
-    if (o.versionPatch) o.versionPatch = { ...o.versionPatch, title: translate(o.versionPatch.title), note: translate(o.versionPatch.note) };
+    if (o.versionPatch) o.versionPatch = { ...o.versionPatch, title: translate(o.versionPatch.title), note: translate(o.versionPatch.note), command: translateCode(o.versionPatch.command), manifest: translateCode(o.versionPatch.manifest) };
+    if (o.snippets && typeof o.snippets === 'object') o.snippets = Object.fromEntries(Object.entries(o.snippets).map(([k, v]) => [k, translateCode(v)]));
+    if (typeof o.patch === 'string') o.patch = translateCode(o.patch);
     return o;
   }
   function localizeResult(r) {
     if (!r || typeof r !== 'object') return r;
     return { ...r, findings: (r.findings || []).map(localizeFinding), errors: Array.isArray(r.errors) ? r.errors.map((e) => translate(e)) : r.errors };
   }
-  return { translate, localizeFinding, localizeResult, size: () => exact.size + templates.length };
+  return { translate, translateCode, localizeFinding, localizeResult, size: () => exact.size + templates.length };
 });

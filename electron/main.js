@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -231,7 +231,8 @@ const reportEnglish = () => loadConfig().lang !== 'de';
 const reportResult = () => (lastResult && reportEnglish() ? findingsI18n.localizeResult(lastResult) : lastResult);
 const htmlReport = () => { const h = report.toHtml(reportResult(), reportOpts()); return reportEnglish() ? reportEn.localizeReportHtml(h) : h; };
 const mdReport = () => { const m = report.toMarkdown(reportResult(), reportOpts()); return reportEnglish() ? reportEn.localizeReportMd(m) : m; };
-const reportOpts = () => { const c = loadConfig(); return { targets: lastTargets, company: c.reportCompany || '', logoDataUrl: c.reportLogo || '' }; };
+const brandOpts = (c) => ({ accent: c.reportAccent || '', coverText: c.reportCoverText || '', footerText: c.reportFooterText || '', frameworks: Array.isArray(c.reportFrameworks) && c.reportFrameworks.length ? c.reportFrameworks : undefined });
+const reportOpts = () => { const c = loadConfig(); return { targets: lastTargets, company: c.reportCompany || '', logoDataUrl: c.reportLogo || '', ...brandOpts(c) }; };
 let orchestrator = null;
 let api = null;
 
@@ -271,13 +272,18 @@ function executiveHtml() {
   const c = loadConfig();
   const st = orchestrator.stats();
   const trend = st.trend || [];
-  const h = report.toExecutive(reportResult(), { logoDataUrl: c.reportLogo || '', company: c.reportCompany || '', posture: st.posture, trend });
+  const h = report.toExecutive(reportResult(), { logoDataUrl: c.reportLogo || '', company: c.reportCompany || '', posture: st.posture, trend, ...brandOpts(c) });
   return reportEnglish() ? reportEn.localizeReportHtml(h) : h;
 }
 
 async function saveReportPdf(outPath, kind) {
   const html = kind === 'exec' ? executiveHtml() : htmlReport();
+  fs.writeFileSync(outPath, await renderPdf(html, kind !== 'exec'));
+}
+// HTML in einem unsichtbaren Fenster drucken -> PDF-Puffer (mit Fusszeile und Seitenzahl)
+async function renderPdf(html, withFooter = true) {
   const en = reportEnglish();
+  const foot = String(loadConfig().reportFooterText || '').trim().slice(0, 200).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
   const tmp = path.join(app.getPath('temp'), `vigil-report-${Date.now()}.html`);
   fs.writeFileSync(tmp, html, 'utf8');
   const w = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } });
@@ -285,24 +291,91 @@ async function saveReportPdf(outPath, kind) {
     await w.loadFile(tmp);
     // Fusszeile mit Seitenzahl
     const data = await w.webContents.printToPDF({
-      printBackground: true, pageSize: 'A4', preferCSSPageSize: true, displayHeaderFooter: kind !== 'exec',
+      printBackground: true, pageSize: 'A4', preferCSSPageSize: true, displayHeaderFooter: withFooter,
       headerTemplate: '<div></div>',
-      footerTemplate: '<div style="width:100%;font:8.5px Segoe UI,sans-serif;color:#94a3b8;padding:0 14mm;display:flex;justify-content:space-between"><span>Vigil · ' + (en ? 'Security report' : 'Sicherheitsbericht') + '</span><span>' + (en ? 'Page' : 'Seite') + ' <span class="pageNumber"></span> ' + (en ? 'of' : 'von') + ' <span class="totalPages"></span></span></div>',
+      footerTemplate: '<div style="width:100%;font:8.5px Segoe UI,sans-serif;color:#94a3b8;padding:0 14mm;display:flex;justify-content:space-between"><span>Vigil · ' + (en ? 'Security report' : 'Sicherheitsbericht') + (foot ? ' · ' + foot : '') + '</span><span>' + (en ? 'Page' : 'Seite') + ' <span class="pageNumber"></span> ' + (en ? 'of' : 'von') + ' <span class="totalPages"></span></span></div>',
     });
-    fs.writeFileSync(outPath, data);
+    return data;
   } finally { try { w.destroy(); } catch { /* egal */ } try { fs.unlinkSync(tmp); } catch { /* egal */ } }
 }
 
 // Gespeichertes Ergebnis (Verlauf) mit dem aktuellen Status aus dem Befund-Speicher abgleichen.
 function refreshStatuses(result) {
   if (!result || !Array.isArray(result.findings) || !orchestrator) return result;
-  const current = new Map(orchestrator.listFindings({ limit: 5000 }).map((f) => [f.id, f.status]));
+  const current = new Map(orchestrator.listFindings({ limit: 5000 }).map((f) => [f.id, f]));
   for (const f of result.findings) {
     if (!f.id || !current.has(f.id)) continue;
-    f.status = current.get(f.id);
+    const rec = current.get(f.id);
+    f.status = rec.status;
     f.suppressed = f.status === 'FALSE_POSITIVE' || f.status === 'ACCEPTED_RISK';
+    if (rec.statusNote) f.statusNote = rec.statusNote; else delete f.statusNote;
+    if (rec.statusChangedAt) f.statusChangedAt = rec.statusChangedAt;
+    if (rec.note) f.note = rec.note; else delete f.note;
   }
   return result;
+}
+
+// --- Signierte Berichte: Ed25519-Schluessel lokal, privater Teil nur verschluesselt (safeStorage) ---
+const signing = require('../src/core/signing');
+function signingKeys(create = true) {
+  const c = loadConfig();
+  const priv = dec(c.signingKeyEnc || '');
+  if (priv && c.signingPub) return { privateKeyPem: priv, publicKeyPem: c.signingPub };
+  if (!create) return null;
+  if (!safeStorage.isEncryptionAvailable()) throw new Error(reportEnglish() ? 'Encryption is not available on this system – the signing key cannot be stored safely.' : 'Verschlüsselung ist auf diesem System nicht verfügbar – der Signaturschlüssel kann nicht sicher gespeichert werden.');
+  const k = signing.generateKeyPair();
+  c.signingKeyEnc = enc(k.privateKeyPem); c.signingPub = k.publicKeyPem;
+  saveConfig(c);
+  return k;
+}
+function signNextTo(filePath, data) {
+  const keys = signingKeys(true);
+  const sigPath = filePath + '.sig.json';
+  fs.writeFileSync(sigPath, signing.signFile(path.basename(filePath), data, keys), 'utf8');
+  return sigPath;
+}
+function verifyPath(file) {
+  const own = loadConfig().signingPub || '';
+  const buf = fs.readFileSync(file);
+  if (/\.zip$/i.test(file)) return { kind: 'package', ...signing.verifyAuditPackage(buf, own) };
+  let sigPath = file, dataPath = file.replace(/\.sig\.json$/i, '');
+  if (!/\.sig\.json$/i.test(file)) { sigPath = file + '.sig.json'; dataPath = file; }
+  if (!fs.existsSync(sigPath)) return { kind: 'file', ok: false, signed: false, errors: [reportEnglish() ? 'No signature file (.sig.json) found next to the report.' : 'Keine Signatur-Datei (.sig.json) neben dem Bericht gefunden.'], files: [] };
+  let doc = null;
+  try { doc = JSON.parse(fs.readFileSync(sigPath, 'utf8')); } catch { /* unten als ungueltig gemeldet */ }
+  const files = new Map();
+  try { if (doc && doc.manifest && doc.manifest.files && doc.manifest.files[0]) files.set(doc.manifest.files[0].name, fs.readFileSync(dataPath)); } catch { /* Datei fehlt */ }
+  return { kind: 'file', signed: true, ...signing.verifySigned(doc, files, own) };
+}
+
+// --- Windows-Taskleiste: Fortschritt und Warnsymbol bei kritischen Befunden ---
+let taskbarFrac = 0;
+function taskbar(frac, mode) {
+  if (!win || win.isDestroyed()) return;
+  try { if (frac == null) win.setProgressBar(-1); else { taskbarFrac = frac; win.setProgressBar(frac, { mode: mode || 'normal' }); } } catch { /* nicht unterstuetzt */ }
+}
+let overlayImg = null;
+function overlayIcon() {
+  if (overlayImg) return overlayImg;
+  // 16x16 BGRA: roter Kreis mit weissem Ausrufezeichen
+  const N = 16, buf = Buffer.alloc(N * N * 4);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const d = Math.hypot(x - 7.5, y - 7.5), i = (y * N + x) * 4;
+    if (d > 7.6) continue;
+    const mark = x >= 7 && x <= 8 && ((y >= 3 && y <= 9) || (y >= 11 && y <= 12));
+    const a = d > 7 ? Math.round(255 * (7.6 - d) / 0.6) : 255;
+    if (mark) { buf[i] = 255; buf[i + 1] = 255; buf[i + 2] = 255; } else { buf[i] = 0x3c; buf[i + 1] = 0x12; buf[i + 2] = 0xdc; }
+    buf[i + 3] = a;
+  }
+  overlayImg = nativeImage.createFromBitmap(buf, { width: N, height: N });
+  return overlayImg;
+}
+function updateOverlay() {
+  if (!win || win.isDestroyed() || !orchestrator) return;
+  try {
+    const crit = (orchestrator.stats().open || {}).critical || 0;
+    win.setOverlayIcon(crit ? overlayIcon() : null, crit ? (reportEnglish() ? `${crit} critical findings` : `${crit} kritische Befunde`) : '');
+  } catch { /* nicht unterstuetzt */ }
 }
 
 const ENV_KEY = {
@@ -512,7 +585,8 @@ app.whenReady().then(() => {
       return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), webCrawl: c.webCrawl !== false, allowlist: c.allowlist || [], malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4, secretLiveCheck: c.secretLiveCheck === true, yara: { rulesDir: YARA_DIR() }, osvOffline: c.osvOffline ? osvOffline.createOfflineQuery(OSV_DIR()) : null, systemSettings: systemSettingsFor(c) };
     },
   });
-  api = createApi({ orchestrator, getConfig: loadConfig, enforceScope });
+  // Browser-Erweiterung: Adresse nur vormerken – das Fenster fragt nach, bevor sie in die Pruefliste kommt
+  api = createApi({ orchestrator, getConfig: loadConfig, enforceScope, onInbox: (url) => { try { if (win && !win.isDestroyed()) { win.webContents.send('inbox:url', url); if (win.isMinimized()) win.restore(); win.focus(); } } catch { /* Fenster weg */ } } });
   applyApi(cfg);
   intel = loadIntel(INTEL_PATH());
   // Nach der Feed-Aktualisierung: neue CVEs fuer gespeicherte SBOMs, BSI-Hinweise, CT-Logs, OSV-Vorrat
@@ -521,6 +595,7 @@ app.whenReady().then(() => {
   setInterval(background, 6 * 60 * 60 * 1000);
   applyUsbWatch(cfg);
   createWindow();
+  win.webContents.once('did-finish-load', updateOverlay);
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
@@ -540,7 +615,7 @@ ipcMain.handle('config:save', async (_e, cfg) => {
   // MalwareBazaar-Schluessel, API-Token). Die Kopie im Fenster kann veraltet sein – immer die
   // gespeicherte Fassung behalten, sonst wuerde "Speichern" frisch eingetragene Zugaenge loeschen.
   cfg.allowlist = normalizeAllowlist(cfg.allowlist);
-  for (const k of ['apiToken', 'webLogins', 'apiMatrix', 'malwareBazaarKeyEnc', 'appLock', 'systemsCfg']) { if (prev[k] !== undefined) cfg[k] = prev[k]; else delete cfg[k]; }
+  for (const k of ['apiToken', 'webLogins', 'apiMatrix', 'malwareBazaarKeyEnc', 'appLock', 'systemsCfg', 'signingKeyEnc', 'signingPub']) { if (prev[k] !== undefined) cfg[k] = prev[k]; else delete cfg[k]; }
   const ok = saveConfig(cfg);
   applyProxySafe(cfg);
   if (prev.apiEnabled !== !!cfg.apiEnabled || prev.apiPort !== cfg.apiPort) await applyApi(loadConfig());
@@ -605,9 +680,12 @@ ipcMain.handle('audit:run', async (e, payload) => {
   if (over && !v.data.budgetConfirmed) return { ok: false, budgetExceeded: true, budget: over, error: budgetMsg(over) };
   const job = orchestrator.enqueue({
     targets: scope.targets, providerId, origin: 'app',
-    onProgress: (p) => { clock.tick(p); try { e.sender.send('audit:progress', p); } catch { /* Fenster weg */ } },
+    onProgress: (p) => { clock.tick(p); if (!orchestrator.isPaused()) taskbar(p.total ? Math.min(1, (p.done || 0) / p.total) : 2, p.total ? 'normal' : 'indeterminate'); try { e.sender.send('audit:progress', p); } catch { /* Fenster weg */ } },
   });
+  taskbar(2, 'indeterminate');
   const out = await job.done;
+  taskbar(null); updateOverlay();
+  try { if (win && !win.isDestroyed() && !win.isFocused()) win.flashFrame(true); } catch { /* egal */ }
   if (out.ok) {
     lastResult = out.result; lastTargets = scope.targets; recordHistory(out.result, scope.targets);
     const meta = out.result.meta || {};
@@ -815,6 +893,9 @@ ipcMain.handle('sample:demo', async () => {
 ipcMain.handle('aicache:info', () => ({ entries: aiCache().size() }));
 ipcMain.handle('aicache:clear', () => { aiCache().clear(); return { ok: true }; });
 ipcMain.handle('audit:cancel', () => ({ ok: orchestrator.cancel() }));
+// Pause/Fortsetzen: der Lauf haelt am naechsten Haltepunkt (zwischen Phasen bzw. KI-Bloecken)
+ipcMain.handle('audit:pause', () => { const ok = orchestrator.pause(); if (ok) taskbar(taskbarFrac || 0.01, 'paused'); return { ok, paused: orchestrator.isPaused() }; });
+ipcMain.handle('audit:resume', () => { const ok = orchestrator.resume(); if (ok) taskbar(taskbarFrac || 2, taskbarFrac ? 'normal' : 'indeterminate'); return { ok, paused: orchestrator.isPaused() }; });
 
 // Kosten-/Token-Vorschau: aktueller Modus + Vergleich mit dem jeweils anderen Modus.
 ipcMain.handle('audit:estimate', async (_e, payload) => {
@@ -836,15 +917,24 @@ ipcMain.handle('finding:setStatus', (_e, id, body) => {
   if (!v.ok) return { ok: false, error: v.error };
   const r = orchestrator.setStatus(String(id || ''), v.data.status, v.data.note, { expiresInDays: v.data.expiresInDays });
   if (r.ok && lastResult) refreshStatuses(lastResult);
+  if (r.ok) updateOverlay();
   return r.ok ? { ok: true, status: r.finding.status, acceptedUntil: r.finding.acceptedUntil || null } : r;
+});
+ipcMain.handle('finding:setNote', (_e, id, note) => {
+  if (!idOk(id)) return { ok: false, error: 'Ungültige ID.' };
+  const r = orchestrator.setNote(id, typeof note === 'string' ? note : '');
+  if (r.ok && lastResult) refreshStatuses(lastResult);
+  return r;
 });
 ipcMain.handle('dashboard:get', (_e, filter) => ({ stats: orchestrator.stats(), findings: orchestrator.listFindings(filter || {}) }));
 ipcMain.handle('store:clear', () => { orchestrator.clear(); return { ok: true }; });
 // Loeschen in der Uebersicht – IDs sind Hex-Fingerabdruecke bzw. UUIDs, alles andere wird verworfen
 const idOk = (s) => typeof s === 'string' && /^[\w-]{6,80}$/.test(s);
-ipcMain.handle('findings:delete', (_e, ids) => orchestrator.deleteFindings((Array.isArray(ids) ? ids : []).filter(idOk).slice(0, 5000)));
-ipcMain.handle('target:delete', (_e, id) => (idOk(id) ? orchestrator.deleteTarget(id) : { ok: false, error: 'Ungültige ID.' }));
-ipcMain.handle('run:delete', (_e, id) => (idOk(id) ? orchestrator.deleteRun(id) : { ok: false, error: 'Ungültige ID.' }));
+// Loeschen mit Rueckgaengig: Eintraege liegen ~10 s im Papierkorb des Speichers (undo:restore)
+ipcMain.handle('findings:delete', (_e, ids) => { const r = orchestrator.softDeleteFindings((Array.isArray(ids) ? ids : []).filter(idOk).slice(0, 5000)); updateOverlay(); return r; });
+ipcMain.handle('target:delete', (_e, id) => { const r = idOk(id) ? orchestrator.softDeleteTarget(id) : { ok: false, error: 'Ungültige ID.' }; updateOverlay(); return r; });
+ipcMain.handle('run:delete', (_e, id) => (idOk(id) ? orchestrator.softDeleteRun(id) : { ok: false, error: 'Ungültige ID.' }));
+ipcMain.handle('undo:restore', (_e, token) => { const r = /^[a-f0-9]{8,40}$/.test(String(token || '')) ? orchestrator.undo(token) : { ok: false, error: 'Ungültiges Token.' }; updateOverlay(); return r; });
 // Leer = alle Ziele; eine ungueltige ID wird abgelehnt statt still auf "alle" auszuweichen
 ipcMain.handle('findings:purgeResolved', (_e, targetId) => (!targetId ? orchestrator.purgeResolved('') : idOk(targetId) ? orchestrator.purgeResolved(targetId) : { ok: false, deleted: 0, error: 'Ungültige ID.' }));
 ipcMain.handle('api:info', () => { const c = loadConfig(); return { enabled: !!c.apiEnabled, port: c.apiPort, token: c.apiToken, running: !!(api && api.running()) }; });
@@ -984,6 +1074,32 @@ ipcMain.handle('history:open', (_e, id) => {
     return { ok: true, result };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+// Zwei Laeufe vergleichen: neu / behoben / unveraendert (aelterer Lauf zuerst)
+const compare = require('../src/core/compare');
+function loadCompare(idA, idB) {
+  const safe = (x) => String(x || '').replace(/[^a-z0-9]/gi, '');
+  const hist = loadHistory();
+  const ea = hist.find((h) => h.id === safe(idA)), eb = hist.find((h) => h.id === safe(idB));
+  if (!ea || !eb || ea.id === eb.id) throw new Error(reportEnglish() ? 'Please choose two different runs.' : 'Bitte zwei verschiedene Läufe wählen.');
+  const [older, newer] = Date.parse(ea.at) <= Date.parse(eb.at) ? [ea, eb] : [eb, ea];
+  const read = (e) => { const r = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR(), e.id + '.json'), 'utf8')); return reportEnglish() ? findingsI18n.localizeResult(r) : r; };
+  return { diff: compare.diffResults(read(older), read(newer)), a: { id: older.id, at: older.at, targets: older.targets || [] }, b: { id: newer.id, at: newer.at, targets: newer.targets || [] } };
+}
+ipcMain.handle('history:compare', (_e, idA, idB) => { try { return { ok: true, ...loadCompare(idA, idB) }; } catch (err) { return { ok: false, error: err.message }; } });
+ipcMain.handle('history:compareSave', async (_e, idA, idB, format) => {
+  let c;
+  try { c = loadCompare(idA, idB); } catch (err) { return { ok: false, error: err.message }; }
+  const ext = format === 'md' ? 'md' : format === 'pdf' ? 'pdf' : 'html';
+  const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('documents'), `vigil-${reportEnglish() ? 'comparison' : 'vergleich'}-${new Date().toISOString().slice(0, 10)}.${ext}`), filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+  if (r.canceled) return { ok: false, canceled: true };
+  const meta = { a: c.a, b: c.b, accent: loadConfig().reportAccent };
+  try {
+    if (ext === 'md') { const m = compare.toCompareMarkdown(c.diff, meta); fs.writeFileSync(r.filePath, reportEnglish() ? reportEn.localizeReportMd(m) : m, 'utf8'); }
+    else { let h = compare.toCompareHtml(c.diff, meta); if (reportEnglish()) h = reportEn.localizeReportHtml(h); if (ext === 'pdf') fs.writeFileSync(r.filePath, await renderPdf(h, false)); else fs.writeFileSync(r.filePath, h, 'utf8'); }
+    return { ok: true, path: r.filePath };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
 ipcMain.handle('history:clear', () => {
   try {
     for (const r of loadHistory()) { try { fs.unlinkSync(path.join(HISTORY_DIR(), r.id + '.json')); } catch { /* egal */ } }
@@ -994,6 +1110,46 @@ ipcMain.handle('history:clear', () => {
 
 // Namen der eingebauten Regeln (fuer „Regeln deaktivieren" in den Einstellungen).
 ipcMain.handle('meta:rules', () => ruleNames());
+
+// Signatur-Schluessel: Kennung und oeffentlicher Teil (der private Schluessel verlaesst den Main-Prozess nie)
+ipcMain.handle('signing:info', () => { const c = loadConfig(); let keyId = null; try { keyId = c.signingPub ? signing.keyIdOf(c.signingPub) : null; } catch { /* kaputt */ } return { hasKey: !!(c.signingKeyEnc && c.signingPub), keyId, encryption: safeStorage.isEncryptionAvailable() }; });
+ipcMain.handle('signing:create', () => { try { const k = signingKeys(true); return { ok: true, keyId: signing.keyIdOf(k.publicKeyPem) }; } catch (err) { return { ok: false, error: err.message }; } });
+ipcMain.handle('report:verify', async () => {
+  const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: reportEnglish() ? 'Report or audit package' : 'Bericht oder Audit-Paket', extensions: ['zip', 'json', 'html', 'pdf', 'md', 'docx', 'xlsx', 'csv', 'sarif', 'svg'] }, { name: '*', extensions: ['*'] }] });
+  if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true };
+  try { return { ...verifyPath(r.filePaths[0]), path: r.filePaths[0] }; } catch (err) { return { ok: false, errors: [err.message], files: [], path: r.filePaths[0] }; }
+});
+
+// Weitere Formate: Tabellen, Word, VEX, Abzeichen, Audit-Paket (Endung je Format)
+const EXT = { md: 'md', sarif: 'sarif', pdf: 'pdf', execpdf: 'pdf', json: 'json', csv: 'csv', xlsx: 'xlsx', docx: 'docx', openvex: 'openvex.json', cdxvex: 'cdx-vex.json', badge: 'svg', auditzip: 'zip' };
+const exportsFmt = require('../src/core/exports');
+function exportBuffer(format) {
+  const res = reportResult();
+  const lang = reportEnglish() ? 'en' : 'de';
+  const o = { ...reportOpts(), lang, title: lang === 'en' ? 'Security report' : 'Sicherheitsbericht' };
+  if (format === 'csv') return Buffer.from(exportsFmt.toCsv(res, o), 'utf8');
+  if (format === 'xlsx') return exportsFmt.toXlsx(res, o);
+  if (format === 'docx') return exportsFmt.toDocx(res, o);
+  if (format === 'openvex') return Buffer.from(exportsFmt.toOpenVex(res, o), 'utf8');
+  if (format === 'cdxvex') return Buffer.from(exportsFmt.toCycloneDxVex(res, o), 'utf8');
+  return null;
+}
+async function auditPackage() {
+  const res = reportResult();
+  const html = htmlReport();
+  const parts = [
+    { name: 'report.html', data: html },
+    { name: 'report.pdf', data: await renderPdf(html, true) },
+    { name: 'executive-summary.html', data: executiveHtml() },
+    { name: 'findings.json', data: report.toJson(res, orchestrator.stats()) },
+    { name: 'report.sarif', data: report.toSarif(res) },
+  ];
+  const sbom = (lastResult.meta && lastResult.meta.sbom) || [];
+  if (sbom.length) parts.push({ name: 'sbom.cdx.json', data: exportsFmt.toCycloneDxSbom(sbom) });
+  if ((res.findings || []).some((f) => f.status === 'FALSE_POSITIVE' || f.status === 'ACCEPTED_RISK')) parts.push({ name: 'vex.openvex.json', data: exportsFmt.toOpenVex(res, reportOpts()) });
+  const keys = loadConfig().signReports ? signingKeys(true) : null;
+  return signing.buildAuditPackage(parts, keys, { title: 'Vigil audit package' });
+}
 
 ipcMain.handle('report:save', async (_e, { format }) => {
   if (!lastResult) return { ok: false, error: 'Noch kein Ergebnis vorhanden.' };
@@ -1010,19 +1166,29 @@ ipcMain.handle('report:save', async (_e, { format }) => {
     catch (err) { return { ok: false, error: err.message }; }
   }
   const exec = format === 'exec' || format === 'execpdf';
-  const ext = format === 'md' ? 'md' : format === 'sarif' ? 'sarif' : format === 'pdf' || format === 'execpdf' ? 'pdf' : format === 'json' ? 'json' : 'html';
+  const ext = EXT[format] || 'html';
   const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
   const r = await dialog.showSaveDialog(win, {
     defaultPath: path.join(app.getPath('documents'), `vigil-${exec ? (reportEnglish() ? 'summary' : 'kurzbericht') : 'report'}-${stamp}.${ext}`),
-    filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+    filters: [{ name: ext.split('.').pop().toUpperCase(), extensions: [ext.split('.').pop()] }],
   });
   if (r.canceled) return { ok: false, canceled: true };
-  if (ext === 'pdf') {
-    try { await saveReportPdf(r.filePath, exec ? 'exec' : 'full'); return { ok: true, path: r.filePath }; }
-    catch (err) { return { ok: false, error: err.message }; }
-  }
-  const content = exec ? executiveHtml() : ext === 'md' ? mdReport()
-    : ext === 'sarif' ? report.toSarif(reportResult()) : ext === 'json' ? report.toJson(reportResult(), orchestrator.stats()) : htmlReport();
-  try { fs.writeFileSync(r.filePath, content, 'utf8'); return { ok: true, path: r.filePath }; }
-  catch (err) { return { ok: false, error: err.message }; }
+  const sign = !!loadConfig().signReports && format !== 'auditzip';
+  const done = (data) => { const out = { ok: true, path: r.filePath }; if (sign) out.signature = signNextTo(r.filePath, data); return out; };
+  try {
+    if (format === 'badge') {
+      const s = require('../src/core/reportdoc').stats((reportResult().findings || []).filter((f) => !f.suppressed && !['FALSE_POSITIVE', 'ACCEPTED_RISK', 'RESOLVED'].includes(f.status)));
+      const date = new Date(lastResult.meta && lastResult.meta.at || Date.now()).toISOString().slice(0, 10);
+      const svg = exportsFmt.badgeSvg({ grade: s.grade, date, label: reportEnglish() ? 'Vigil security' : 'Vigil Sicherheit' });
+      fs.writeFileSync(r.filePath, svg, 'utf8');
+      return { ...done(Buffer.from(svg, 'utf8')), markdown: exportsFmt.badgeMarkdown(path.basename(r.filePath), { grade: s.grade, date, label: reportEnglish() ? 'Vigil security' : 'Vigil Sicherheit' }) };
+    }
+    if (format === 'auditzip') { const buf = await auditPackage(); fs.writeFileSync(r.filePath, buf); return { ok: true, path: r.filePath, signed: !!loadConfig().signReports }; }
+    if (ext === 'pdf') { await saveReportPdf(r.filePath, exec ? 'exec' : 'full'); return done(fs.readFileSync(r.filePath)); }
+    const bin = exportBuffer(format);
+    const data = bin || Buffer.from(exec ? executiveHtml() : ext === 'md' ? mdReport()
+      : ext === 'sarif' ? report.toSarif(reportResult()) : ext === 'json' ? report.toJson(reportResult(), orchestrator.stats()) : htmlReport(), 'utf8');
+    fs.writeFileSync(r.filePath, data);
+    return done(data);
+  } catch (err) { return { ok: false, error: err.message }; }
 });

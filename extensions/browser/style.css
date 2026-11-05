@@ -1,0 +1,16 @@
+:root { --bg: #111824; --panel: #161f2d; --text: #d6d9e0; --muted: #8b919d; --accent: #f2b23a; --ink: #1a1305; --ok: #3ecf8e; --err: #ff6b81; color-scheme: dark; }
+@media (prefers-color-scheme: light) { :root { --bg: #ffffff; --panel: #f7f8fa; --text: #2a2f3a; --muted: #626a78; --accent: #e8a21f; --ok: #0f9a62; --err: #dc1f43; color-scheme: light; } }
+body { margin: 0; padding: 14px 16px; width: 320px; font: 13px/1.45 "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
+body.options { width: auto; max-width: 420px; }
+header { display: flex; align-items: center; gap: 8px; font-size: 15px; margin-bottom: 8px; }
+.logo { width: 18px; height: 18px; background: var(--accent); clip-path: polygon(0 0, 30% 0, 50% 55%, 70% 0, 100% 0, 100% 50%, 50% 100%, 0 50%); }
+.muted { color: var(--muted); margin: 6px 0 2px; } .small { font-size: 12px; }
+.url { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; word-break: break-all; background: var(--panel); border-radius: 6px; padding: 6px 8px; margin: 0 0 10px; }
+button { width: 100%; padding: 8px 10px; font: inherit; font-weight: 600; border: 0; border-radius: 8px; background: var(--accent); color: var(--ink); cursor: pointer; }
+button:disabled { opacity: .55; cursor: default; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+label { display: block; margin: 10px 0 4px; font-weight: 600; }
+input { width: 100%; box-sizing: border-box; padding: 6px 8px; font: inherit; border-radius: 6px; border: 1px solid var(--muted); background: var(--panel); color: var(--text); margin-bottom: 4px; }
+.options button { margin-top: 12px; width: auto; padding: 7px 16px; }
+#status.ok { color: var(--ok); } #status.err { color: var(--err); }
+a { color: var(--accent); }

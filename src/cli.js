@@ -4,6 +4,7 @@
 // Beispiel:
 //   node src/cli.js --provider ollama --model qwen2.5-coder ./mein-ordner ./app.jar
 //   node src/cli.js --provider anthropic --model claude-sonnet-4-5 --out report.html ./src
+//   node src/cli.js --format gitlab --out gl-sast-report.json ./src   (auch: junit, checkstyle, csv, sarif, md, json, html)
 
 require('dotenv').config();
 const fs = require('fs');
@@ -37,6 +38,9 @@ function parseArgs(argv) {
   return opts;
 }
 
+// Ausgabeformate fuer --format (CI: GitLab SAST, JUnit, Checkstyle)
+const FORMATS = ['html', 'md', 'json', 'sarif', 'gitlab', 'junit', 'checkstyle', 'csv'];
+
 function keyFor(provider) {
   return {
     anthropic: process.env.ANTHROPIC_API_KEY,
@@ -48,8 +52,9 @@ function keyFor(provider) {
 
 (async () => {
   const o = parseArgs(process.argv.slice(2));
+  if (o.format && !FORMATS.includes(o.format)) { console.error(`Unbekanntes Format: ${o.format} (erlaubt: ${FORMATS.join(', ')})`); process.exit(1); }
   if (!o.targets.length) {
-    console.error('Nutzung: node src/cli.js [--provider ollama|anthropic|openai|gemini|compat] [--model …] [--out report.html] [--sbom sbom.cdx.json|sbom.spdx.json] [--live-secrets] <pfad|--url URL|--endpoint HOST> …');
+    console.error('Nutzung: node src/cli.js [--provider ollama|anthropic|openai|gemini|compat] [--model …] [--out report.html] [--format html|md|json|sarif|gitlab|junit|checkstyle|csv] [--sbom sbom.cdx.json|sbom.spdx.json] [--live-secrets] <pfad|--url URL|--endpoint HOST> …');
     process.exit(1);
   }
   const config = {
@@ -80,12 +85,15 @@ function keyFor(provider) {
 
   if (o.out) {
     const fmt = o.format
-      || (o.out.endsWith('.md') ? 'md' : o.out.endsWith('.sarif') ? 'sarif' : o.out.endsWith('.json') ? 'json' : 'html');
+      || (o.out.endsWith('.md') ? 'md' : o.out.endsWith('.sarif') ? 'sarif' : o.out.endsWith('.json') ? 'json' : o.out.endsWith('.csv') ? 'csv' : /junit.*\.xml$/i.test(o.out) ? 'junit' : /checkstyle.*\.xml$/i.test(o.out) ? 'checkstyle' : 'html');
     // Standard Englisch: Befundtexte und Berichtsvorlage uebersetzen (--lang de fuer Deutsch)
     const en = o.lang !== 'de';
     const res = en ? require('./core/findings-i18n').localizeResult(result) : result;
     const R = require('./core/report-en');
-    const out = fmt === 'md' ? (en ? R.localizeReportMd(report.toMarkdown(res)) : report.toMarkdown(res))
+    const X = require('./core/exports');
+    const ver = require('../package.json').version;
+    const out = fmt === 'gitlab' ? X.toGitlabSast(res, ver) : fmt === 'junit' ? X.toJunit(res) : fmt === 'checkstyle' ? X.toCheckstyle(res) : fmt === 'csv' ? X.toCsv(res, { lang: o.lang })
+      : fmt === 'md' ? (en ? R.localizeReportMd(report.toMarkdown(res)) : report.toMarkdown(res))
       : fmt === 'sarif' ? report.toSarif(res)
         : fmt === 'json' ? JSON.stringify(res, null, 2)
           : en ? R.localizeReportHtml(report.toHtml(res)) : report.toHtml(res);

@@ -35,7 +35,7 @@ function complianceHtml(findings) {
 }
 
 // Bericht fuer die Geschaeftsfuehrung: eine Seite, Klartext, optional mit eigenem Logo.
-// opts: { logoDataUrl, company, posture (0–100), trend: [{at, open}] }
+// opts: { logoDataUrl, company, posture (0–100), trend: [{at, open}], accent, coverText, footerText, frameworks }
 function toExecutive(result, opts = {}) {
   const findings = (result.findings || []).filter((f) => !f.suppressed);
   const c = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
@@ -46,7 +46,8 @@ function toExecutive(result, opts = {}) {
     : c.high ? `Keine kritischen Schwachstellen, aber ${c.high} mit hohem Risiko.` : 'Keine kritischen oder hohen Risiken gefunden.';
   const top = findings.filter((f) => ['critical', 'high'].includes(f.severity)).slice(0, 5);
   const plain = (f) => String(f.title).replace(/^(Möglicher )?Angriffsweg:\s*/, '').replace(/\s*\(.*?\)\s*$/, '');
-  const comp = complianceReport(findings).map((k) => ({ name: k.name, fail: k.controls.filter((x) => x.status === 'fail').length, warn: k.controls.filter((x) => x.status === 'warn').length, total: k.controls.length }));
+  const b = require('./reportdoc').branding(opts);
+  const comp = complianceReport(findings, opts.frameworks).map((k) => ({ name: k.name, fail: k.controls.filter((x) => x.status === 'fail').length, warn: k.controls.filter((x) => x.status === 'warn').length, total: k.controls.length }));
   const trend = (opts.trend || []).slice(-12);
   const max = Math.max(1, ...trend.map((t) => t.open));
   const spark = trend.length > 1 ? `<svg viewBox="0 0 240 50" width="240" height="50" aria-label="Offene Befunde im Verlauf"><polyline fill="none" stroke="#9a5b00" stroke-width="2" points="${trend.map((t, i) => `${(i / (trend.length - 1)) * 236 + 2},${48 - (t.open / max) * 44}`).join(' ')}"/></svg>` : '';
@@ -54,7 +55,8 @@ function toExecutive(result, opts = {}) {
 <style>
   @page { size: A4; margin: 16mm; }
   body { font: 14px/1.55 system-ui, Segoe UI, sans-serif; color: #15181d; margin: 0; padding: 28px 34px; max-width: 820px; }
-  header { display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #15181d; padding-bottom: 12px; }
+  header { display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid ${b.accent}; padding-bottom: 12px; }
+  .cover-text { margin: 12px 0 0; white-space: pre-line; } h2 { border-left: 4px solid ${b.accent}; padding-left: 8px; }
   header img { max-height: 48px; max-width: 200px; }
   h1 { font-size: 22px; margin: 0; } h2 { font-size: 15px; margin: 22px 0 8px; text-transform: uppercase; letter-spacing: .05em; color: #555; }
   .grade { display: flex; gap: 22px; align-items: center; margin-top: 18px; }
@@ -64,6 +66,7 @@ function toExecutive(result, opts = {}) {
   .muted { color: #666; font-size: 12px; } footer { margin-top: 26px; color: #777; font-size: 11.5px; }
 </style></head><body>
 <header><div><h1>Sicherheitslage – Kurzbericht</h1><div class="muted">${esc(opts.company || '')}${opts.company ? ' · ' : ''}Stand ${esc(new Date(result.meta?.at || Date.now()).toLocaleDateString('de-DE'))}</div></div>${opts.logoDataUrl && /^data:image\/(png|jpe?g|svg\+xml|webp);base64,/.test(opts.logoDataUrl) ? `<img src="${esc(opts.logoDataUrl)}" alt="Logo">` : ''}</header>
+${b.coverText ? `<p class="cover-text">${esc(b.coverText)}</p>` : ''}
 <div class="grade"><b>${grade}</b><div><div style="font-size:18px;font-weight:700">Sicherheitswert ${posture} von 100</div><p>${esc(lage)}</p>
 <div class="counts"><span><i style="color:#b3123c">${c.critical}</i> kritisch</span><span><i style="color:#d9480f">${c.high}</i> hoch</span><span><i style="color:#c48a00">${c.medium}</i> mittel</span><span><i>${c.low + c.info}</i> gering</span></div></div>${spark ? `<div>${spark}<div class="muted">offene Befunde, letzte ${trend.length} Prüfungen</div></div>` : ''}</div>
 <h2>Die wichtigsten Risiken</h2>
@@ -72,7 +75,7 @@ ${top.length ? `<ol>${top.map((f) => `<li><b>${esc(plain(f))}</b><br><span class
 <ol>${top.length ? top.slice(0, 3).map((f) => `<li>${esc((f.steps && f.steps[0]) || f.remediation || 'Beheben lassen')}</li>`).join('') : '<li>Regelmäßig weiter prüfen (z. B. monatlich) und neue Befunde zeitnah beheben.</li>'}${c.medium ? `<li>${c.medium} mittlere Befunde im normalen Entwicklungsablauf abarbeiten.</li>` : ''}</ol>
 <h2>Normen auf einen Blick</h2>
 <table>${comp.map((k) => `<tr><td>${esc(k.name)}</td><td>${k.fail ? `<b style="color:#b3123c">${k.fail} Anforderung(en) mit dringenden Befunden</b>` : k.warn ? `<span style="color:#c48a00">${k.warn} Anforderung(en) mit offenen Befunden</span>` : '<span style="color:#2b7a3b">keine offenen Befunde</span>'}</td></tr>`).join('')}</table>
-<footer>Erstellt mit Vigil – zerstörungsfreie Prüfung eigener bzw. freigegebener Systeme. Technische Details im vollständigen Bericht.</footer>
+<footer>Erstellt mit Vigil – zerstörungsfreie Prüfung eigener bzw. freigegebener Systeme. Technische Details im vollständigen Bericht.${b.footerText ? `<br>${esc(b.footerText)}` : ''}</footer>
 </body></html>`;
 }
 

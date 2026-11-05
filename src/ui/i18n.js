@@ -264,6 +264,47 @@
     'Kein Reproduzierbarkeits-Protokoll (in den Einstellungen unter „Belastbarkeit & Datenschutz“ einschaltbar).': 'No reproducibility log (can be enabled in the settings under “Reliability & privacy”).',
     // Lokale KI: Hardware
     'passt zu deinem PC': 'fits your PC',
+
+    // Exporte, Signatur, Branding
+    'vollständiger Bericht zum Weiterbearbeiten': 'full report for further editing', 'Befunde als Tabelle mit Filter': 'findings as a table with filters', 'Befunde für jede Tabellenkalkulation': 'findings for any spreadsheet',
+    'Audit-Paket (ZIP)': 'Audit package (ZIP)', 'HTML, PDF, Rohdaten, SBOM und SHA-256-Manifest': 'HTML, PDF, raw data, SBOM and SHA-256 manifest', 'Fehlalarme und akzeptierte Risiken mit Begründung': 'false positives and accepted risks with justification',
+    'dasselbe im CycloneDX-Format': 'the same in CycloneDX format', 'Abzeichen (SVG)': 'Badge (SVG)', 'Note und Datum für die README, Markdown wird kopiert': 'grade and date for the README, Markdown is copied',
+    'Bericht prüfen …': 'Verify report …', 'Signatur und Prüfsummen eines Exports kontrollieren': 'check signature and checksums of an export', 'Bericht prüfen': 'Verify report',
+    'Kontrolliert Signatur und Prüfsummen eines Berichts oder Audit-Pakets.': 'Checks signature and checksums of a report or audit package.', 'Datei wählen …': 'Choose file …',
+    'Berichte & Branding': 'Reports & branding', 'Gilt für PDF, HTML, Word und den Kurzbericht für die Geschäftsführung. Firmenname und Logo erscheinen im Kopf.': 'Applies to PDF, HTML, Word and the executive summary. Company name and logo appear in the header.',
+    'Akzentfarbe': 'Accent colour', 'Für Überschriften, Deckblatt-Leiste und Kurzbericht.': 'For headings, the cover bar and the executive summary.', 'Standard': 'Default',
+    'Text auf dem Deckblatt': 'Cover text', 'Zum Beispiel Auftrag, Prüfzeitraum oder Ansprechpartner.': 'For example engagement, test period or contact person.', 'z. B. Prüfung im Auftrag von …': 'e.g. Audit on behalf of …',
+    'Fußzeile': 'Footer', 'Erscheint unten auf jeder Seite, z. B. „Vertraulich – nur intern“.': 'Appears at the bottom of every page, e.g. “Confidential – internal only”.', 'z. B. Vertraulich – nur intern': 'e.g. Confidential – internal only',
+    'Normen im Bericht': 'Standards in the report', 'Welche Kataloge das Kapitel „Nachweise für Normen“ enthält.': 'Which catalogues the “Evidence for standards” chapter contains.', 'DSGVO': 'GDPR', 'Cyber Resilience Act': 'Cyber Resilience Act',
+    'Exporte signieren': 'Sign exports', 'Legt neben jeden Export eine Signatur (.sig.json: SHA-256 + Ed25519). Der Schlüssel entsteht lokal und wird verschlüsselt gespeichert.': 'Places a signature next to every export (.sig.json: SHA-256 + Ed25519). The key is created locally and stored encrypted.',
+    'Noch kein Schlüssel – entsteht beim ersten signierten Export.': 'No key yet – it is created with the first signed export.', 'Verschlüsselung nicht verfügbar – Signieren nicht möglich.': 'Encryption not available – signing is not possible.',
+    'Mindestens eine Norm muss gewählt bleiben': 'At least one standard must stay selected', 'Erzeuge Audit-Paket …': 'Creating audit package …', 'Erzeuge PDF …': 'Creating PDF …',
+    // Pause, Gruppierung, Notizen, Rueckgaengig
+    'Pausieren': 'Pause', 'Fortsetzen': 'Resume', 'Pausiert – hält am nächsten Zwischenschritt': 'Paused – stops at the next checkpoint', 'Prüfung pausiert': 'Scan paused', 'Prüfung fortgesetzt': 'Scan resumed',
+    'Strg F': 'Ctrl F', 'Gruppieren': 'Group', 'Befunde gruppieren nach': 'Group findings by', 'nach Schwere': 'by severity', 'nach Datei': 'by file', 'nach Bereich': 'by area', 'nach Ziel': 'by target', 'Unbekanntes Ziel': 'Unknown target',
+    'Notiz': 'Note', 'Notiz zu diesem Befund': 'Note on this finding', 'Eigene Notiz – erscheint auch im Bericht (Strg + Enter speichert)': 'Your own note – also appears in the report (Ctrl + Enter saves)', 'Notiz speichern': 'Save note',
+    'gespeichert': 'saved', 'entfernt': 'removed', 'nicht gespeichert': 'not saved', 'Notiz gespeichert': 'Note saved', 'Notiz entfernt': 'Note removed',
+    'Rückgängig': 'Undo', 'Wiederhergestellt': 'Restored', 'Nicht mehr rückgängig zu machen': 'Can no longer be undone', 'Lauf gelöscht': 'Run deleted',
+    // Befehlspalette, Glossar
+    'Befehlspalette': 'Command palette', 'Befehl oder Befund suchen …': 'Search commands or findings …', 'Befehl oder Befund suchen': 'Search commands or findings', 'Befehle': 'Commands', 'auswählen': 'select', 'ausführen': 'run', 'schließen': 'close',
+    'Gehe zu': 'Go to', 'Einstellungen: Allgemein': 'Settings: General', 'Einstellungen: Prüfungen': 'Settings: Checks', 'Einstellungen: Web & Server': 'Settings: Web & servers', 'Einstellungen: Erweitert': 'Settings: Advanced',
+    'Prüfung': 'Scan', 'Prüfung fortsetzen': 'Resume scan', 'Prüfung pausieren': 'Pause scan', 'Prüfung abbrechen': 'Cancel scan', 'Ordner zur Prüfliste hinzufügen …': 'Add folder to the scan list …', 'Beispiel-Lauf zeigen': 'Show sample run',
+    'Export': 'Export', 'Exportieren: PDF': 'Export: PDF', 'Exportieren: Kurzbericht (PDF)': 'Export: Executive summary (PDF)', 'Exportieren: HTML': 'Export: HTML', 'Exportieren: Markdown': 'Export: Markdown', 'Exportieren: Word (.docx)': 'Export: Word (.docx)',
+    'Exportieren: Excel (.xlsx)': 'Export: Excel (.xlsx)', 'Exportieren: CSV': 'Export: CSV', 'Exportieren: SARIF': 'Export: SARIF', 'Exportieren: JSON': 'Export: JSON', 'Exportieren: Audit-Paket (ZIP)': 'Export: Audit package (ZIP)',
+    'Exportieren: OpenVEX': 'Export: OpenVEX', 'Exportieren: CycloneDX VEX': 'Export: CycloneDX VEX', 'Exportieren: Abzeichen (SVG)': 'Export: Badge (SVG)',
+    'Ansicht': 'View', 'Gruppieren: nach Schwere': 'Group: by severity', 'Gruppieren: nach Datei': 'Group: by file', 'Gruppieren: nach Bereich': 'Group: by area', 'Gruppieren: nach Ziel': 'Group: by target',
+    'Übersicht anpassen': 'Customise overview', 'Glossar anzeigen': 'Show glossary', 'Farbschema: Hell': 'Theme: Light', 'Farbschema: Dunkel': 'Theme: Dark', 'Farbschema: Wie Windows': 'Theme: Like Windows', 'Sprache: Deutsch': 'Language: German', 'Sprache: English': 'Language: English',
+    'In Befunden suchen': 'Search findings', 'Nichts gefunden': 'Nothing found', 'Glossar': 'Glossary',
+    'Fachbegriffe wie CVE, CVSS, EPSS oder SBOM kurz erklärt. Im Befundtext genügt es, mit der Maus auf einen unterstrichenen Begriff zu zeigen.': 'Terms such as CVE, CVSS, EPSS or SBOM explained briefly. In finding texts, just hover over an underlined term.',
+    // Layout der Uebersicht
+    'Anpassen': 'Customise', 'Karten der Übersicht': 'Overview cards', 'Kennzahlen': 'Key figures', 'Angriffswege': 'Attack paths', 'Gefahrenlage': 'Threat intel', 'Zurücksetzen': 'Reset',
+    // Verlauf: Vergleich
+    'Die letzten Läufe, lokal auf deinem Rechner gespeichert. Zum Öffnen anklicken, zum Vergleichen zwei Läufe ankreuzen.': 'The latest runs, stored locally on your computer. Click to open, tick two runs to compare them.',
+    'Zwei Läufe ankreuzen, um sie zu vergleichen.': 'Tick two runs to compare them.', 'Vergleichen': 'Compare', 'Vergleich': 'Comparison', 'Vergleich schließen': 'Close comparison', 'Für den Vergleich auswählen': 'Select for comparison',
+    '2 Läufe ausgewählt': '2 runs selected', '1 Lauf ausgewählt – noch einen ankreuzen': '1 run selected – tick one more', 'Vorher': 'Before', 'Nachher': 'After', 'Unverändert': 'Unchanged',
+    'Nichts Neues.': 'Nothing new.', 'Nichts behoben.': 'Nothing fixed.', 'Keine gemeinsamen Befunde.': 'No findings in common.', 'Bitte zwei verschiedene Läufe wählen.': 'Please choose two different runs.',
+    // Browser-Erweiterung
+    'Adresse aus dem Browser übernehmen?': 'Take over the address from the browser?', 'Übernehmen': 'Add', 'Adresse übernommen – bitte Berechtigung bestätigen und hinzufügen': 'Address taken over – please confirm authorisation and add it',
   };
   // Teil-Uebersetzungen fuer zusammengesetzte Texte (Regex -> Ersatz)
   const PARTS = [
@@ -327,6 +368,16 @@
     [/^z\. B\. /, 'e.g. '],
     [/^Verschlüsselt hinterlegt: (.+)$/, (m, l) => 'Stored encrypted: ' + l.split(' · ').map((x) => EN[x] || x).join(' · ')],
     [/ Sek\.$/, ' sec'], [/ Min\.$/, ' min'], [/ Std\.$/, ' h'], [/^Füge oben zuerst etwas zur Prüfliste hinzu\.$/, 'Add something to the scan list first.'], [/^letzte (\d+) Läufe$/, 'last $1 runs'],
+
+    // Erweiterungen: Loeschen/Rueckgaengig, Notizen, Exporte, Signaturpruefung, Palette, Layout, Browser-Eingang
+    [/^(\d+) Befunde? gelöscht$/, (m, n) => `${n} ${n === '1' ? 'finding' : 'findings'} deleted`], [/^Notiz nicht gespeichert: /, 'Note not saved: '],
+    [/^Gespeichert und signiert: /, 'Saved and signed: '], [/^Abzeichen gespeichert – Markdown-Schnipsel kopiert: /, 'Badge saved – Markdown snippet copied: '], [/^Schlüssel (\w+)\.$/, 'Key $1.'],
+    [/: Prüfsummen stimmen \(ohne Signatur\)\.$/, ': checksums match (no signature).'], [/: Signatur gültig – eigener Schlüssel \(/, ': signature valid – own key ('], [/: Signatur gültig – fremder Schlüssel \(/, ': signature valid – third-party key ('],
+    [/Datei verändert: /, 'File changed: '], [/Datei fehlt: /, 'File missing: '], [/Signatur ungültig – das Manifest wurde verändert oder mit einem anderen Schlüssel signiert\./, 'Signature invalid – the manifest was changed or signed with a different key.'],
+    [/Keine gültige Signatur-Datei\./, 'No valid signature file.'], [/manifest\.json passt nicht zur Signatur\./, 'manifest.json does not match the signature.'], [/manifest\.json fehlt oder ist ungültig\./, 'manifest.json is missing or invalid.'],
+    [/Kein gültiges ZIP: /, 'Not a valid ZIP: '], [/Signatur nicht lesbar: /, 'Signature unreadable: '], [/Prüfung fehlgeschlagen\.$/, 'Check failed.'], [/Keine Signatur-Datei \(\.sig\.json\) neben dem Bericht gefunden\./, 'No signature file (.sig.json) found next to the report.'],
+    [/^Strg (\S+)$/, 'Ctrl $1'], [/^(.+) nach oben$/, (m, a) => `Move ${EN[a] || a} up`], [/^(.+) nach unten$/, (m, a) => `Move ${EN[a] || a} down`],
+    [/^Die Browser-Erweiterung schlägt „(.+)“ zur Prüfung vor\. Übernehmen\? Vor dem Start bestätigst du wie gewohnt, dass du die Seite prüfen darfst\.$/, 'The browser extension suggests “$1” for a check. Take it over? Before the start you confirm as usual that you are allowed to check the site.'],
   ];
   const ATTRS = ['placeholder', 'title', 'aria-label'];
   const orig = new Map();      // Textknoten -> deutscher Originaltext

@@ -22,6 +22,17 @@ contextBridge.exposeInMainWorld('vigil', {
   saveReport: (format) => ipcRenderer.invoke('report:save', { format }),
   // Paketliste (SBOM): 'cyclonedx' (CycloneDX 1.5 JSON) oder 'spdx' (SPDX 2.3 JSON)
   saveSbom: (format) => ipcRenderer.invoke('report:save', { format: format === 'spdx' ? 'spdx' : 'cyclonedx' }),
+  verifyReport: () => ipcRenderer.invoke('report:verify'),
+  signingInfo: () => ipcRenderer.invoke('signing:info'),
+  signingCreate: () => ipcRenderer.invoke('signing:create'),
+  pauseAudit: () => ipcRenderer.invoke('audit:pause'),
+  resumeAudit: () => ipcRenderer.invoke('audit:resume'),
+  setFindingNote: (id, note) => ipcRenderer.invoke('finding:setNote', id, String(note || '')),
+  undoDelete: (token) => ipcRenderer.invoke('undo:restore', token),
+  historyCompare: (a, b) => ipcRenderer.invoke('history:compare', a, b),
+  historyCompareSave: (a, b, format) => ipcRenderer.invoke('history:compareSave', a, b, format),
+  // Browser-Erweiterung: vorgemerkte Adresse (muss im Fenster bestaetigt werden)
+  onInbox: (cb) => { const h = (_e, url) => cb(String(url || '')); ipcRenderer.on('inbox:url', h); return () => ipcRenderer.removeListener('inbox:url', h); },
 
   // Befund-Lebenszyklus & Uebersicht
   setFindingStatus: (id, status, note, expiresInDays) => ipcRenderer.invoke('finding:setStatus', id, { status, ...(note ? { note } : {}), ...(expiresInDays ? { expiresInDays: Number(expiresInDays) } : {}) }),

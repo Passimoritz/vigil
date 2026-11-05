@@ -123,16 +123,90 @@ const CATALOGS = {
       { id: 'Abs. 1 lit. d', title: 'Regelmäßige Überprüfung der Wirksamkeit', owasp: ['A06', 'A09'] },
     ],
   },
+  // EU Cyber Resilience Act (Verordnung (EU) 2024/2847), Anhang I – grundlegende Anforderungen
+  cra: {
+    name: 'EU Cyber Resilience Act – Anhang I',
+    controls: [
+      { id: 'Teil I (2) a', title: 'Keine bekannten ausnutzbaren Schwachstellen bei Auslieferung', owasp: ['A06'], kev: true },
+      { id: 'Teil I (2) b', title: 'Sichere Standardkonfiguration', owasp: ['A05'], cats: ['Config'] },
+      { id: 'Teil I (2) d', title: 'Schutz vor unbefugtem Zugriff (Authentisierung, Zugriffskontrolle)', owasp: ['A01', 'A07'] },
+      { id: 'Teil I (2) e', title: 'Vertraulichkeit gespeicherter und übertragener Daten', owasp: ['A02'], cats: ['Secrets', 'Transport'] },
+      { id: 'Teil I (2) f', title: 'Integrität von Daten, Befehlen und Programmen', owasp: ['A03', 'A08'] },
+      { id: 'Teil I (2) h', title: 'Verfügbarkeit wesentlicher Funktionen', cats: ['DoS'] },
+      { id: 'Teil I (2) j', title: 'Begrenzung der Angriffsfläche', owasp: ['A05', 'A10'], match: /port|exposed|debug|admin/i },
+      { id: 'Teil I (2) l', title: 'Protokollierung und Überwachung sicherheitsrelevanter Vorgänge', owasp: ['A09'] },
+      { id: 'Teil II (1)', title: 'Schwachstellen und Komponenten erfassen (SBOM)', cats: ['Dependencies', 'License'] },
+      { id: 'Teil II (2)', title: 'Schwachstellen unverzüglich durch Sicherheitsupdates beheben', match: /^(CVE|GHSA|PYSEC|GO|RUSTSEC)-/i },
+    ],
+  },
+  soc2: {
+    name: 'SOC 2 – Trust Services Criteria',
+    controls: [
+      { id: 'CC6.1', title: 'Logische Zugriffskontrolle', owasp: ['A01', 'A07'], cats: ['Secrets'] },
+      { id: 'CC6.6', title: 'Schutz vor Bedrohungen von außen', owasp: ['A05', 'A10'] },
+      { id: 'CC6.7', title: 'Schutz bei der Übertragung', owasp: ['A02'], cats: ['Transport'] },
+      { id: 'CC6.8', title: 'Schutz vor Schadsoftware und unautorisierter Software', owasp: ['A08'], match: /malware|typosquat|install-script/i },
+      { id: 'CC7.1', title: 'Erkennung von Schwachstellen und Fehlkonfigurationen', owasp: ['A06'], cats: ['Config'] },
+      { id: 'CC7.2', title: 'Überwachung sicherheitsrelevanter Ereignisse', owasp: ['A09'] },
+      { id: 'CC8.1', title: 'Änderungsmanagement und sichere Entwicklung', owasp: ['A03', 'A04'] },
+    ],
+  },
+  pcidss: {
+    name: 'PCI DSS 4.0',
+    controls: [
+      { id: '2.2', title: 'Systemkomponenten sicher konfiguriert', owasp: ['A05'], cats: ['Config'] },
+      { id: '3.5', title: 'Gespeicherte Kontodaten geschützt', owasp: ['A02'], cats: ['Crypto'] },
+      { id: '4.2', title: 'Starke Kryptografie bei der Übertragung', cats: ['Transport'] },
+      { id: '6.2.4', title: 'Entwicklung verhindert typische Software-Angriffe', owasp: ['A03', 'A04', 'A10'], cats: ['Injection', 'XSS'] },
+      { id: '6.3.3', title: 'Bekannte Schwachstellen durch Patches behoben', owasp: ['A06'] },
+      { id: '7.2', title: 'Zugriff nach Bedarf vergeben und kontrolliert', owasp: ['A01'] },
+      { id: '8.3', title: 'Starke Authentisierung', owasp: ['A07'] },
+      { id: '8.6', title: 'Zugangsdaten von Konten nicht im Code', cats: ['Secrets'] },
+      { id: '10.2', title: 'Protokollierung von Ereignissen', owasp: ['A09'] },
+    ],
+  },
+  asvs: {
+    name: 'OWASP ASVS 4.0',
+    controls: [
+      { id: 'V1', title: 'Architektur und Bedrohungsmodell', owasp: ['A04'] },
+      { id: 'V2', title: 'Authentisierung', owasp: ['A07'] },
+      { id: 'V3', title: 'Sitzungsverwaltung', match: /session|cookie|jwt/i },
+      { id: 'V4', title: 'Zugriffskontrolle', owasp: ['A01'] },
+      { id: 'V5', title: 'Validierung, Bereinigung und Kodierung', owasp: ['A03'] },
+      { id: 'V6', title: 'Gespeicherte Kryptografie', owasp: ['A02'], cats: ['Crypto'] },
+      { id: 'V7', title: 'Fehlerbehandlung und Protokollierung', owasp: ['A09'] },
+      { id: 'V8', title: 'Datenschutz', cats: ['Secrets'] },
+      { id: 'V9', title: 'Kommunikation', cats: ['Transport'] },
+      { id: 'V10', title: 'Schadcode', owasp: ['A08'] },
+      { id: 'V12', title: 'Dateien und Ressourcen', cats: ['PathTraversal', 'SSRF'] },
+      { id: 'V13', title: 'API und Webdienste', match: /api|graphql|cors/i },
+      { id: 'V14', title: 'Konfiguration', owasp: ['A05', 'A06'] },
+    ],
+  },
+  hipaa: {
+    name: 'HIPAA Security Rule – § 164.312',
+    controls: [
+      { id: '(a)(1)', title: 'Zugriffskontrolle', owasp: ['A01'] },
+      { id: '(a)(2)(iv)', title: 'Ver- und Entschlüsselung', owasp: ['A02'], cats: ['Secrets'] },
+      { id: '(b)', title: 'Protokollierung (Audit Controls)', owasp: ['A09'] },
+      { id: '(c)(1)', title: 'Integrität', owasp: ['A03', 'A08'] },
+      { id: '(d)', title: 'Authentisierung von Personen und Systemen', owasp: ['A07'] },
+      { id: '(e)(1)', title: 'Übertragungssicherheit', cats: ['Transport'] },
+      { id: '§ 164.308(a)(1)', title: 'Risikoanalyse und Risikomanagement', owasp: ['A05', 'A06'] },
+    ],
+  },
 };
 
 function controlHits(control, findings) {
-  return findings.filter((f) => (control.owasp && control.owasp.includes(f.owasp)) || (control.cats && control.cats.includes(f.category)) || (control.match && control.match.test(f.ruleId || '')));
+  return findings.filter((f) => (control.owasp && control.owasp.includes(f.owasp)) || (control.cats && control.cats.includes(f.category)) || (control.match && control.match.test(f.ruleId || '')) || (control.kev && f.inCisaKev));
 }
 
-// Uebersicht je Katalog: Kontrolle -> offene Befunde (nach Schwere), Status ok/offen
-function complianceReport(findings) {
+// Uebersicht je Katalog: Kontrolle -> offene Befunde (nach Schwere), Status ok/offen.
+// keys (optional): nur diese Kataloge, z. B. ['iso27001', 'cra'] – leer/fehlend = alle
+function complianceReport(findings, keys) {
   const active = findings.filter((f) => !f.suppressed && !['FALSE_POSITIVE', 'ACCEPTED_RISK', 'RESOLVED'].includes(f.status));
-  return Object.entries(CATALOGS).map(([key, cat]) => ({
+  const want = Array.isArray(keys) && keys.length ? new Set(keys) : null;
+  return Object.entries(CATALOGS).filter(([key]) => !want || want.has(key)).map(([key, cat]) => ({
     key, name: cat.name,
     controls: cat.controls.map((c) => {
       const hits = controlHits(c, active);

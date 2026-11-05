@@ -823,7 +823,7 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const comp = complianceReport(t);
     const iso = comp.find((c) => c.key === 'iso27001');
     check('normen: ISO A.8.28 dringend, A.8.8 offen, Lizenz-Kontrolle grün', iso.controls.find((c) => c.id === 'A.8.28').status === 'fail' && iso.controls.find((c) => c.id === 'A.8.8').status === 'fail' && iso.controls.find((c) => c.id === 'A.5.32').status === 'ok');
-    check('normen: vier Kataloge (ISO 27001, BSI, NIS2, DSGVO)', comp.map((c) => c.key).join() === 'iso27001,bsi,nis2,dsgvo');
+    check('normen: Kataloge ISO 27001, BSI, NIS2, DSGVO, CRA, SOC 2, PCI DSS, ASVS, HIPAA', comp.map((c) => c.key).join() === 'iso27001,bsi,nis2,dsgvo,cra,soc2,pcidss,asvs,hipaa');
     const html = rep.toHtml({ findings: t, summary: { total: 3, counts: { critical: 1, high: 1, medium: 0, low: 1, info: 0 } }, meta: {}, errors: [] });
     check('bericht: CWE, OWASP und Normen-Kapitel enthalten', /CWE-89/.test(html) && /A03:2021/.test(html) && /Nachweise für Normen/.test(html));
     const ex = rep.toExecutive({ findings: t, meta: { at: '2026-11-02T10:00:00Z' } }, { company: 'Muster GmbH', logoDataUrl: 'data:image/png;base64,AAAA', trend: [{ open: 9 }, { open: 5 }, { open: 3 }] });
@@ -1946,6 +1946,182 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const i18n = require('../src/core/findings-i18n');
     check('englisch: neue Hinweise und Notizen übersetzt', /^Risk acceptance expired on 2026-04-01/.test(i18n.translate('Risikoakzeptanz am 2026-04-01 abgelaufen – wieder offen. Bitte neu bewerten.')) && /^Budget: only the 5 most relevant of 9 files/.test(i18n.translate('Budget: nur die 5 relevantesten von 9 Dateien gingen an die KI – 4 weniger relevante übersprungen (z. B. a.js).')));
     restore();
+  }
+
+  // --- Berichte, Exporte, Signatur, Vergleich, Notizen, Rueckgaengig, Pause, Browser-Eingang ---
+  {
+    const path = require('path');
+    const AdmZip = require('adm-zip');
+    const X = require('../src/core/exports');
+    const S = require('../src/core/signing');
+    const C = require('../src/core/compare');
+    const { complianceReport } = require('../src/core/taxonomy');
+    const { toHtml, toMarkdown } = require('../src/core/reportdoc');
+    const { toExecutive } = require('../src/core/report');
+    const { localizeReportHtml } = require('../src/core/report-en');
+    const res = { findings: [
+      { id: 'f1', title: 'SQL aus Eingabe', severity: 'critical', category: 'Injection', location: 'src/db.js:12', ruleId: 'sql-concat', cwe: 'CWE-89', owasp: 'A03', note: 'Mit dem Team besprochen' },
+      { id: 'f2', title: 'lodash@4.17.11', severity: 'high', category: 'Dependencies', location: 'package.json', ruleId: 'CVE-2019-10744', owasp: 'A06', inCisaKev: true, status: 'FALSE_POSITIVE', statusNote: 'Betroffene Funktion wird nie aufgerufen' },
+      { id: 'f3', title: '=HYPERLINK("x") <b>&', severity: 'low', category: 'Config', location: 'app/conf.yml:3', ruleId: 'cfg-x', owasp: 'A05', status: 'ACCEPTED_RISK', statusNote: 'Nur intern erreichbar' },
+      { id: 'f4', title: 'Veraltetes Paket', severity: 'medium', category: 'Dependencies', location: 'package.json', ruleId: 'GHSA-xxxx-yyyy', owasp: 'A06', inCisaKev: true },
+    ], summary: {}, meta: { at: '2026-11-05T10:00:00Z' } };
+
+    // Normen: neue Kataloge und Auswahl
+    const comp = complianceReport(res.findings);
+    const cra = comp.find((c) => c.key === 'cra');
+    check('cra: Anhang I mit KEV- und Update-Anforderungen', !!cra && cra.controls.find((k) => k.id === 'Teil I (2) a').count === 1 && cra.controls.find((k) => k.id === 'Teil II (2)').count === 1);
+    check('normen: SOC 2, PCI DSS, ASVS, HIPAA mit Treffern', ['soc2', 'pcidss', 'asvs', 'hipaa'].every((k) => comp.find((c) => c.key === k).controls.some((x) => x.count)));
+    check('normen: Auswahl einzelner Kataloge', complianceReport(res.findings, ['cra', 'hipaa']).map((c) => c.key).join() === 'cra,hipaa');
+
+    // Branding und Notizen im Bericht
+    const html = toHtml(res, { accent: '#123abc', coverText: 'Im Auftrag der Muster GmbH', footerText: 'Vertraulich – nur intern', frameworks: ['cra'] });
+    check('branding: Akzentfarbe, Deckblatt-Text und Fusszeile im HTML-Bericht', html.includes('--accent:#123abc') && html.includes('Im Auftrag der Muster GmbH') && html.includes('Vertraulich – nur intern'));
+    check('branding: ungültige Farbe wird verworfen', toHtml(res, { accent: 'red;}</style><script>' }).includes('--accent:#b7791f') && !toHtml(res, { accent: 'red;}</style><script>' }).includes('red;}'));
+    check('bericht: nur gewählte Normen, Notiz im Befund', html.includes('EU Cyber Resilience Act') && !html.includes('ISO/IEC 27001') && html.includes('Mit dem Team besprochen'));
+    check('bericht (Markdown): Notiz, Deckblatt-Text und Fusszeile', (() => { const md = toMarkdown(res, { coverText: 'Deckblatt X', footerText: 'Fuss Y' }); return md.includes('**Notiz:** Mit dem Team besprochen') && md.includes('Deckblatt X') && md.trim().endsWith('Fuss Y'); })());
+    check('kurzbericht: Branding angewandt', (() => { const h = toExecutive(res, { accent: '#00aa00', coverText: 'Hallo Vorstand', footerText: 'Fuss Z' }); return h.includes('#00aa00') && h.includes('Hallo Vorstand') && h.includes('Fuss Z'); })());
+    check('englisch: neue Normen im Bericht übersetzt', (() => { const en = localizeReportHtml(toHtml(res, { frameworks: ['cra', 'hipaa'] })); return en.includes('EU Cyber Resilience Act – Annex I') && en.includes('Part I (2) a') && en.includes('Transmission security') && !en.includes('Begrenzung der Angriffsfläche'); })());
+
+    // CSV / Excel / Word
+    const csv = X.toCsv(res, { lang: 'en' });
+    check('csv: BOM, englische Kopfzeile, nur offene Befunde, Notiz', csv.charCodeAt(0) === 0xfeff && /^\uFEFFNo\.,Severity,Finding/.test(csv) && csv.includes('Mit dem Team besprochen') && !csv.includes('lodash'));
+    check('csv: Formeln aus Befundtexten entschärft', X.toCsv(res, { all: true }).includes('"\'=HYPERLINK(""x"") <b>&"'));
+    const xz = new AdmZip(X.toXlsx(res, { lang: 'en' }));
+    const sheet = xz.readAsText('xl/worksheets/sheet1.xml');
+    check('excel: gültige OOXML-Struktur mit zwei Blättern', ['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml', 'xl/styles.xml', 'xl/worksheets/sheet2.xml'].every((n) => xz.getEntry(n)) && /<sheet name="Findings"/.test(xz.readAsText('xl/workbook.xml')));
+    check('excel: Text als Inline-Strings, Kopfzeile fixiert, Filter', sheet.includes('t="inlineStr"') && sheet.includes('state="frozen"') && sheet.includes('<autoFilter ref="A1:O3"/>') && sheet.includes('SQL aus Eingabe'));
+    check('excel: Sonderzeichen XML-maskiert', !/<t[^>]*>[^<]*&(?!amp;|lt;|gt;|quot;|apos;)/.test(new AdmZip(X.toXlsx(res, { all: true })).readAsText('xl/worksheets/sheet1.xml')));
+    const dz = new AdmZip(X.toDocx(res, { lang: 'en', title: 'Security report', footerText: 'Internal' }));
+    const doc = dz.readAsText('word/document.xml');
+    check('word: Dokument mit Überschriften, Tabellen und Fusszeile', ['word/styles.xml', 'word/footer1.xml', 'docProps/core.xml'].every((n) => dz.getEntry(n)) && doc.includes('w:val="Heading1"') && doc.includes('<w:tbl>') && dz.readAsText('word/footer1.xml').includes('Internal'));
+    check('word: englische Beschriftungen und Befundtexte', doc.includes('Findings in detail') && doc.includes('What the levels mean') && !doc.includes('Befunde im Detail') && doc.includes('SQL aus Eingabe'));
+    check('word: deutsch auf Wunsch', new AdmZip(X.toDocx(res, { lang: 'de' })).readAsText('word/document.xml').includes('Befunde im Detail'));
+
+    // VEX
+    const vex = JSON.parse(X.toOpenVex(res, { company: 'Muster GmbH' }));
+    const st = vex.statements;
+    check('openvex: nur Fehlalarm/akzeptiert, Kontext und Autor', vex['@context'] === 'https://openvex.dev/ns/v0.2.0' && vex.author === 'Muster GmbH' && st.length === 2);
+    check('openvex: Fehlalarm = not_affected mit Begründung aus der Notiz', st[0].status === 'not_affected' && st[0].justification === 'vulnerable_code_not_in_execute_path' && st[0].impact_statement.includes('nie aufgerufen') && st[0].vulnerability.name === 'CVE-2019-10744' && st[0].products[0]['@id'] === 'pkg:npm/lodash@4.17.11');
+    check('openvex: akzeptiertes Risiko = affected mit action_statement', st[1].status === 'affected' && /Risk accepted: Nur intern/.test(st[1].action_statement));
+    const cdx = JSON.parse(X.toCycloneDxVex(res));
+    check('cyclonedx-vex: Analyse-Status und Komponenten', cdx.bomFormat === 'CycloneDX' && cdx.specVersion === '1.5' && cdx.vulnerabilities[0].analysis.state === 'false_positive' && cdx.vulnerabilities[0].analysis.justification === 'code_not_reachable' && cdx.vulnerabilities[1].analysis.response[0] === 'will_not_fix' && cdx.components.some((c) => c.purl === 'pkg:npm/lodash@4.17.11'));
+    check('vex: Begründungen aus Notizen', X.justification('durch WAF abgesichert').openvex === 'inline_mitigations_already_exist' && X.justification('nur Testdaten').cdx === 'code_not_present');
+    check('sbom: CycloneDX mit purl und ohne Doppelte', JSON.parse(X.toCycloneDxSbom([{ ecosystem: 'npm', name: '@scope/a', version: '1.0.0' }, { ecosystem: 'npm', name: '@scope/a', version: '1.0.0' }, { ecosystem: 'PyPI', name: 'requests', version: '2.0' }])).components.map((c) => c.purl).join() === 'pkg:npm/%40scope/a@1.0.0,pkg:pypi/requests@2.0');
+
+    // Abzeichen
+    const svg = X.badgeSvg({ grade: 'B', date: '2026-11-05' });
+    check('abzeichen: SVG mit Note, Datum und Farbe', /^<svg[^>]+width="\d+" height="20"/.test(svg) && svg.includes('B · 2026-11-05') && svg.includes('#4c9a2a') && svg.includes('role="img"'));
+    check('abzeichen: Markdown-Schnipsel', X.badgeMarkdown('my badge.svg', { grade: 'B', date: '2026-11-05' }) === '![Vigil security: B (2026-11-05)](my%20badge.svg)');
+
+    // CI-Formate
+    const gl = JSON.parse(X.toGitlabSast(res, '1.2.3'));
+    const v0 = gl.vulnerabilities[0];
+    check('gitlab sast: Schema-Felder, nur offene Befunde', gl.scan.type === 'sast' && gl.scan.analyzer.version === '1.2.3' && gl.vulnerabilities.length === 2 && v0.severity === 'Critical' && v0.location.file === 'src/db.js' && v0.location.start_line === 12);
+    check('gitlab sast: UUID und Kennungen (CWE)', /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/.test(v0.id) && v0.identifiers.some((i) => i.type === 'cwe' && i.value === '89'));
+    const ju = X.toJunit(res);
+    check('junit: testsuite mit error/failure je Schwere', /<testsuites name="Vigil" tests="2" failures="1" errors="1">/.test(ju) && ju.includes('<error type="critical"') && ju.includes('<failure type="medium"'));
+    check('junit: ohne Befunde ein bestandener Test', /tests="1" failures="0" errors="0"/.test(X.toJunit({ findings: [] })));
+    const cs = X.toCheckstyle({ findings: [{ title: 'A <b> & "c"', severity: 'high', location: 'x.js:4', ruleId: 'r1' }, { title: 'B', severity: 'low', location: 'x.js:9' }] });
+    check('checkstyle: Datei-Gruppen, Zeilen, Schwere, maskiert', (cs.match(/<file /g) || []).length === 1 && cs.includes('line="4" severity="error" message="A &lt;b&gt; &amp; &quot;c&quot;"') && cs.includes('severity="info"'));
+    const cli = require('child_process').spawnSync(process.execPath, [path.join(__dirname, '..', 'src', 'cli.js'), '--format', 'bogus', 'x'], { encoding: 'utf8' });
+    check('cli: unbekanntes --format wird sofort abgelehnt', cli.status === 1 && /gitlab, junit, checkstyle/.test(cli.stderr));
+
+    // Signatur und Audit-Paket
+    const keys = S.generateKeyPair();
+    const other = S.generateKeyPair();
+    const pkg = S.buildAuditPackage([{ name: 'report.html', data: '<p>x</p>' }, { name: 'report.pdf', data: Buffer.from([1, 2, 3]) }, { name: 'sbom.cdx.json', data: '{}' }], keys);
+    const pz = new AdmZip(pkg);
+    check('audit-paket: Dateien, Manifest, SHA256SUMS, Signatur', ['report.html', 'report.pdf', 'sbom.cdx.json', 'manifest.json', 'SHA256SUMS', 'manifest.sig.json'].every((n) => pz.getEntry(n)) && pz.readAsText('SHA256SUMS').includes('  report.pdf'));
+    const ok = S.verifyAuditPackage(pkg, keys.publicKeyPem);
+    check('audit-paket: Prüfung gültig mit eigenem Schlüssel', ok.ok && ok.signatureValid && ok.trusted && ok.files.length === 3);
+    check('audit-paket: fremder Schlüssel gültig, aber nicht vertraut', (() => { const r = S.verifyAuditPackage(pkg, other.publicKeyPem); return r.ok && !r.trusted; })());
+    check('audit-paket: veränderte Datei wird erkannt', (() => { const z = new AdmZip(pkg); z.updateFile('report.html', Buffer.from('<p>y</p>')); const r = S.verifyAuditPackage(z.toBuffer(), keys.publicKeyPem); return !r.ok && r.errors.some((e) => /verändert: report.html/.test(e)); })());
+    check('audit-paket: verändertes Manifest bricht die Signatur', (() => { const z = new AdmZip(pkg); const sig = JSON.parse(z.readAsText('manifest.sig.json')); sig.manifest.files[0].sha256 = '0'.repeat(64); z.updateFile('manifest.sig.json', Buffer.from(JSON.stringify(sig))); return !S.verifyAuditPackage(z.toBuffer(), keys.publicKeyPem).signatureValid; })());
+    check('audit-paket: ohne Signatur nur Prüfsummen', (() => { const r = S.verifyAuditPackage(S.buildAuditPackage([{ name: 'a.txt', data: 'a' }], null)); return r.ok && r.signed === false; })());
+    const sf = JSON.parse(S.signFile('bericht.pdf', Buffer.from('PDF'), keys));
+    check('signatur: Einzeldatei prüfen und Manipulation erkennen', S.verifySigned(sf, new Map([['bericht.pdf', Buffer.from('PDF')]]), keys.publicKeyPem).ok && !S.verifySigned(sf, new Map([['bericht.pdf', Buffer.from('PDX')]]), keys.publicKeyPem).ok && !S.verifySigned({}, new Map()).ok);
+    check('signatur: kanonisches JSON unabhängig von der Reihenfolge', S.canonical({ b: 1, a: [2, { d: 1, c: 2 }] }) === S.canonical({ a: [2, { c: 2, d: 1 }], b: 1 }));
+    check('signatur: Pfade im Paket bereinigt', JSON.parse(new AdmZip(S.buildAuditPackage([{ name: '../../evil.txt', data: 'x' }], null)).readAsText('manifest.json')).files[0].name === 'evil.txt');
+
+    // Vergleich zweier Laeufe
+    const d = C.diffResults({ findings: [{ id: 'a', title: 'Bleibt', severity: 'medium' }, { id: 'b', title: 'Weg', severity: 'high' }, { id: 'c', title: 'Fehlalarm', severity: 'high', status: 'FALSE_POSITIVE' }] },
+      { findings: [{ id: 'a', title: 'Bleibt', severity: 'high' }, { id: 'n', title: 'Neu dazu', severity: 'critical' }, { title: 'Ohne ID', ruleId: 'r', location: 'x', severity: 'low' }] });
+    check('vergleich: neu / behoben / unverändert', d.added.map((f) => f.title).join() === 'Neu dazu,Ohne ID' && d.fixed.map((f) => f.title).join() === 'Weg' && d.unchanged.length === 1 && d.unchanged[0].previousSeverity === 'medium' && d.totals.before === 2);
+    const ch = localizeReportHtml(C.toCompareHtml(d, { a: { at: '2026-11-01T10:00:00Z', targets: ['app'] }, b: { at: '2026-11-02T10:00:00Z' } }));
+    check('vergleich: Bericht (HTML) englisch mit drei Spalten', ch.includes('Comparison of two scans') && ch.includes('>New ') && ch.includes('>Unchanged ') && !ch.includes('Vorher:'));
+    check('vergleich: Markdown mit Tabellen', /## Behoben[\s\S]*\| Hoch \| Weg \|/.test(C.toCompareMarkdown(d, {})));
+
+    // Speicher: Notizen und Papierkorb
+    const store = require('../src/core/store');
+    const db = store.emptyStore();
+    const t1 = { type: 'path', value: 'C:/proj' };
+    const f0 = { title: 'Secret', severity: 'high', category: 'Secrets', location: 'a.js:1', ruleId: 'aws-key', source: 'prescan' };
+    const r1 = store.applyRun(db, { targets: [t1], findings: [f0], scannersRun: [] });
+    const fid = r1.findings[0].id;
+    check('notiz: speichern, kürzen, entfernen', store.setNote(db, fid, '  Hallo  ').note === 'Hallo' && db.findings[fid].note === 'Hallo' && store.setNote(db, fid, 'x'.repeat(5000)).note.length === 4000 && store.setNote(db, fid, '').note === '' && !('note' in db.findings[fid]) && !store.setNote(db, 'nope', 'x').ok);
+    store.setNote(db, fid, 'Bleibt erhalten');
+    const r2 = store.applyRun(db, { targets: [t1], findings: [f0], scannersRun: [] });
+    check('notiz: bleibt über weitere Läufe erhalten und steht im Ergebnis', db.findings[fid].note === 'Bleibt erhalten' && r2.findings[0].note === 'Bleibt erhalten');
+    const del = store.softDeleteFindings(db, [fid], 1000);
+    check('rückgängig: Befund gelöscht, Token vorhanden', del.deleted === 1 && !db.findings[fid] && /^[a-f0-9]{18}$/.test(del.undoToken));
+    check('rückgängig: Befund wiederhergestellt', store.restoreTrash(db, del.undoToken).ok && db.findings[fid].note === 'Bleibt erhalten' && !store.restoreTrash(db, del.undoToken).ok);
+    const tid = r1.targetIds[0];
+    store.addRun(db, { id: 'run-1', status: 'COMPLETED', targetIds: [tid], targets: [] });
+    store.addRun(db, { id: 'run-2', status: 'COMPLETED', targetIds: [], targets: [] });
+    const dt = store.softDeleteTarget(db, tid, 1000);
+    check('rückgängig: Ziel mit Befunden gelöscht und zurückgeholt', dt.ok && !db.targets[tid] && !db.findings[fid] && store.restoreTrash(db, dt.undoToken).ok && !!db.targets[tid] && !!db.findings[fid] && db.runs.find((r) => r.id === 'run-1').targetIds.includes(tid));
+    const dr = store.softDeleteRun(db, 'run-2', 1000);
+    check('rückgängig: Lauf an alter Stelle wiederhergestellt', dr.ok && db.runs.length === 1 && store.restoreTrash(db, dr.undoToken).ok && db.runs[0].id === 'run-2');
+    const late = store.softDeleteFindings(db, [fid], 1000);
+    check('rückgängig: nach Ablauf der Frist endgültig gelöscht', store.purgeTrash(db, store.UNDO_MS, 1000 + store.UNDO_MS + 1) === 1 && !store.restoreTrash(db, late.undoToken).ok && !db.findings[fid]);
+
+    // Orchestrator: Pause zwischen Haltepunkten
+    const os = require('os'); const fs = require('fs');
+    const { createOrchestrator } = require('../electron/orchestrator');
+    const steps = [];
+    const orch = createOrchestrator({ storeFile: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-pause-')), 's.json'), buildConfig: () => ({}),
+      runAudit: async (targets, cfg) => { for (let i = 0; i < 3; i++) { await cfg.checkpoint(); steps.push(i); await new Promise((r) => setTimeout(r, 15)); } return { result: { findings: [], summary: { total: 0, counts: {} }, errors: [], meta: {} } }; } });
+    const job = orch.enqueue({ targets: [{ type: 'path', value: 'C:/x' }], origin: 'app' });
+    await new Promise((r) => setTimeout(r, 5));
+    const paused = orch.pause();
+    await new Promise((r) => setTimeout(r, 80));
+    const heldAt = steps.length;
+    check('pause: Lauf hält am nächsten Haltepunkt', paused && orch.isPaused() && heldAt === 1 && !orch.pause());
+    check('pause: Fortsetzen läuft zu Ende', orch.resume() && !orch.isPaused() && (await job.done).ok && steps.length === 3 && !orch.resume());
+    const job2 = orch.enqueue({ targets: [{ type: 'path', value: 'C:/x' }], origin: 'app' });
+    await new Promise((r) => setTimeout(r, 5)); orch.pause(); orch.cancel();
+    const out2 = await Promise.race([job2.done, new Promise((r) => setTimeout(() => r(null), 1500))]);
+    check('pause: Abbrechen löst eine Pause', !!out2 && out2.canceled === true && !orch.isPaused());
+
+    // Code-Kommentare in Loesungen (englische Oberflaeche)
+    const i18n = require('../src/core/findings-i18n');
+    check('kommentare: Code-Kommentare übersetzt, Code bleibt', i18n.translateCode('# versteckte Dateien und SourceMaps sperren\nlocation ~ /x { deny all; }\nel.textContent = v; // statt innerHTML\ncolor: #fff;') === '# block hidden files and source maps\nlocation ~ /x { deny all; }\nel.textContent = v; // instead of innerHTML\ncolor: #fff;');
+    const { KB } = require('../src/core/remedies');
+    const GER = /[äöüßÄÖÜ]|\b(der|die|das|und|nicht|ist|mit|für|oder|wird|auf|eine?|zu|von|bei|nach|aus|nur|statt|sperren|prüfen|entfernen|aktiv|bzw|keine?|löschen)\b/;
+    const comments = [];
+    const scan = (code) => String(code || '').split('\n').forEach((l) => { const m = /^\s*(?:\/\/|#|--|;)\s?(.*)$/.exec(l) || /\s(?:\/\/|#)\s?([^'"`]*)$/.exec(l); if (m && GER.test(m[1])) comments.push(m[1]); });
+    const walk = (o) => { if (!o || typeof o !== 'object') return; const lf = i18n.localizeFinding({ snippets: o.snippets, patch: o.patch }); if (o.snippets) Object.values(lf.snippets).forEach(scan); if (o.patch) scan(lf.patch); for (const v of Object.values(o)) if (v && typeof v === 'object' && v !== o.snippets) walk(v); };
+    walk(KB);
+    check('kommentare: alle Kommentare in den Lösungs-Schnipseln übersetzt', comments.length === 0, comments.slice(0, 3).join(' | '));
+
+    // REST-API: Eingang fuer die Browser-Erweiterung
+    const http = require('http');
+    const { createApi } = require('../electron/api');
+    const inbox = [];
+    const api = createApi({ orchestrator: { stats: () => ({}) }, getConfig: () => ({ apiToken: 'tok123', allowlist: [] }), enforceScope: () => ({ ok: false }), onInbox: (u) => inbox.push(u) });
+    const started = await api.start(0);
+    const call = (method, p, headers, body) => new Promise((resolve) => { const rq = http.request({ host: '127.0.0.1', port: started.port, path: p, method, headers }, (rs) => { let b = ''; rs.on('data', (c) => { b += c; }); rs.on('end', () => resolve({ status: rs.statusCode, body: b })); }); rq.on('error', () => resolve({ status: 0 })); if (body) rq.write(body); rq.end(); });
+    const ext = { Origin: 'chrome-extension://abcdefghijklmnop', Authorization: 'Bearer tok123', 'Content-Type': 'application/json' };
+    const a1 = await call('POST', '/api/inbox', ext, JSON.stringify({ url: 'https://shop.example.com/login?x=1' }));
+    check('erweiterung: Adresse wird vorgemerkt (Bestätigung in der App)', a1.status === 202 && JSON.parse(a1.body).needsConfirmation === true && inbox[0] === 'https://shop.example.com/login');
+    const a2 = await call('POST', '/api/inbox', { ...ext, Origin: 'https://evil.example' }, JSON.stringify({ url: 'https://x.example' }));
+    const a3 = await call('POST', '/api/inbox', { ...ext, Authorization: 'Bearer falsch' }, JSON.stringify({ url: 'https://x.example' }));
+    const a4 = await call('GET', '/api/stats', ext);
+    const a5 = await call('POST', '/api/inbox', ext, JSON.stringify({ url: 'file:///C:/Windows' }));
+    check('erweiterung: Webseiten, falsches Token, andere Endpunkte und Nicht-Web-Adressen abgelehnt', a2.status === 403 && a3.status === 401 && a4.status === 403 && a5.status === 400 && inbox.length === 1);
+    await api.stop();
+    const mf = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'extensions', 'browser', 'manifest.json'), 'utf8'));
+    check('erweiterung: Manifest V3, nur 127.0.0.1', mf.manifest_version === 3 && mf.host_permissions.join() === 'http://127.0.0.1/*' && fs.existsSync(path.join(__dirname, '..', 'extensions', 'browser', mf.action.default_popup)));
   }
 
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
