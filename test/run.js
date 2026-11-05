@@ -472,7 +472,7 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
       U('app/safe.js', 'const t = crypto.randomBytes(32);\nif (timingSafeEqual(a, b)) {}\njwt.verify(t, k);\n'),
     ]);
     const ids = new Set(r.findings.map((f) => f.ruleId));
-    check('static: alle 10 Module gelaufen', r.ran.length === 10 && !r.errors.length);
+    check('static: alle Module gelaufen', r.ran.length === require('../src/core/modules/static').MODULES.length && r.ran.length >= 15 && !r.errors.length);
     check('static: Typosquat (vertauscht) erkannt', ids.has('typosquat-suspect') && lev1('lodahs', 'lodash') && !lev1('react', 'redux'));
     check('static: Compose privileged + Socket + DB-Port', ['container-privileged', 'container-docker-sock', 'container-db-port-public'].every((x) => ids.has(x)));
     check('static: Dockerfile latest + root', ids.has('docker-latest-tag') && ids.has('dockerfile-root-user'));
@@ -1016,6 +1016,213 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const md = localizeReportMd(md0);
     check('englisch: Bericht (Markdown) übersetzt', /^# Security report/m.test(md) && /\*\*What is wrong\?\*\*/.test(md) && !/Was ist los\?|Lösung:/.test(md));
     check('englisch: Code-Blöcke im Bericht bleiben unverändert', md0.split('```').filter((x, i) => i % 2).join() === md.split('```').filter((x, i) => i % 2).join());
+  }
+
+  // --- Lieferkette, Container und CI (Lockfile, Dockerfile, Actions, GitLab/Azure/Jenkins, CMS, deps.dev, Schadpakete, Live-Schlüssel, Schichten, Helm, SBOM) ---
+  {
+    const fs = require('fs'); const os = require('os'); const path = require('path'); const zlib = require('zlib');
+    const sup = require('../src/core/modules/supply');
+    const cmsM = require('../src/core/modules/cms');
+    const i18n = require('../src/core/findings-i18n');
+    const all = [];
+    const keep = (arr) => { all.push(...arr); return arr; };
+    const ids = (arr) => arr.map((f) => f.ruleId).sort().join(',');
+    const json = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) });
+
+    // lockdrift
+    const pj = JSON.stringify({ dependencies: { express: '^4.18.0', lodash: '^4.17.21' }, devDependencies: { jest: '^29.0.0' } });
+    const lockOk = JSON.stringify({ lockfileVersion: 3, packages: { '': { dependencies: { express: '^4.18.0', lodash: '^4.17.21' }, devDependencies: { jest: '^29.0.0' } } } });
+    const lockBad = JSON.stringify({ lockfileVersion: 3, packages: { '': { dependencies: { express: '^4.17.0', 'left-pad': '1.0.0' }, devDependencies: { jest: '^29.0.0' } } } });
+    const d1 = keep(sup.lockDrift([{ label: 'p/package.json', content: pj }, { label: 'p/package-lock.json', content: lockBad }]));
+    check('lockdrift: npm – fehlend, abweichend, überzählig', d1.length === 1 && d1[0].ruleId === 'lockfile-drift' && /lodash/.test(d1[0].description) && /express \(\^4\.18\.0 ≠ \^4\.17\.0\)/.test(d1[0].description) && /left-pad/.test(d1[0].description) && d1[0].location === 'p/package-lock.json');
+    check('lockdrift: npm – passendes Lockfile bleibt still', sup.lockDrift([{ label: 'p/package.json', content: pj }, { label: 'p/package-lock.json', content: lockOk }]).length === 0);
+    check('lockdrift: Dateien aus verschiedenen Ordnern werden nicht verglichen', sup.lockDrift([{ label: 'a/package.json', content: pj }, { label: 'b/package-lock.json', content: lockBad }]).length === 0);
+    const pyp = '[tool.poetry.dependencies]\npython = "^3.11"\nrequests = "^2.31"\nFlask = "^3.0"\n';
+    const d2 = keep(sup.lockDrift([{ label: 'py/pyproject.toml', content: pyp }, { label: 'py/poetry.lock', content: '[[package]]\nname = "requests"\nversion = "2.31.0"\n' }]));
+    check('lockdrift: Poetry – fehlendes Paket erkannt', d2.length === 1 && /Flask/.test(d2[0].description) && !/python/.test(d2[0].description.split('Fehlt im Lockfile:')[1]));
+    check('lockdrift: Poetry – vollständiges Lockfile still', sup.lockDrift([{ label: 'py/pyproject.toml', content: pyp }, { label: 'py/poetry.lock', content: '[[package]]\nname = "requests"\n[[package]]\nname = "flask"\n' }]).length === 0);
+    const d3 = keep(sup.lockDrift([{ label: 'pe/Pipfile', content: '[packages]\nrequests = "*"\n\n[dev-packages]\npytest = "*"\n' }, { label: 'pe/Pipfile.lock', content: JSON.stringify({ default: { requests: {} }, develop: {} }) }]));
+    check('lockdrift: Pipenv – Dev-Paket fehlt im Lockfile', d3.length === 1 && /pytest/.test(d3[0].description));
+    check('lockdrift: Pipenv – vollständig still', sup.lockDrift([{ label: 'pe/Pipfile', content: '[packages]\nrequests = "*"\n' }, { label: 'pe/Pipfile.lock', content: JSON.stringify({ default: { requests: {} }, develop: {} }) }]).length === 0);
+    const gemLock = 'GEM\n  remote: https://rubygems.org/\n  specs:\n    rails (7.0.0)\n\nDEPENDENCIES\n  rails (~> 7.0)\n  sidekiq\n\nBUNDLED WITH\n   2.4.0\n';
+    const d4 = keep(sup.lockDrift([{ label: 'rb/Gemfile', content: "source 'https://rubygems.org'\ngem 'rails', '~> 7.0'\ngem 'puma'\n" }, { label: 'rb/Gemfile.lock', content: gemLock }]));
+    check('lockdrift: Bundler – fehlend und überzählig', d4.length === 1 && /puma/.test(d4[0].description) && /sidekiq/.test(d4[0].description));
+    check('lockdrift: Bundler – passend still', sup.lockDrift([{ label: 'rb/Gemfile', content: "gem 'rails'\ngem 'sidekiq'\n" }, { label: 'rb/Gemfile.lock', content: gemLock }]).length === 0);
+
+    // dockerfile2
+    const df = 'FROM node:20\nADD https://example.com/tool.tar.gz /opt/\nRUN apt-get update && \\\n    curl -fsSL https://get.example.sh | bash\nARG NPM_TOKEN\nENV DB_PASSWORD=Sup3rS3cretValue\nENV API_KEY_FILE=/run/secrets/key\nUSER app\n';
+    const dd = keep(sup.dockerfile([{ label: 'svc/Dockerfile', content: df }]));
+    const envF = dd.find((f) => f.ruleId === 'docker-secret-env');
+    check('dockerfile: ADD-URL, curl|bash, ARG/ENV-Geheimnis, fehlender HEALTHCHECK', ids(dd) === 'docker-add-url,docker-curl-pipe-sh,docker-no-healthcheck,docker-secret-arg,docker-secret-env' && dd.find((f) => f.ruleId === 'docker-curl-pipe-sh').location === 'svc/Dockerfile:3' && dd.find((f) => f.ruleId === 'docker-no-healthcheck').severity === 'info');
+    check('dockerfile: Geheimnis nur geschwärzt, Verweis auf Datei kein Fund', envF.severity === 'high' && !JSON.stringify(dd).includes('Sup3rS3cretValue') && !dd.some((f) => /API_KEY_FILE/.test(f.title)));
+    check('dockerfile: sauberes Dockerfile bleibt still', sup.dockerfile([{ label: 'Dockerfile', content: 'FROM node:20\nCOPY . /app\nADD --checksum=sha256:abc https://example.com/y.tgz /y\nHEALTHCHECK CMD curl -f http://localhost/ || exit 1\nENV NODE_ENV=production\nENV TOKEN_URL=https://auth.example.com\n' }]).length === 0);
+
+    // gha2
+    const wf = 'name: ci\non:\n  issues:\n  pull_request:\npermissions:\n  contents: read\n  id-token: write\njobs:\n  t:\n    runs-on: [self-hosted, linux]\n    steps:\n      - run: |\n          echo "${{ github.event.issue.title }}"\n';
+    const gh = keep(sup.githubActions([{ label: '.github/workflows/ci.yml', content: wf }]));
+    check('actions: Script-Injection, unnötiges id-token, Self-hosted bei PRs', ids(gh) === 'gha-script-injection,gha-self-hosted-pr,gha-unneeded-id-token' && gh.find((f) => f.ruleId === 'gha-script-injection').location === '.github/workflows/ci.yml:13' && gh.find((f) => f.ruleId === 'gha-unneeded-id-token').location === '.github/workflows/ci.yml:7');
+    const wfOk = 'on: push\npermissions: read-all\njobs:\n  t:\n    runs-on: ubuntu-latest\n    permissions:\n      id-token: write\n    steps:\n      - uses: aws-actions/configure-aws-credentials@0123456789abcdef0123456789abcdef01234567\n      - env:\n          TITLE: ${{ github.event.issue.title }}\n        run: echo "$TITLE"\n';
+    check('actions: Wert über env, OIDC-Nutzung und push-Runner still', sup.githubActions([{ label: '.github/workflows/ok.yml', content: wfOk }]).length === 0);
+    const noPerm = keep(sup.githubActions([{ label: '.github/workflows/b.yml', content: 'on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n' }]));
+    check('actions: fehlende permissions gemeldet', ids(noPerm) === 'gha-missing-permissions');
+
+    // ci-other
+    const gl = 'image: node:latest\nvariables:\n  DEPLOY_TOKEN: "glpat-q7Wm2Xr9Lk4Pz8Vn"\n  SAFE_TOKEN: $CI_JOB_TOKEN\ninclude:\n  - remote: https://example.com/ci.yml\n  - project: group/templates\n    file: /ci.yml\nservices:\n  - docker:24-dind\nbuild:\n  script:\n    - curl -sL https://x.example/install.sh | sh\n';
+    const glF = keep(sup.ciOther([{ label: '.gitlab-ci.yml', content: gl }]));
+    check('gitlab: Klartext-Token, :latest, remote/unpinned include, dind, curl|sh', ids(glF) === 'ci-curl-pipe-sh,ci-docker-dind,ci-image-latest,ci-include-remote,ci-include-unpinned,ci-plaintext-secret' && !JSON.stringify(glF).includes('glpat-q7Wm2Xr9Lk4Pz8Vn'));
+    check('gitlab: gepinnt und über Variablen still', sup.ciOther([{ label: '.gitlab-ci.yml', content: `image: node:20@sha256:${'a'.repeat(64)}\nvariables:\n  DEPLOY_TOKEN: $VAULT_TOKEN\ninclude:\n  - project: group/templates\n    ref: ${'b'.repeat(40)}\n    file: /ci.yml\n` }]).length === 0);
+    const az = "pool:\n  vmImage: ubuntu-latest\nvariables:\n  - name: API_KEY\n    value: 'q7Wm2Xr9Lk4Pz8Vn'\nresources:\n  repositories:\n    - repository: templates\n      type: github\n      name: org/templates\nsteps:\n  - script: docker run --privileged myimg:1.0\n";
+    const azF = keep(sup.ciOther([{ label: 'azure-pipelines.yml', content: az }]));
+    check('azure: Klartext-Variable, Vorlagen ohne ref, --privileged (vmImage kein Fund)', ids(azF) === 'ci-include-unpinned,ci-plaintext-secret,ci-privileged-container');
+    const jf = "@Library('shared-lib') _\npipeline {\n  agent { docker { image 'maven:latest' } }\n  environment {\n    DB_PASSWORD = 'hunter2hunter2'\n    TOKEN = credentials('tok')\n  }\n  stages { stage('b') { steps { sh 'wget -qO- https://x.example/i.sh | bash' } } }\n}\n";
+    const jfF = keep(sup.ciOther([{ label: 'Jenkinsfile', content: jf }]));
+    check('jenkins: Bibliothek ohne Version, :latest, Klartext-Passwort, wget|bash', ids(jfF) === 'ci-curl-pipe-sh,ci-image-latest,ci-include-unpinned,ci-plaintext-secret');
+    check('jenkins: credentials() und gepinnte Bibliothek still', sup.ciOther([{ label: 'Jenkinsfile', content: `@Library('shared-lib@${'c'.repeat(40)}') _\npipeline {\n  agent any\n  environment { TOKEN = credentials('tok') }\n}\n` }]).length === 0);
+    const rn = keep(sup.ciOther([{ label: 'runner/config.toml', content: '[[runners]]\n  [runners.docker]\n    privileged = true\n' }]));
+    check('gitlab-runner: privileged erkannt, false still', ids(rn) === 'ci-privileged-runner' && sup.ciOther([{ label: 'config.toml', content: '[runners.docker]\n  privileged = false\n' }]).length === 0);
+
+    // cms (Projekt)
+    const wp = keep(cmsM.cmsConfig([{ label: 'site/wp-config.php', content: "<?php\ndefine('DB_NAME', 'x');\ndefine('WP_DEBUG', true);\n" }]));
+    check('cms: wp-config mit WP_DEBUG und ohne DISALLOW_FILE_EDIT', ids(wp) === 'wp-debug-on,wp-file-edit-allowed' && wp.find((f) => f.ruleId === 'wp-debug-on').location === 'site/wp-config.php:3');
+    check('cms: gehärtete wp-config still', cmsM.cmsConfig([{ label: 'wp-config.php', content: "<?php\ndefine('WP_DEBUG', false);\ndefine('DISALLOW_FILE_EDIT', true);\n" }]).length === 0);
+    const jo = keep(cmsM.cmsConfig([{ label: 'configuration.php', content: "<?php\nclass JConfig {\n  public $debug = '1';\n  public $error_reporting = 'maximum';\n}\n" }, { label: 'conf/LocalConfiguration.php', content: "<?php return ['SYS' => ['displayErrors' => 1, 'devIPmask' => '*']];" }]));
+    check('cms: Joomla-Debug, Fehlerausgabe und TYPO3-displayErrors', ids(jo) === 'joomla-debug-on,joomla-error-reporting,typo3-debug-on');
+    check('cms: Joomla ohne Debug still', cmsM.cmsConfig([{ label: 'configuration.php', content: "<?php\nclass JConfig {\n  public $debug = '0';\n}\n" }]).length === 0);
+    const inv = cmsM.cmsInventory([
+      { label: 'site/wp-includes/version.php', content: "<?php\n$wp_version = '6.1.1';\n" },
+      { label: 'site/wp-content/plugins/contact-form-7/wp-contact-form-7.php', content: '<?php\n/*\nPlugin Name: Contact Form 7\nVersion: 5.7.1\n*/\n' },
+      { label: 'site/wp-content/themes/twentytwenty/style.css', content: '/*\nTheme Name: Twenty Twenty\nVersion: 2.1\n*/\n' },
+      { label: 'site/wp-content/plugins/x/readme.txt', content: 'Stable tag: trunk\n' },
+    ]);
+    check('cms: Bestand mit Kern, Plugin und Theme', inv.map((x) => `${x.kind}:${x.slug}@${x.version}`).join(',') === 'core:wordpress@6.1.1,plugin:contact-form-7@5.7.1,theme:twentytwenty@2.1');
+    const hints = cmsM.cmsFromHtml([{ url: 'https://shop.example', html: '<meta name="generator" content="WordPress 6.1.1" /><link href="/wp-content/plugins/akismet/style.css?ver=5.0">' }]);
+    check('cms: Webseite verrät Version (generator) und Plugins', hints.length === 2 && hints[0].version === '6.1.1' && hints[1].weak === true && cmsM.cmsFromHtml([{ url: 'x', html: '<p>Hallo</p>' }]).length === 0);
+    keep(cmsM.webVersionFindings(hints, 'https://shop.example'));
+    const nvdUrls = [];
+    const nvdFetch = async (url) => { nvdUrls.push(url); return json(/wordpress%3Awordpress/.test(url) ? { totalResults: 1, vulnerabilities: [{ cve: { id: 'CVE-2023-1111', metrics: { cvssMetricV31: [{ cvssData: { baseScore: 8.1 } }] } } }] } : { totalResults: 0, vulnerabilities: [] }); };
+    const nv = await cmsM.lookupCmsVulns([...inv, ...hints], { fetchImpl: nvdFetch, gapMs: 0 });
+    keep(nv.findings);
+    check('cms: NVD-Abgleich meldet verwundbaren Kern, Plugin ohne Treffer still', nv.findings.length === 2 && nv.findings.every((f) => f.ruleId === 'cms-vulnerable-core' && f.severity === 'high' && f.cvss === 8.1) && nv.ran && nvdUrls.every((u) => /versionStart=/.test(u) && /virtualMatchString=/.test(u)) && !nvdUrls.some((u) => /akismet/.test(u)));
+    const nvBad = await cmsM.lookupCmsVulns(inv, { fetchImpl: async () => json({}, 500), gapMs: 0 });
+    check('cms: NVD nicht erreichbar – keine Befunde, nicht vollständig', !nvBad.findings.length && !nvBad.ran && nvBad.notes.length === 3);
+
+    // abandoned + scorecard (deps.dev)
+    const { checkPackageHealth } = require('../src/core/pkghealth');
+    const recent = new Date(Date.now() - 30 * 864e5).toISOString();
+    const dd2 = {
+      '/systems/npm/packages/oldpkg': { versions: [{ versionKey: { version: '1.0.0' }, publishedAt: '2019-01-01T00:00:00Z', isDefault: true }] },
+      '/systems/npm/packages/oldpkg/versions/1.0.0': { relatedProjects: [{ projectKey: { id: 'github.com/a/old' }, relationType: 'SOURCE_REPO' }] },
+      '/projects/github.com%2Fa%2Fold': { scorecard: { overallScore: 2.1, checks: [{ name: 'Maintained', score: 0, reason: 'project is archived' }, { name: 'Code-Review', score: 0 }] } },
+      '/systems/npm/packages/goodpkg': { versions: [{ versionKey: { version: '2.0.0' }, publishedAt: recent, isDefault: true }] },
+      '/systems/npm/packages/goodpkg/versions/2.0.0': { relatedProjects: [{ projectKey: { id: 'github.com/a/good' }, relationType: 'SOURCE_REPO' }] },
+      '/projects/github.com%2Fa%2Fgood': { scorecard: { overallScore: 8.2, checks: [{ name: 'Maintained', score: 10, reason: '30 commit(s) and 5 issue activity found in the last 90 days' }] } },
+    };
+    const ph = await checkPackageHealth([{ ecosystem: 'npm', name: 'oldpkg', version: '1.0.0' }, { ecosystem: 'npm', name: 'goodpkg', version: '2.0.0' }], { fetchImpl: async (url) => { const k = url.replace('https://api.deps.dev/v3', ''); return dd2[k] ? json(dd2[k]) : json({}, 404); } });
+    keep(ph.findings);
+    check('pakete: verwaist, archiviert und niedrige Scorecard erkannt', ids(ph.findings) === 'pkg-abandoned,pkg-low-scorecard,pkg-repo-archived' && ph.findings.every((f) => f.package.name === 'oldpkg') && ph.findings.find((f) => f.ruleId === 'pkg-low-scorecard').severity === 'low' && ph.ran);
+    const phOff = await checkPackageHealth([{ ecosystem: 'npm', name: 'oldpkg', version: '1.0.0' }], { fetchImpl: async () => { throw new Error('offline'); } });
+    check('pakete: offline – keine Befunde, Lauf unvollständig', !phOff.findings.length && !phOff.ran && /offline/.test(phOff.notes.join(' ')));
+
+    // malpkg (OSV MAL-)
+    const { lookupCves } = require('../src/core/cve');
+    const realFetch = global.fetch;
+    global.fetch = async (url) => /querybatch/.test(url) ? json({ results: [{ vulns: [{ id: 'MAL-2024-1234' }] }, { vulns: [{ id: 'GHSA-aaaa-bbbb-cccc' }] }] })
+      : /MAL-2024-1234/.test(url) ? json({ id: 'MAL-2024-1234', summary: 'Malicious code in evil-pkg (npm)' })
+        : json({ id: 'GHSA-aaaa-bbbb-cccc', summary: 'XSS', aliases: ['CVE-2024-0001'], database_specific: { severity: 'MODERATE' }, affected: [] });
+    let mal;
+    try { mal = await lookupCves([{ ecosystem: 'npm', name: 'evil-pkg', version: '1.0.0' }, { ecosystem: 'npm', name: 'lib', version: '2.0.0' }]); } finally { global.fetch = realFetch; }
+    keep(mal.findings.filter((f) => f.ruleId === 'malicious-package'));
+    const malF = mal.findings.find((f) => f.ruleId === 'malicious-package');
+    check('schadpaket: OSV-MAL-Eintrag wird kritisch gemeldet', !!malF && malF.severity === 'critical' && malF.package.name === 'evil-pkg' && /MAL-2024-1234/.test(malF.description));
+    check('schadpaket: normale Lücke bleibt eine normale Lücke', mal.findings.some((f) => f.package && f.package.name === 'lib' && f.ruleId !== 'malicious-package' && f.severity === 'medium'));
+
+    // secret-live
+    const { verifyLiveSecrets, signSts } = require('../src/core/secretlive');
+    const ghTok = 'ghp_' + 'A1b2C3d4'.repeat(5);
+    const slTok = 'xoxb-908172635401-Zq8Rt4Lm2Np7';
+    const sUnits = [{ label: 'cfg.js', content: `const gh = "${ghTok}";\nconst sl = "${slTok}";\nconst fake = "ghp_EXAMPLE${'x'.repeat(32)}";\n` }];
+    const sFind = prescan(sUnits, {}).findings.filter((f) => f.category === 'Secrets');
+    const calls = [];
+    const liveFetch = async (url, init) => { calls.push(`${(init && init.method) || 'GET'} ${url}`); return /api\.github\.com\/user$/.test(url) ? json({ login: 'x' }) : /slack\.com\/api\/auth\.test$/.test(url) ? json({ ok: false, error: 'invalid_auth' }) : json({}, 404); };
+    const sl = await verifyLiveSecrets(sFind, sUnits, { fetchImpl: liveFetch });
+    const ghF = sl.findings.find((f) => f.liveCheck && f.liveCheck.provider === 'GitHub');
+    const slF = sl.findings.find((f) => f.liveCheck && f.liveCheck.provider === 'Slack');
+    keep([ghF, slF].filter(Boolean));
+    check('live: gültiger GitHub-Token wird kritisch, gesperrter Slack-Token niedrig', ghF && ghF.severity === 'critical' && ghF.liveCheck.verdict === 'active' && slF && slF.severity === 'low' && slF.liveCheck.verdict === 'inactive');
+    check('live: nur je eine lesende Identitätsabfrage, Beispielwerte nicht angefragt', calls.length === 2 && calls.includes('GET https://api.github.com/user') && calls.includes('POST https://slack.com/api/auth.test'));
+    check('live: Schlüssel selbst wird nicht gespeichert', !JSON.stringify(sl.findings.map((f) => f.liveCheck)).includes(ghTok) && !JSON.stringify(sl.findings).includes(ghTok));
+    const { runSupplyExtras } = require('../src/core/supplychain');
+    let offCalls = 0;
+    await runSupplyExtras({ targets: [], units: sUnits, prescanFindings: sFind, config: { cveLookup: false }, fetchImpl: async () => { offCalls++; return json({}); } });
+    check('live: Standard aus – keine Anfrage', offCalls === 0);
+    const sts = signSts('AKIDEXAMPLE', 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY', new Date('2015-08-30T12:36:00Z'));
+    check('live: AWS-STS-Signatur (SigV4) korrekt aufgebaut', /^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\/20150830\/us-east-1\/sts\/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=[0-9a-f]{64}$/.test(sts.headers.Authorization) && sts.body === 'Action=GetCallerIdentity&Version=2011-06-15');
+
+    // layers (docker save)
+    const tarFile = (entries) => {
+      const bufs = [];
+      for (const [name, data, type = '0'] of entries) {
+        const body = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        const h = Buffer.alloc(512);
+        h.write(name, 0, 100); h.write('0000644\0', 100); h.write('0000000\0', 108); h.write('0000000\0', 116);
+        h.write(body.length.toString(8).padStart(11, '0') + '\0', 124); h.write('00000000000\0', 136); h.fill(' ', 148, 156); h.write(type, 156); h.write('ustar\0', 257); h.write('00', 263);
+        let sum = 0; for (const b of h) sum += b; h.write(sum.toString(8).padStart(6, '0') + '\0 ', 148);
+        bufs.push(h, body, Buffer.alloc((512 - (body.length % 512)) % 512));
+      }
+      bufs.push(Buffer.alloc(1024));
+      return Buffer.concat(bufs);
+    };
+    const layTok = 'ghp_' + 'Z9y8X7w6'.repeat(5);
+    const l1 = tarFile([['app/.env', 'SECRET=1'], ['app/setup.sh', `export GITHUB_TOKEN=${layTok}\n`], ['app/index.js', 'console.log(1)']]);
+    const l2 = tarFile([['app/.wh..env', ''], ['app/.wh.setup.sh', '']]);
+    const imageTar = (layer1, layer2) => tarFile([['manifest.json', JSON.stringify([{ Config: 'c.json', RepoTags: ['demo:1'], Layers: ['l1/layer.tar', 'l2/layer.tar'] }])], ['l1/layer.tar', layer1], ['l2/layer.tar', layer2]]);
+    const { analyzeImageLayers } = require('../src/core/layers');
+    const la = await analyzeImageLayers('demo:1', { save: async (img, out) => { fs.writeFileSync(out, imageTar(l1, l2)); return { ok: true }; } });
+    keep(la.findings);
+    const setupF = la.findings.find((f) => /setup\.sh/.test(f.title));
+    check('schichten: gelöschte .env und Skript mit Token gefunden', la.ran && la.findings.length === 2 && setupF.severity === 'critical' && la.findings.find((f) => /\.env/.test(f.title)).severity === 'high' && !JSON.stringify(la.findings).includes(layTok) && setupF.location === 'demo:1 [layer 1]');
+    const laGz = await analyzeImageLayers('demo:1', { save: async (img, out) => { fs.writeFileSync(out, imageTar(zlib.gzipSync(l1), l2)); return { ok: true }; } });
+    check('schichten: komprimierte Schicht wird gelesen', laGz.findings.length === 2);
+    const laClean = await analyzeImageLayers('demo:1', { save: async (img, out) => { fs.writeFileSync(out, imageTar(l1, tarFile([['app/new.txt', 'x']]))); return { ok: true }; } });
+    check('schichten: nichts gelöscht – kein Fund', laClean.ran && laClean.findings.length === 0);
+    const laMiss = await analyzeImageLayers('demo:1', { save: async () => ({ ok: false, missing: true }) });
+    check('schichten: ohne docker kein Fund und nicht als gelaufen gewertet', !laMiss.ran && !laMiss.findings.length && /docker/.test(laMiss.notes[0]));
+
+    // helm / kustomize
+    const hdir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-helm-'));
+    fs.mkdirSync(path.join(hdir, 'chart', 'templates'), { recursive: true }); fs.mkdirSync(path.join(hdir, 'kust'));
+    fs.writeFileSync(path.join(hdir, 'chart', 'Chart.yaml'), 'apiVersion: v2\nname: demo\nversion: 0.1.0\n');
+    fs.writeFileSync(path.join(hdir, 'kust', 'kustomization.yaml'), 'resources:\n  - pod.yaml\n');
+    const hUnits = [{ label: 'proj/chart/Chart.yaml', path: path.join(hdir, 'chart', 'Chart.yaml'), content: '' }, { label: 'proj/kust/kustomization.yaml', path: path.join(hdir, 'kust', 'kustomization.yaml'), content: '' }];
+    const helmOut = '---\n# Source: demo/templates/deploy.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  template:\n    spec:\n      containers:\n        - name: web\n          image: nginx:latest\n          securityContext:\n            privileged: true\n';
+    const kustOut = 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\nspec:\n  hostNetwork: true\n  securityContext:\n    runAsNonRoot: true\n  containers:\n  - name: c\n    image: busybox:1.36\n    resources:\n      limits:\n        cpu: 1\n';
+    const runs = [];
+    const fakeRun = async (cmd, args) => { runs.push([cmd, ...args].join(' ')); return cmd === 'helm' ? { ok: true, code: 0, stdout: helmOut } : cmd === 'kubectl' ? { ok: true, code: 0, stdout: kustOut } : { ok: false, error: 'ENOENT' }; };
+    const hx = await runSupplyExtras({ targets: [{ type: 'path', value: hdir }], units: hUnits, config: { cveLookup: false }, run: fakeRun });
+    const priv = hx.findings.find((f) => f.ruleId === 'k8s-privileged');
+    check('helm: gerendertes Chart mit Kubernetes-Regeln geprüft', priv && priv.source === 'helm-render' && /chart\/templates\/deploy\.yaml \[helm template\]:\d+$/.test(priv.location) && runs.some((r) => /^helm template vigil-audit /.test(r)));
+    check('kustomize: Rückfall auf kubectl kustomize', hx.findings.some((f) => f.ruleId === 'k8s-hostnetwork' && f.source === 'kustomize-render') && hx.ran.some((r) => r.source === 'helm-render') && hx.ran.some((r) => r.source === 'kustomize-render'));
+    const hMiss = await runSupplyExtras({ targets: [{ type: 'path', value: hdir }], units: hUnits, config: { cveLookup: false }, run: async () => ({ ok: false, error: 'ENOENT' }) });
+    check('helm/kustomize: fehlende Werkzeuge still übersprungen', !hMiss.findings.length && !hMiss.notes.length && !hMiss.ran.length);
+    fs.rmSync(hdir, { recursive: true, force: true });
+
+    // sbom
+    const sbom = require('../src/core/sbom');
+    const res = { meta: { sbom: [{ ecosystem: 'npm', name: '@babel/core', version: '7.22.0' }, { ecosystem: 'PyPI', name: 'Django', version: '4.2.1' }, { ecosystem: 'Maven', name: 'org.apache.logging.log4j:log4j-core', version: '2.14.1' }, { ecosystem: 'Go', name: 'github.com/gin-gonic/gin', version: '1.9.0' }, { ecosystem: 'npm', name: '@babel/core', version: '7.22.0' }] },
+      findings: [{ ruleId: 'CVE-2021-44228', title: 'Verwundbare Abhaengigkeit: log4j-core 2.14.1 (CVE-2021-44228)', severity: 'critical', cvss: 10, package: { ecosystem: 'Maven', name: 'org.apache.logging.log4j:log4j-core', version: '2.14.1', fixed: '2.17.1' } }] };
+    const cdx = JSON.parse(sbom.sbomJson(res, 'cyclonedx', { name: 'C:\\x\\shop' }));
+    const purls = cdx.components.map((c) => c.purl).sort();
+    check('sbom: CycloneDX 1.5 mit Paket-URLs', cdx.bomFormat === 'CycloneDX' && cdx.specVersion === '1.5' && /^urn:uuid:[0-9a-f-]{36}$/.test(cdx.serialNumber) && cdx.metadata.component.name === 'shop' && purls.join(' ') === 'pkg:golang/github.com/gin-gonic/gin@v1.9.0 pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1 pkg:npm/%40babel/core@7.22.0 pkg:pypi/django@4.2.1');
+    check('sbom: CycloneDX mit bekannter Lücke am betroffenen Paket', cdx.vulnerabilities.length === 1 && cdx.vulnerabilities[0].id === 'CVE-2021-44228' && cdx.vulnerabilities[0].affects[0].ref === 'pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1' && cdx.dependencies[0].dependsOn.length === 4);
+    const spdx = JSON.parse(sbom.sbomJson(res, 'spdx', { name: 'shop' }));
+    check('sbom: SPDX 2.3 mit Paketen und Beziehungen', spdx.spdxVersion === 'SPDX-2.3' && spdx.dataLicense === 'CC0-1.0' && spdx.packages.length === 5 && spdx.packages.every((p) => /^SPDXRef-[A-Za-z0-9.-]+$/.test(p.SPDXID)) && spdx.relationships.filter((r) => r.relationshipType === 'DEPENDS_ON').length === 4 && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(spdx.creationInfo.created) && spdx.packages[1].externalRefs[0].referenceType === 'purl');
+    check('sbom: leeres Ergebnis ergibt leere Liste', sbom.packagesOf({ meta: {} }).length === 0 && sbom.toCycloneDx({}).components.length === 0 && !('vulnerabilities' in sbom.toCycloneDx({})));
+
+    // Englische Texte für alle neuen Befunde
+    const GER2 = /[äöüß]|\b(der|die|das|und|nicht|ist|mit|für|oder|wird|werden|auf|eine?|zu|von|bei|nach|aus|sich)\b/;
+    const left2 = all.map(i18n.localizeFinding).flatMap((f) => [f.title, f.description, f.impact, f.remediation]).filter((t) => t && GER2.test(t));
+    check('englisch: neue Lieferketten-Befunde übersetzt', left2.length === 0);
+    if (left2.length) console.log(left2.slice(0, 60).map((t) => '      ' + t).join('\n'));
   }
 
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);

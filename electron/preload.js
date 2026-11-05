@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('vigil', {
   cancelAudit: () => ipcRenderer.invoke('audit:cancel'),
   estimateAudit: (payload) => ipcRenderer.invoke('audit:estimate', payload),
   saveReport: (format) => ipcRenderer.invoke('report:save', { format }),
+  // Paketliste (SBOM): 'cyclonedx' (CycloneDX 1.5 JSON) oder 'spdx' (SPDX 2.3 JSON)
+  saveSbom: (format) => ipcRenderer.invoke('report:save', { format: format === 'spdx' ? 'spdx' : 'cyclonedx' }),
 
   // Befund-Lebenszyklus & Uebersicht
   setFindingStatus: (id, status, note) => ipcRenderer.invoke('finding:setStatus', id, { status, ...(note ? { note } : {}) }),

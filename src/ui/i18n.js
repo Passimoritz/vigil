@@ -182,6 +182,11 @@
     'DB Connection String mit Passwort': 'DB connection string with password', 'Shell-Ausfuehrung mit moeglicher Eingabe': 'Shell execution with possible input', 'Pfad aus Eingabe': 'Path from input', 'Shell mit shell=True (Python)': 'Shell with shell=True (Python)',
     'XML-Parser (auf XXE pruefen)': 'XML parser (check for XXE)', 'Open Redirect aus Eingabe': 'Open redirect from input', 'Fehlerdetails/Stacktrace nach aussen': 'Error details/stack trace exposed', 'Java: alle Zertifikate/Hosts akzeptiert': 'Java: accepts all certificates/hosts',
     'PHP: LFI/RFI (include aus Eingabe)': 'PHP: LFI/RFI (include from input)', '.NET: SqlCommand mit Konkatenation': '.NET: SqlCommand with concatenation', 'Pipe nach Shell (curl|bash)': 'Pipe to shell (curl|bash)',
+    // Lieferkette: SBOM-Export und Live-Pruefung von Schluesseln
+    'Paketliste, CycloneDX 1.5 JSON': 'Package list, CycloneDX 1.5 JSON', 'Paketliste, SPDX 2.3 JSON': 'Package list, SPDX 2.3 JSON',
+    'Gefundene Schlüssel live prüfen': 'Check found keys live',
+    'Fragt beim Anbieter nach, ob ein gefundener Schlüssel noch gilt – je Schlüssel eine harmlose, nur lesende Abfrage (GitHub, AWS, Slack, OpenAI, Anthropic, Stripe). Es wird nichts verändert; gespeichert wird nur das Ergebnis. Standard: aus.': 'Asks the provider whether a found key is still valid – one harmless, read-only request per key (GitHub, AWS, Slack, OpenAI, Anthropic, Stripe). Nothing is changed; only the verdict is stored. Default: off.',
+    'Keine Paketliste im Ergebnis – es wurden keine Abhängigkeiten erkannt.': 'No package list in the result – no dependencies were detected.',
   };
   // Teil-Uebersetzungen fuer zusammengesetzte Texte (Regex -> Ersatz)
   const PARTS = [

@@ -284,6 +284,8 @@
             <button id="exportMdBtn" role="menuitem"><b>Markdown</b><span>für Tickets und Wikis</span></button>
             <button id="exportSarifBtn" role="menuitem"><b>SARIF</b><span>VS Code, GitHub Code Scanning, CI</span></button>
             <button id="exportJsonBtn" role="menuitem"><b>JSON</b><span>maschinenlesbar, inkl. Risiko und Lösungen</span></button>
+            <button id="exportCdxBtn" role="menuitem"><b>SBOM (CycloneDX)</b><span>Paketliste, CycloneDX 1.5 JSON</span></button>
+            <button id="exportSpdxBtn" role="menuitem"><b>SBOM (SPDX)</b><span>Paketliste, SPDX 2.3 JSON</span></button>
           </div>
         </div>
         <button id="newScanBtn" class="btn primary">Neue Prüfung</button>
@@ -609,6 +611,10 @@
           <div class="set-row">
             <div class="set-label"><b>Secrets schwärzen</b><span>Bevor Code an externe KI-Anbieter geht. Lokale Modelle sehen den Code unverändert, dort verlässt nichts den Rechner.</span></div>
             <label class="switch"><input type="checkbox" id="redactChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Gefundene Schlüssel live prüfen</b><span>Fragt beim Anbieter nach, ob ein gefundener Schlüssel noch gilt – je Schlüssel eine harmlose, nur lesende Abfrage (GitHub, AWS, Slack, OpenAI, Anthropic, Stripe). Es wird nichts verändert; gespeichert wird nur das Ergebnis. Standard: aus.</span></div>
+            <label class="switch"><input type="checkbox" id="secretLiveChk" /><span></span></label>
           </div>
         </section>
 

@@ -558,4 +558,4 @@ async function runBandit(targetPath, { signal, onProgress = () => {} } = {}) {
   return { findings, notes: [`bandit: ${findings.length} Fund(e).`] };
 }
 
-module.exports = { runNmap, runNuclei, runGitleaks, parseGitleaks, runTrivyFs, runTrivyImage, parseTrivy, runSemgrep, runCheckov, runRetire, runHadolint, runOsvScanner, parseOsv, runGrype, parseGrype, runTrufflehog, parseTrufflehog, runBandit, parseBandit, NMAP, NUCLEI, GITLEAKS, TRIVY, SEMGREP, CHECKOV, RETIRE_JS, HADOLINT, OSV, GRYPE, TRUFFLEHOG, BANDIT };
+module.exports = { runTool, runNmap,runNuclei, runGitleaks, parseGitleaks, runTrivyFs, runTrivyImage, parseTrivy, runSemgrep, runCheckov, runRetire, runHadolint, runOsvScanner, parseOsv, runGrype, parseGrype, runTrufflehog, parseTrufflehog, runBandit, parseBandit, NMAP, NUCLEI, GITLEAKS, TRIVY, SEMGREP, CHECKOV, RETIRE_JS, HADOLINT, OSV, GRYPE, TRUFFLEHOG, BANDIT };

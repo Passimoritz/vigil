@@ -147,4 +147,4 @@ function runIac(units) {
   return out;
 }
 
-module.exports = { runIac, hclBlocks };
+module.exports = { runIac, hclBlocks, kubernetes };

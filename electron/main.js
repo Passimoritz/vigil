@@ -192,7 +192,7 @@ function defaultConfig() {
   for (const [id, p] of Object.entries(PROVIDERS)) {
     providers[id] = { model: p.defaultModel, apiKey: '', baseUrl: p.defaultBaseUrl };
   }
-  return { selected: 'ollama', lang: 'en', temperature: 0.1, maxTokens: 8192, cveLookup: true, analysisDepth: 'thorough', aiValidation: true, redactSecrets: true, activeScan: false, proxyUrl: '', customRules: [], disabledRules: [], allowlist: [], apiEnabled: false, apiPort: 7811, apiToken: '', providers };
+  return { selected: 'ollama', lang: 'en', temperature: 0.1, maxTokens: 8192, cveLookup: true, analysisDepth: 'thorough', aiValidation: true, redactSecrets: true, activeScan: false, secretLiveCheck: false, proxyUrl: '', customRules: [], disabledRules: [], allowlist: [], apiEnabled: false, apiPort: 7811, apiToken: '', providers };
 }
 
 function loadConfig() {
@@ -321,7 +321,7 @@ app.whenReady().then(() => {
     runAudit,
     buildConfig: (providerId) => {
       const c = loadConfig(); applyProxySafe(c);
-      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), webCrawl: c.webCrawl !== false, malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4 };
+      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), webCrawl: c.webCrawl !== false, malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4, secretLiveCheck: c.secretLiveCheck === true };
     },
   });
   api = createApi({ orchestrator, getConfig: loadConfig, enforceScope });
@@ -657,6 +657,18 @@ ipcMain.handle('meta:rules', () => ruleNames());
 
 ipcMain.handle('report:save', async (_e, { format }) => {
   if (!lastResult) return { ok: false, error: 'Noch kein Ergebnis vorhanden.' };
+  // Paketliste (SBOM) als CycloneDX 1.5 bzw. SPDX 2.3 (JSON)
+  if (format === 'cyclonedx' || format === 'spdx') {
+    const sbom = require('../src/core/sbom');
+    if (!sbom.packagesOf(lastResult).length) return { ok: false, error: 'Keine Paketliste im Ergebnis – es wurden keine Abhängigkeiten erkannt.' };
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+    const ext = format === 'spdx' ? 'spdx.json' : 'cdx.json';
+    const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('documents'), `vigil-sbom-${stamp}.${ext}`), filters: [{ name: format === 'spdx' ? 'SPDX JSON' : 'CycloneDX JSON', extensions: ['json'] }] });
+    if (r.canceled) return { ok: false, canceled: true };
+    const name = (lastTargets.find((t) => t.type === 'path') || lastTargets[0] || {}).value || 'vigil-project';
+    try { fs.writeFileSync(r.filePath, sbom.sbomJson(lastResult, format, { name }), 'utf8'); return { ok: true, path: r.filePath }; }
+    catch (err) { return { ok: false, error: err.message }; }
+  }
   const exec = format === 'exec' || format === 'execpdf';
   const ext = format === 'md' ? 'md' : format === 'sarif' ? 'sarif' : format === 'pdf' || format === 'execpdf' ? 'pdf' : format === 'json' ? 'json' : 'html';
   const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
