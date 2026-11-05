@@ -305,6 +305,20 @@
     'Nichts Neues.': 'Nothing new.', 'Nichts behoben.': 'Nothing fixed.', 'Keine gemeinsamen Befunde.': 'No findings in common.', 'Bitte zwei verschiedene Läufe wählen.': 'Please choose two different runs.',
     // Browser-Erweiterung
     'Adresse aus dem Browser übernehmen?': 'Take over the address from the browser?', 'Übernehmen': 'Add', 'Adresse übernommen – bitte Berechtigung bestätigen und hinzufügen': 'Address taken over – please confirm authorisation and add it',
+    // Namen der Pruefmodule ("Erkannt durch …")
+    'API-Abruf ohne Anmeldung': 'API call without login', 'API-Beschreibungen': 'API descriptions', 'Archive': 'Archives', 'Eingebaute Bibliotheken': 'Bundled libraries',
+    'CI-Systeme': 'CI systems', 'CMS-Konfiguration': 'CMS configuration', 'CMS-Versionen (NVD)': 'CMS versions (NVD)', 'CMS-Erkennung': 'CMS detection', 'Code-Qualität': 'Code quality',
+    'Krypto-Inventar': 'Crypto inventory', 'Domain-Ablauf': 'Domain expiry', 'Dokumente': 'Documents', 'Framework-Regeln': 'Framework rules', 'Zugangsdaten-Regeln (Feed)': 'Credential rules (feed)',
+    'Infrastruktur als Code': 'Infrastructure as code', 'Image-Schichten': 'Image layers', 'Skripte der Webseite': 'Website scripts', 'Sprach-Regeln': 'Language rules', 'Lizenzen': 'Licenses',
+    'Phishing-Links': 'Phishing links', 'Verknüpfungen': 'Shortcuts', 'Lockfile-Abgleich': 'Lockfile check', 'E-Mails': 'E-mails', 'E-Mail-Sicherheit': 'E-mail security',
+    'MCP-Konfiguration': 'MCP configuration', 'Handy-Apps': 'Mobile apps', 'KI-Modelldateien': 'AI model files', 'Texterkennung in Bildern': 'Text recognition in images', 'Paket-Pflege': 'Package maintenance',
+    'Programm-Schutzfunktionen': 'Program protections', 'Personenbezogene Daten': 'Personal data', 'JS-Bibliotheken (Feed)': 'JS libraries (feed)', 'Verschleierte Skripte': 'Obfuscated scripts',
+    'Digitale Signatur': 'Digital signature', 'SQL-Rechte': 'SQL privileges', 'Datenfluss-Analyse': 'Data flow analysis', 'TLS im Detail': 'TLS in detail', 'Tippfehler-Domains': 'Typo domains',
+    'Barrierefreiheit': 'Accessibility', 'Änderungs-Wächter': 'Change watch', 'Unterseiten-Durchgang': 'Page crawl', 'CSP-Vorschlag': 'CSP suggestion', 'Impressum & Datenschutz': 'Imprint & privacy policy',
+    'Defekte Links': 'Broken links', 'Login-Prüfung': 'Login check', 'Observatory-Note': 'Observatory grade', 'Datenschutz der Webseite': 'Website privacy', 'Testwerte in Parametern': 'Test values in parameters',
+    'Ladezeit': 'Load time', 'SRI-Prüfsummen': 'SRI hashes', 'Webserver-Konfiguration': 'Web server configuration', 'AWS-Konto': 'AWS account', 'Windows-PC': 'Windows PC', 'Datensicherung': 'Backup',
+    'CI/CD-Konten': 'CI/CD accounts', 'Datenbank': 'Database', 'Hosting-Anbieter': 'Hosting providers', 'Cloud-Rechte': 'Cloud permissions', 'Heimnetz': 'Home network', 'Linux-Server': 'Linux server',
+    'Router': 'Router', 'Installierte Programme': 'Installed programs',
   };
   // Teil-Uebersetzungen fuer zusammengesetzte Texte (Regex -> Ersatz)
   const PARTS = [
