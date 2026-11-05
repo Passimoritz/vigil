@@ -52,4 +52,9 @@ const ENV = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', gemini: 
   const name = `${provider || 'regeln'}-${String(config.model || 'ohne-ki').replace(/[^\w.-]+/g, '_')}-${new Date().toISOString().slice(0, 10)}.json`;
   fs.writeFileSync(path.join(out, name), JSON.stringify({ at: new Date().toISOString(), provider: provider || null, model: config.model || null, ...s }, null, 2));
   console.log(`\n  Gespeichert: bench/results/${name}`);
+  // Regeln ohne KI muessen die Mindestwerte aus expected.json halten (CI-tauglich, Exit-Code 1)
+  if (!provider && (s.recall < (expected.minRecall || 0) || s.precision < (expected.minPrecision || 0))) {
+    console.error(`\n  FAIL: below minimum (recall ${pct(expected.minRecall || 0)}, precision ${pct(expected.minPrecision || 0)})`);
+    process.exit(1);
+  }
 })().catch((e) => { console.error(e); process.exit(1); });

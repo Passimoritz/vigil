@@ -31,4 +31,26 @@ if (env.VIGIL_SIGN_ENDPOINT && env.VIGIL_SIGN_ACCOUNT && env.VIGIL_SIGN_PROFILE 
   console.log('Signierung: keine Zugangsdaten gefunden – Build bleibt unsigniert (siehe SIGNING.md).');
 }
 
+// Electron-Fuses (ueber das in electron-builder eingebaute @electron/fuses, offline verfuegbar):
+// im fertigen Programm lassen sich keine Node-Schalter mehr einschleusen und nur die geprueften
+// Dateien aus app.asar laden. Details: docs/THREAT_MODEL.md ("Build hardening").
+//  - runAsNode off                          ELECTRON_RUN_AS_NODE macht aus Vigil.exe kein node.exe
+//  - enableNodeOptionsEnvironmentVariable   NODE_OPTIONS / NODE_EXTRA_CA_CERTS werden ignoriert
+//  - enableNodeCliInspectArguments off      kein --inspect-Debugger von aussen
+//  - enableEmbeddedAsarIntegrityValidation  app.asar wird beim Laden gegen den eingebetteten Hash geprueft
+//  - onlyLoadAppFromAsar                    kein Ausweichen auf einen entpackten "app"-Ordner
+//  - enableCookieEncryption                 Cookie-Speicher mit OS-Schluessel verschluesselt
+// Abschalten (z. B. zur Fehlersuche): VIGIL_NO_FUSES=1 npm run dist
+config.asar = true;
+if (env.VIGIL_NO_FUSES !== '1') {
+  config.electronFuses = {
+    runAsNode: false,
+    enableCookieEncryption: true,
+    enableNodeOptionsEnvironmentVariable: false,
+    enableNodeCliInspectArguments: false,
+    enableEmbeddedAsarIntegrityValidation: true,
+    onlyLoadAppFromAsar: true,
+  };
+}
+
 module.exports = config;

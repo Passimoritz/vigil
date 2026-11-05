@@ -1018,6 +1018,137 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('englisch: Code-Blöcke im Bericht bleiben unverändert', md0.split('```').filter((x, i) => i % 2).join() === md.split('```').filter((x, i) => i % 2).join());
   }
 
+  // --- Selbstschutz: Sandbox, Download-Pruefung, Verschluesselung, App-Sperre, Selbst-Scan ---
+  {
+    const fs = require('fs'); const os = require('os'); const path = require('path'); const crypto = require('crypto');
+    // Sandbox fuer externe Werkzeuge
+    const sb = require('../src/core/sandbox');
+    const env = sb.minimalEnv({ PATH: 'C:\\Windows', SystemRoot: 'C:\\Windows', ANTHROPIC_API_KEY: 'sk-ant-x', OPENAI_API_KEY: 'sk-x', GITHUB_TOKEN: 'ghp_x', AWS_SECRET_ACCESS_KEY: 'a', TRIVY_CACHE_DIR: 'C:\\c', SEMGREP_APP_TOKEN: 't', HTTPS_PROXY: 'http://user:pw@proxy:3128', RANDOM_VAR: 'x' });
+    check('sandbox: Umgebung ohne Schlüssel und Tokens', !env.ANTHROPIC_API_KEY && !env.OPENAI_API_KEY && !env.GITHUB_TOKEN && !env.AWS_SECRET_ACCESS_KEY && !env.SEMGREP_APP_TOKEN && !env.RANDOM_VAR);
+    check('sandbox: nötige Variablen bleiben, Proxy ohne Zugangsdaten', env.PATH === 'C:\\Windows' && env.SystemRoot && env.TRIVY_CACHE_DIR === 'C:\\c' && env.HTTPS_PROXY === 'http://proxy:3128/');
+    const tdir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-sb-'));
+    check('sandbox: Arbeitsordner = Ziel bzw. Temp-Ordner', sb.targetCwd(['scan', tdir]) === tdir && sb.targetCwd(['-u', 'https://x.example']) === os.tmpdir());
+    let seen = null;
+    const fakeSpawn = (cmd, args, opts) => { seen = { cmd, args, opts }; const { EventEmitter } = require('events'); const c = new EventEmitter(); c.stdout = new EventEmitter(); c.stderr = new EventEmitter(); c.kill = () => { c.killed = true; setImmediate(() => c.emit('close', null)); }; setImmediate(() => { c.stdout.emit('data', Buffer.alloc(3000, 65)); c.stdout.emit('data', Buffer.alloc(3000, 66)); }); return c; };
+    const r = await sb.runSandboxed('tool', ['scan', tdir], { spawnImpl: fakeSpawn, maxBytes: 4096, timeoutMs: 5000 });
+    check('sandbox: keine Shell, Ausgabe begrenzt, Prozess beendet', seen.opts.shell === false && seen.opts.cwd === tdir && !('ANTHROPIC_API_KEY' in seen.opts.env) && r.truncated && r.stdout.length === 4096);
+    const r2 = await sb.runSandboxed('tool', ['a\0b'], { spawnImpl: fakeSpawn });
+    const r3 = await sb.runSandboxed('tool', ['x'], { spawnImpl: (c, a, o) => { const { EventEmitter } = require('events'); const ch = new EventEmitter(); ch.stdout = new EventEmitter(); ch.stderr = new EventEmitter(); ch.kill = () => setImmediate(() => ch.emit('close', null)); return ch; }, timeoutMs: 30 });
+    check('sandbox: ungültige Argumente abgelehnt, Zeitlimit greift', !r2.ok && r3.timedOut);
+    const real = await sb.runSandboxed(process.execPath, ['-e', 'process.stdout.write(String(!!process.env.VIGIL_SB_SECRET_TOKEN))'], { timeoutMs: 20000 });
+    process.env.VIGIL_SB_SECRET_TOKEN = 'x';
+    const real2 = await sb.runSandboxed(process.execPath, ['-e', 'process.stdout.write(String(!!process.env.VIGIL_SB_SECRET_TOKEN))'], { timeoutMs: 20000 });
+    delete process.env.VIGIL_SB_SECRET_TOKEN;
+    check('sandbox: echter Prozess sieht keine Geheimnisse', real.ok && real.stdout === 'false' && real2.stdout === 'false');
+    fs.rmSync(tdir, { recursive: true, force: true });
+
+    // Download-Pruefung: SHA-256-Pinning und minisign
+    const vf = require('../src/core/verify');
+    const payload = Buffer.from('feed-data');
+    check('verify: SHA-256-Pin passt / Abweichung wird abgelehnt', vf.verifySha256(payload, vf.sha256(payload)).pinned && (() => { try { vf.verifySha256(payload, 'ab'.repeat(32)); return false; } catch { return true; } })());
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const keyId = crypto.randomBytes(8);
+    const pubRaw = Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url');
+    const pubText = 'untrusted comment: minisign public key\n' + Buffer.concat([Buffer.from('Ed'), keyId, pubRaw]).toString('base64') + '\n';
+    const mkSig = (data, alg = 'ED', comment = 'timestamp:1') => {
+      const msg = alg === 'ED' ? crypto.createHash('blake2b512').update(data).digest() : data;
+      const sig = crypto.sign(null, msg, privateKey);
+      const glob = crypto.sign(null, Buffer.concat([sig, Buffer.from(comment)]), privateKey);
+      return `untrusted comment: sig\n${Buffer.concat([Buffer.from(alg), keyId, sig]).toString('base64')}\ntrusted comment: ${comment}\n${glob.toString('base64')}\n`;
+    };
+    const throws = (fn) => { try { fn(); return false; } catch { return true; } };
+    check('verify: minisign (vorgehasht und klassisch) gültig', vf.verifyMinisign(payload, mkSig(payload), pubText).ok && vf.verifyMinisign(payload, mkSig(payload, 'Ed'), pubText).trustedComment === 'timestamp:1');
+    const tampered = mkSig(payload).split('\n'); tampered[2] = 'trusted comment: timestamp:2';
+    check('verify: veränderte Datei, Kommentar oder fremder Schlüssel abgelehnt', throws(() => vf.verifyMinisign(Buffer.from('other'), mkSig(payload), pubText)) && throws(() => vf.verifyMinisign(payload, tampered.join('\n'), pubText)) && throws(() => vf.verifyMinisign(payload, mkSig(payload).replace(/^(untrusted comment: sig\n)(\S+)/, (m, a, b) => { const x = Buffer.from(b, 'base64'); x[3] ^= 1; return a + x.toString('base64'); }), pubText)));
+    // Feeds: Pins und Integritaet im Cache
+    const feeds = require('../src/core/feeds');
+    const toml = Array.from({ length: 55 }, (_, i) => `[[rules]]\nid = "r${i}"\nregex = '''x${i}_[a-z]{9}'''\n`).join('\n');
+    const repo = JSON.stringify(Object.fromEntries(Array.from({ length: 22 }, (_, i) => [`l${i}`, { vulnerabilities: [{ below: '1.0.0' }], extractors: { filename: [`l${i}-(§§version§§).js`] } }])));
+    const fake = (bodies) => async (url) => ({ ok: bodies[url] !== undefined, status: bodies[url] === undefined ? 404 : 200, arrayBuffer: async () => Buffer.from(bodies[url] || '') });
+    const fdir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-pins-'));
+    const bodies = { [feeds.FEEDS[0].urls[0]]: toml, [feeds.FEEDS[1].urls[0]]: repo };
+    fs.writeFileSync(path.join(fdir, 'pins.json'), JSON.stringify({ 'gitleaks-rules': { sha256: ['00'.repeat(32)] }, retirejs: { sha256: [vf.sha256(Buffer.from(repo))] } }));
+    const pr = await feeds.syncFeeds(fdir, { fetchImpl: fake(bodies) });
+    check('verify: Feed mit falschem Pin abgelehnt, passender übernommen', !pr[0].ok && /SHA-256/.test(pr[0].error) && pr[1].ok && feeds.loadFeed(fdir, 'retirejs').pinned === true);
+    const ff = path.join(fdir, 'retirejs.json'); const rec = JSON.parse(fs.readFileSync(ff, 'utf8')); rec.data.l0.vulnerabilities[0].below = '9.9.9'; fs.writeFileSync(ff, JSON.stringify(rec));
+    check('verify: veränderter Feed im Cache wird nicht verwendet', feeds.loadFeed(fdir, 'retirejs') === null && feeds.needsFeedSync(fdir));
+    fs.rmSync(fdir, { recursive: true, force: true });
+
+    // Verschluesselung im Ruhezustand
+    const sf = require('../src/core/securefile');
+    const st = require('../src/core/store');
+    const edir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-enc-'));
+    const fakeSafe = { isEncryptionAvailable: () => true, encryptString: (s) => Buffer.from('W' + Buffer.from(s).toString('hex')), decryptString: (b) => Buffer.from(String(b).slice(1), 'hex').toString() };
+    const cipher = sf.loadOrCreateKey(path.join(edir, 'data.key'), fakeSafe);
+    const cipher2 = sf.loadOrCreateKey(path.join(edir, 'data.key'), fakeSafe);
+    const blob = cipher.encrypt('{"a":1}');
+    check('verschlüsselung: AES-256-GCM Hin und zurück, Schlüssel bleibt gleich', sf.isEncrypted(blob) && cipher2.decrypt(blob).toString() === '{"a":1}' && !blob.includes(Buffer.from('"a"')));
+    const bad = Buffer.from(blob); bad[bad.length - 1] ^= 1;
+    check('verschlüsselung: Manipulation wird erkannt', throws(() => cipher.decrypt(bad)));
+    check('verschlüsselung: ohne Schlüsselverwaltung kein Schlüssel', sf.loadOrCreateKey(path.join(edir, 'x.key'), { isEncryptionAvailable: () => false }) === null);
+    const sfile = path.join(edir, 'findings-store.json');
+    const plain = st.emptyStore(); plain.findings.abc = { id: 'abc', title: 'Geheimer Befund', status: 'OPEN', severity: 'high' };
+    fs.writeFileSync(sfile, JSON.stringify(plain));
+    st.setCipher(cipher);
+    const migrated = st.load(sfile);
+    const onDisk = fs.readFileSync(sfile);
+    check('verschlüsselung: Klartext-Speicher wird beim Laden migriert', migrated.findings.abc.title === 'Geheimer Befund' && sf.isEncrypted(onDisk) && !onDisk.includes(Buffer.from('Geheimer')));
+    migrated.findings.def = { id: 'def', title: 'Zweiter', status: 'OPEN', severity: 'low' };
+    st.save(sfile, migrated);
+    check('verschlüsselung: Speichern und Laden (verschlüsselt)', Object.keys(st.load(sfile).findings).length === 2);
+    st.setCipher(sf.createCipher(crypto.randomBytes(32)));
+    const wrong = st.load(sfile);
+    const kept = fs.readdirSync(edir).filter((f) => f.startsWith('findings-store.json.unreadable-'));
+    check('verschlüsselung: falscher Schlüssel überschreibt nichts (Datei gesichert)', Object.keys(wrong.findings).length === 0 && kept.length === 1 && sf.isEncrypted(fs.readFileSync(path.join(edir, kept[0]))));
+    st.setCipher(null);
+    const hdir = path.join(edir, 'history'); fs.mkdirSync(hdir); fs.writeFileSync(path.join(hdir, 'r1.json'), '{"findings":[]}');
+    check('verschlüsselung: Verlauf-Ordner migriert', sf.migrateDir(hdir, cipher) === 1 && sf.readJson(path.join(hdir, 'r1.json'), cipher).encrypted && sf.migrateDir(hdir, cipher) === 0);
+    fs.rmSync(edir, { recursive: true, force: true });
+
+    // App-Sperre
+    const al = require('../src/core/applock');
+    const rec2 = al.hashPassword('richtig-123');
+    check('app-sperre: scrypt-Hash, richtiges und falsches Passwort', rec2.algo === 'scrypt' && !JSON.stringify(rec2).includes('richtig') && al.verifyPassword('richtig-123', rec2) && !al.verifyPassword('falsch-123', rec2));
+    let t = 1000;
+    const ls = al.createLockState({ now: () => t });
+    ls.lock();
+    for (let i = 0; i < 5; i++) ls.attempt('nope', rec2);
+    const blocked = ls.attempt('richtig-123', rec2);
+    t += 5 * 60 * 1000;
+    const after = ls.attempt('richtig-123', rec2);
+    check('app-sperre: nach 5 Fehlversuchen Wartezeit, danach entsperrt', !blocked.ok && blocked.waitMs > 0 && after.ok && !ls.isLocked());
+    check('app-sperre: Einstellungen normalisiert', al.normalizeSettings({ enabled: true }).enabled === false && al.normalizeSettings({ idleMinutes: 9999 }).idleMinutes === 240 && al.validateNewPassword('kurz') && !al.validateNewPassword('lang-genug'));
+
+    // Visuelle Regression: PNG-Kodierung und Vergleich
+    const png = require('./visual/png');
+    const img = { width: 4, height: 3, data: Buffer.alloc(48, 120) };
+    const back = png.decode(png.encode(img));
+    const img2 = { width: 4, height: 3, data: Buffer.from(img.data) }; img2.data[0] = 250;
+    check('visuell: PNG hin und zurück, Pixel-Unterschied mit Toleranz', back.width === 4 && back.data.equals(img.data) && png.compare(img, img2).diffPixels === 1 && png.compare(img, back).diffPixels === 0);
+
+    // Selbst-Scan: Vigils eigene Pruefungen auf Vigils eigenen Code
+    const { ingestTargets } = require('../src/core/ingest');
+    const { prescan } = require('../src/core/prescan');
+    const { runStaticModules } = require('../src/core/modules/static');
+    const { dedupeFindings } = require('../src/core/schema');
+    const self = await ingestTargets([{ type: 'path', value: path.join(__dirname, '..', 'src') }, { type: 'path', value: path.join(__dirname, '..', 'electron') }]);
+    const selfF = dedupeFindings([...prescan(self.units, {}).findings, ...runStaticModules(self.units).findings]);
+    const crit = selfF.filter((f) => f.severity === 'critical');
+    // Regel-Definitionen enthalten die gesuchten Muster selbst (z. B. "jwt.decode(") – das sind keine Luecken
+    const RULE_FILES = /modules[\\/](static|langs|iac|mobile|webdeep)\.js|prescan\.js|findings-en\.js|remedies\.js/;
+    const high = selfF.filter((f) => f.severity === 'high' && !RULE_FILES.test(f.location));
+    check(`selbst-scan: keine kritischen Befunde in Vigils eigenem Code (${self.units.length} Dateien)`, self.units.length > 40 && crit.length === 0);
+    check('selbst-scan: keine hohen Befunde außerhalb der Regel-Dateien', high.length === 0);
+    // Electron-Grundhaertung im Hauptfenster
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+    const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'ui', 'index.html'), 'utf8');
+    check('selbst-scan: Fenster mit Sandbox, Kontext-Isolation, ohne Node', /contextIsolation:\s*true/.test(mainSrc) && /nodeIntegration:\s*false/.test(mainSrc) && /sandbox:\s*true/.test(mainSrc) && !/webSecurity:\s*false/.test(mainSrc));
+    check('selbst-scan: strenge CSP ohne unsafe-eval und Fremdquellen', /default-src 'none'/.test(html) && /object-src 'none'/.test(html) && !/unsafe-eval/.test(html) && !/script-src[^;]*(https?:|\*)/.test(html));
+    const cfgB = require('../electron-builder.config.js');
+    check('selbst-scan: Electron-Fuses im Build gesetzt', cfgB.electronFuses && cfgB.electronFuses.runAsNode === false && cfgB.electronFuses.enableNodeOptionsEnvironmentVariable === false && cfgB.electronFuses.onlyLoadAppFromAsar && cfgB.electronFuses.enableEmbeddedAsarIntegrityValidation);
+    check('selbst-scan: externe Werkzeuge nur über die Sandbox', !/require\('child_process'\)/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'tools.js'), 'utf8')));
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

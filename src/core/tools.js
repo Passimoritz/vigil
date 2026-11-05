@@ -5,7 +5,7 @@
 // kein DoS/Last, kein Brute-Force. Nur gegen autorisierte Ziele (Aufrufer prueft das).
 // Beide Laeufe sind ueber ein AbortSignal abbrechbar (Prozess wird beendet).
 
-const { spawn } = require('child_process');
+const { runSandboxed } = require('./sandbox');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -71,24 +71,13 @@ function mapSev(s) {
   return 'info';
 }
 
-function runTool(cmd, args, { signal, timeoutMs = 300000 } = {}) {
-  return new Promise((resolve) => {
-    let child;
-    try { child = spawn(cmd, args, { windowsHide: true }); }
-    catch (e) { return resolve({ ok: false, error: e.message, stdout: '', stderr: '' }); }
-    let stdout = '', stderr = '';
-    const onAbort = () => { try { child.kill(); } catch { /* ignore */ } };
-    if (signal) { if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true }); }
-    const timer = setTimeout(() => { try { child.kill(); } catch { /* ignore */ } }, timeoutMs);
-    child.stdout.on('data', (d) => { stdout += d.toString(); });
-    child.stderr.on('data', (d) => { stderr += d.toString(); });
-    child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, error: e.message, stdout, stderr }); });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (signal) signal.removeEventListener?.('abort', onAbort);
-      resolve({ ok: true, code, stdout, stderr, aborted: !!(signal && signal.aborted) });
-    });
-  });
+// Externe Werkzeuge laufen mit minimalen Rechten: ohne Shell, ohne Geheimnisse in der Umgebung,
+// Arbeitsordner = Ziel, Zeitlimit und Groessengrenze fuer die Ausgabe (siehe sandbox.js).
+// Zeitlimit oder Groessengrenze erreicht = unvollstaendig -> wie abgebrochen behandeln, damit
+// fehlende Befunde nicht faelschlich als "behoben" gelten.
+async function runTool(cmd, args, { signal, timeoutMs = 300000, maxBytes } = {}) {
+  const r = await runSandboxed(cmd, args, { signal, timeoutMs, maxBytes });
+  return { ...r, aborted: !!(r.aborted || r.timedOut || r.truncated) };
 }
 
 function hostOf(target) {

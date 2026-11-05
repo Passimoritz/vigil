@@ -14,8 +14,8 @@
 // KI-Befunde werden nie automatisch geschlossen: die KI findet nicht deterministisch jedes Mal dasselbe.
 
 const crypto = require('crypto');
-const fs = require('fs');
 const path = require('path');
+const secure = require('./securefile');
 const { splitLoc } = require('./schema');
 const { FINDING_STATUSES } = require('./validation');
 
@@ -29,18 +29,30 @@ const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 function emptyStore() { return { version: 1, targets: {}, findings: {}, runs: [] }; }
 
+// Verschluesselung im Ruhezustand (securefile.js): der Main-Prozess setzt beim Start einen
+// Schluessel (safeStorage). Ohne Schluessel (CLI, Tests) bleibt die Datei Klartext.
+let cipher = null;
+function setCipher(c) { cipher = c || null; }
+
 function load(file) {
-  try {
-    const d = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return { ...emptyStore(), ...d, targets: d.targets || {}, findings: d.findings || {}, runs: Array.isArray(d.runs) ? d.runs : [] };
-  } catch { return emptyStore(); }
+  let r;
+  try { r = secure.readJson(file, cipher); }
+  catch (e) {
+    // Nicht entschluesselbar oder kaputt: Datei zur Seite legen statt sie mit leerem Stand zu ueberschreiben
+    const moved = secure.quarantine(file);
+    console.warn(`Befund-Speicher nicht lesbar (${e.message})${moved ? ' – gesichert als ' + path.basename(moved) : ''}`);
+    return emptyStore();
+  }
+  const d = r.data;
+  if (!d || typeof d !== 'object') return emptyStore();
+  const out = { ...emptyStore(), ...d, targets: d.targets || {}, findings: d.findings || {}, runs: Array.isArray(d.runs) ? d.runs : [] };
+  // Migration: Klartext-Datei sofort verschluesselt neu schreiben
+  if (cipher && !r.encrypted) { try { save(file, out); } catch { /* beim naechsten Speichern */ } }
+  return out;
 }
 // Atomar schreiben (erst Temp-Datei, dann umbenennen) – kein halb geschriebener Speicher.
 function save(file, store) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = file + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(store), 'utf8');
-  fs.renameSync(tmp, file);
+  secure.writeJson(file, store, cipher);
 }
 
 // --- Ziele ---------------------------------------------------------------
@@ -348,4 +360,4 @@ function updateRun(store, id, patch) {
   return r;
 }
 
-module.exports = { emptyStore, load, save, targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, falsePositivesFor, deleteFindings, deleteTarget, deleteRun, purgeResolved, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };
+module.exports = { emptyStore, load, save, setCipher,targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, falsePositivesFor, deleteFindings, deleteTarget, deleteRun, purgeResolved, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };

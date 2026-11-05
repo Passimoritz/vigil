@@ -10,3 +10,4 @@ vigil-report-*.sarif
 vigil-report-*.json
 vigil-report-*.pdf
 bench/results/
+test/visual/diff/

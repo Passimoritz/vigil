@@ -15,6 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { verifyDownload } = require('./verify');
 
 const MAX_AGE_MS = 20 * 60 * 60 * 1000; // spaetestens nach 20 Stunden neu laden
 
@@ -99,32 +100,56 @@ const FEEDS = [
 ];
 
 const file = (dir, id) => path.join(dir, `${id}.json`);
-function loadFeed(dir, id) { try { return JSON.parse(fs.readFileSync(file(dir, id), 'utf8')); } catch { return null; } }
+const dataHash = (data) => crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
+// Integritaet im Cache: die gespeicherte Fassung traegt einen Hash ihrer Daten. Passt er nicht
+// (Datei veraendert oder beschaedigt), wird sie nicht verwendet und beim naechsten Lauf neu geladen.
+function loadFeed(dir, id) {
+  let d;
+  try { d = JSON.parse(fs.readFileSync(file(dir, id), 'utf8')); } catch { return null; }
+  if (d && d.dataSha256 && dataHash(d.data) !== d.dataSha256) return null;
+  return d;
+}
 const ALLOWED = ['https://raw.githubusercontent.com/', 'https://www.cisa.gov/', 'https://epss.cyentia.com/'];
 
-async function fetchLimited(url, maxBytes, fetchImpl) {
+// Optionale Festlegung je Feed in <feeds>/pins.json (z. B. fuer Firmen, die nur freigegebene
+// Fassungen zulassen): { "<feed-id>": { "sha256": ["<hex>", …], "minisign": { "publicKey": "…", "sigUrl": "https://…" } } }
+function loadPins(dir) { try { const p = JSON.parse(fs.readFileSync(path.join(dir, 'pins.json'), 'utf8')); return p && typeof p === 'object' ? p : {}; } catch { return {}; } }
+
+async function fetchLimited(url, maxBytes, fetchImpl, { raw = false } = {}) {
   if (!ALLOWED.some((p) => url.startsWith(p))) throw new Error('Quelle nicht erlaubt');
-  const r = await fetchImpl(url, { signal: AbortSignal.timeout(60000), headers: { 'User-Agent': 'Vigil-Feeds/1' } });
+  const r = await fetchImpl(url, { signal: AbortSignal.timeout(60000), headers: { 'User-Agent': 'Vigil-Feeds/1' }, redirect: 'error' });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const buf = Buffer.from(await r.arrayBuffer());
   if (buf.length > maxBytes) throw new Error('zu groß');
-  return buf.toString('utf8');
+  return raw ? buf : buf.toString('utf8');
+}
+
+// Download pruefen, bevor er verwendet wird: SHA-256-Festlegung und/oder minisign-Signatur.
+async function verifyFeed(buf, spec, fetchImpl) {
+  if (!spec || (!spec.sha256 && !spec.minisign)) return { pinned: false, signed: false };
+  let minisign = null;
+  if (spec.minisign && spec.minisign.publicKey && spec.minisign.sigUrl) minisign = { publicKey: spec.minisign.publicKey, signature: await fetchLimited(spec.minisign.sigUrl, 64 * 1024, fetchImpl) };
+  const r = verifyDownload(buf, { sha256: spec.sha256, minisign });
+  return { pinned: r.pinned, signed: r.signed };
 }
 
 // Laedt alle faelligen Feeds; bei Fehlern bleibt die letzte gute Fassung.
 async function syncFeeds(dir, { force = false, fetchImpl = fetch, now = Date.now() } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const results = [];
+  const pins = loadPins(dir);
   for (const f of FEEDS) {
     const old = loadFeed(dir, f.id);
     if (!force && old && now - Date.parse(old.fetchedAt) < MAX_AGE_MS) { results.push({ id: f.id, skipped: true }); continue; }
     let lastErr = null;
     for (const url of f.urls) {
       try {
-        const text = await fetchLimited(url, f.maxBytes, fetchImpl);
+        const buf = await fetchLimited(url, f.maxBytes, fetchImpl, { raw: true });
+        const v = await verifyFeed(buf, pins[f.id] || f.verify, fetchImpl); // wirft bei Abweichung
+        const text = buf.toString('utf8');
         const data = f.parse(text);
-        const sha256 = crypto.createHash('sha256').update(text).digest('hex');
-        const rec = { id: f.id, url, fetchedAt: new Date(now).toISOString(), sha256, count: f.count(data), changed: !old || old.sha256 !== sha256, data };
+        const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+        const rec = { id: f.id, url, fetchedAt: new Date(now).toISOString(), sha256, dataSha256: dataHash(data), pinned: v.pinned, signed: v.signed, count: f.count(data), changed: !old || old.sha256 !== sha256, data };
         fs.writeFileSync(file(dir, f.id) + '.tmp', JSON.stringify(rec));
         fs.renameSync(file(dir, f.id) + '.tmp', file(dir, f.id));
         results.push({ id: f.id, ok: true, count: rec.count, changed: rec.changed });
@@ -151,4 +176,4 @@ function feedStatus(dir) {
 }
 const needsFeedSync = (dir, now = Date.now()) => FEEDS.some((f) => { const d = loadFeed(dir, f.id); return !d || now - Date.parse(d.fetchedAt) >= MAX_AGE_MS; });
 
-module.exports = { syncFeeds, loadCompiled, feedStatus, needsFeedSync, parseGitleaksToml, goRegexToJs, compileSecretRules, compileRetire, shannon, FEEDS };
+module.exports = { syncFeeds, loadCompiled, feedStatus, needsFeedSync, loadFeed, verifyFeed, parseGitleaksToml, goRegexToJs, compileSecretRules, compileRetire, shannon, FEEDS };

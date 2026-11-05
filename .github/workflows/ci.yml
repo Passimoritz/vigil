@@ -1,0 +1,38 @@
+# Pruefung bei jedem Push und Pull-Request: Tests, Benchmark und Abhaengigkeiten.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Abhängigkeiten
+        run: npm ci
+
+      - name: Tests
+        run: npm test
+
+      - name: Benchmark (nur Regeln, ohne KI)
+        run: npm run bench
+
+      - name: Bekannte Lücken in Laufzeit-Abhängigkeiten
+        run: npm audit --omit=dev --audit-level=high

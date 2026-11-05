@@ -74,6 +74,17 @@ contextBridge.exposeInMainWorld('vigil', {
     onLog: (cb) => { const h = (_e, l) => cb(l); ipcRenderer.on('ollama:log', h); return () => ipcRenderer.removeListener('ollama:log', h); },
   },
 
+  // App-Sperre (Passwort beim Start / nach Leerlauf) und Verschluesselung der gespeicherten Daten
+  appLock: {
+    status: () => ipcRenderer.invoke('applock:status'),
+    unlock: (password) => ipcRenderer.invoke('applock:unlock', password),
+    biometric: () => ipcRenderer.invoke('applock:biometric'),
+    lock: () => ipcRenderer.invoke('applock:lock'),
+    configure: (p) => ipcRenderer.invoke('applock:configure', p),
+    onState: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('applock:state', h); return () => ipcRenderer.removeListener('applock:state', h); },
+  },
+  dataEncryption: () => ipcRenderer.invoke('security:encryption'),
+
   onProgress: (cb) => {
     const h = (_e, p) => cb(p);
     ipcRenderer.on('audit:progress', h);

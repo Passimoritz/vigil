@@ -24,6 +24,13 @@ const { verifyOwnership, hostOf: scopeHost } = require('../src/core/scope');
 // Version ohne Installation: Die portable EXE (bzw. eine Datei "portable" neben Vigil.exe)
 // speichert alle Daten im Ordner "VigilData" daneben statt im Benutzerprofil.
 const PORTABLE_DIR = process.env.PORTABLE_EXECUTABLE_DIR || (fs.existsSync(path.join(path.dirname(process.execPath), 'portable')) ? path.dirname(process.execPath) : '');
+// Visuelle Regression: feste Skalierung und auch verdeckt weiterzeichnen (sonst veraltete Aufnahmen)
+if (process.env.VIGIL_VISUAL_DIR) {
+  app.commandLine.appendSwitch('force-device-scale-factor', '1');
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+  app.commandLine.appendSwitch('disable-background-timer-throttling');
+}
 // Tests laufen mit eigenem, leerem Datenordner
 if (process.env.VIGIL_E2E_DATA) { fs.mkdirSync(process.env.VIGIL_E2E_DATA, { recursive: true }); app.setPath('userData', process.env.VIGIL_E2E_DATA); }
 else if (PORTABLE_DIR) { try { const d = path.join(PORTABLE_DIR, 'VigilData'); fs.mkdirSync(d, { recursive: true }); app.setPath('userData', d); } catch { /* dann Standardort */ } }
@@ -96,6 +103,23 @@ function webLoginFor(cfg) {
 const { applyProxy, testProxy } = require('./proxy');
 const ollama = require('./ollama');
 
+// --- Selbstschutz: App-Sperre und Verschluesselung der gespeicherten Daten ---------
+// guardIpc() muss VOR allen ipcMain.handle-Aufrufen laufen: gesperrt antwortet der Main-Prozess
+// auf (fast) keinen Kanal mehr.
+const secure = require('../src/core/securefile');
+const appLock = require('./applock').createAppLock({ loadConfig: () => loadConfig(), saveConfig: (c) => saveConfig(c), getWindow: () => win });
+appLock.guardIpc();
+appLock.registerIpc();
+let dataCipher = null; // AES-256-GCM, Schluessel per safeStorage (DPAPI) geschuetzt; null = Klartext
+function initDataEncryption() {
+  try {
+    dataCipher = secure.loadOrCreateKey(path.join(app.getPath('userData'), 'data.key'), safeStorage);
+    require('../src/core/store').setCipher(dataCipher);
+    if (dataCipher) { secure.migrateFile(HISTORY_PATH(), dataCipher); secure.migrateDir(HISTORY_DIR(), dataCipher); }
+  } catch (e) { dataCipher = null; console.warn('Verschluesselung nicht verfuegbar:', e.message); }
+}
+ipcMain.handle('security:encryption', () => ({ encrypted: !!dataCipher }));
+
 let win;
 let lastResult = null;
 let lastTargets = [];
@@ -118,7 +142,7 @@ const STORE_PATH = () => path.join(app.getPath('userData'), 'findings-store.json
 const HISTORY_PATH = () => path.join(app.getPath('userData'), 'history.json');
 const HISTORY_DIR = () => path.join(app.getPath('userData'), 'history');
 function loadHistory() {
-  try { const j = JSON.parse(fs.readFileSync(HISTORY_PATH(), 'utf8')); return Array.isArray(j.runs) ? j.runs : []; }
+  try { const j = secure.readJson(HISTORY_PATH(), dataCipher).data; return j && Array.isArray(j.runs) ? j.runs : []; }
   catch { return []; }
 }
 function recordHistory(result, targets) {
@@ -132,11 +156,11 @@ function recordHistory(result, targets) {
       total: (result.summary && result.summary.total) || 0,
       counts: (result.summary && result.summary.counts) || {},
     };
-    fs.writeFileSync(path.join(HISTORY_DIR(), id + '.json'), JSON.stringify(result), 'utf8');
+    secure.writeJson(path.join(HISTORY_DIR(), id + '.json'), result, dataCipher);
     const runs = [entry, ...loadHistory()];
     const keep = runs.slice(0, 50);
     for (const old of runs.slice(50)) { try { fs.unlinkSync(path.join(HISTORY_DIR(), old.id + '.json')); } catch { /* egal */ } }
-    fs.writeFileSync(HISTORY_PATH(), JSON.stringify({ runs: keep }, null, 2), 'utf8');
+    secure.writeJson(HISTORY_PATH(), { runs: keep }, dataCipher, { pretty: true });
   } catch (e) { console.warn('History nicht gespeichert:', e.message); }
 }
 
@@ -254,6 +278,21 @@ function iconPath() {
   return undefined;
 }
 
+// Electron-Haertung: keine Berechtigungen fuer Webinhalte (ausser Zwischenablage schreiben),
+// keine <webview>, keine neuen Fenster/Navigation aus irgendeinem WebContents.
+function hardenSessions() {
+  const { session } = require('electron');
+  const allow = new Set(['clipboard-sanitized-write']);
+  try {
+    session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(allow.has(perm)));
+    session.defaultSession.setPermissionCheckHandler((_wc, perm) => allow.has(perm));
+  } catch { /* aeltere Electron-Version */ }
+  app.on('web-contents-created', (_e, wc) => {
+    wc.on('will-attach-webview', (ev) => ev.preventDefault());
+    wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  });
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1180,
@@ -267,7 +306,12 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // Preload nutzt nur contextBridge/ipcRenderer/webUtils – laeuft daher in der Chromium-Sandbox
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
+      spellcheck: false,
     },
   });
   win.setMenuBarVisibility(false);
@@ -281,6 +325,20 @@ function createWindow() {
       let out;
       try { out = await win.webContents.executeJavaScript(fs.readFileSync(process.env.VIGIL_E2E_SCRIPT, 'utf8'), true); }
       catch (e) { out = { ok: false, results: [{ name: 'Skript', ok: false, info: e.message }] }; }
+      // Visuelle Regression (test/visual.js): Hauptansichten als PNG festhalten
+      if (process.env.VIGIL_VISUAL_DIR) {
+        try {
+          fs.mkdirSync(process.env.VIGIL_VISUAL_DIR, { recursive: true });
+          try { win.webContents.setBackgroundThrottling(false); win.setContentSize(1180, 800); win.show(); } catch { /* egal */ }
+          for (const v of ['scan', 'results', 'dash', 'history', 'settings']) {
+            await win.webContents.executeJavaScript(`showView(${JSON.stringify(v)}); document.querySelector('.main') && (document.querySelector('.main').scrollTop = 0); new Promise((r) => setTimeout(r, 400))`, true);
+            try { win.webContents.invalidate(); } catch { /* egal */ }
+            await new Promise((r) => setTimeout(r, 350)); // naechstes Bild abwarten, sonst zeigt die Aufnahme noch die vorige Ansicht
+            const img = await win.webContents.capturePage();
+            fs.writeFileSync(path.join(process.env.VIGIL_VISUAL_DIR, `${v}.png`), img.toPNG());
+          }
+        } catch (e) { out = { ...(out || {}), ok: false, results: [...((out && out.results) || []), { name: 'Visuell: Aufnahme', ok: false, info: e.message }] }; }
+      }
       try { fs.writeFileSync(process.env.VIGIL_E2E_OUT, JSON.stringify(out, null, 2)); } catch { /* egal */ }
       app.exit(out && out.ok ? 0 : 1);
     });
@@ -314,6 +372,9 @@ app.on('second-instance', () => {
 
 app.whenReady().then(() => {
   if (!gotLock) return;
+  hardenSessions();
+  initDataEncryption(); // vor dem Befund-Speicher: Schluessel setzen, Klartext-Dateien migrieren
+  appLock.init();
   const cfg = loadConfig();
   applyProxySafe(cfg);
   orchestrator = createOrchestrator({
@@ -341,14 +402,15 @@ ipcMain.handle('meta:providers', () => {
   return Object.entries(PROVIDERS).map(([id, p]) => ({ id, label: p.label, needsKey: p.needsKey, defaultModel: p.defaultModel, defaultBaseUrl: p.defaultBaseUrl, envKeyPresent: ENV_KEY[id] ? !!process.env[ENV_KEY[id]] : false }));
 });
 
-ipcMain.handle('config:get', () => loadConfig());
+// Der Passwort-Hash der App-Sperre verlaesst den Main-Prozess nie
+ipcMain.handle('config:get', () => { const c = loadConfig(); if (c.appLock) c.appLock = { enabled: !!c.appLock.enabled, idleMinutes: c.appLock.idleMinutes }; return c; });
 ipcMain.handle('config:save', async (_e, cfg) => {
   const prev = loadConfig();
   // Geheimnisse setzt nur der Main-Prozess ueber eigene Handler (Testkonto, API-Rechtematrix,
   // MalwareBazaar-Schluessel, API-Token). Die Kopie im Fenster kann veraltet sein – immer die
   // gespeicherte Fassung behalten, sonst wuerde "Speichern" frisch eingetragene Zugaenge loeschen.
   cfg.allowlist = normalizeAllowlist(cfg.allowlist);
-  for (const k of ['apiToken', 'webLogins', 'apiMatrix', 'malwareBazaarKeyEnc']) { if (prev[k] !== undefined) cfg[k] = prev[k]; else delete cfg[k]; }
+  for (const k of ['apiToken', 'webLogins', 'apiMatrix', 'malwareBazaarKeyEnc', 'appLock']) { if (prev[k] !== undefined) cfg[k] = prev[k]; else delete cfg[k]; }
   const ok = saveConfig(cfg);
   applyProxySafe(cfg);
   if (prev.apiEnabled !== !!cfg.apiEnabled || prev.apiPort !== cfg.apiPort) await applyApi(loadConfig());
@@ -637,7 +699,8 @@ ipcMain.handle('history:list', () => loadHistory());
 ipcMain.handle('history:open', (_e, id) => {
   const safe = String(id || '').replace(/[^a-z0-9]/gi, '');
   try {
-    const result = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR(), safe + '.json'), 'utf8'));
+    const result = secure.readJson(path.join(HISTORY_DIR(), safe + '.json'), dataCipher).data;
+    if (!result) throw new Error('Lauf nicht gefunden.');
     refreshStatuses(result);
     lastResult = result;
     lastTargets = ((loadHistory().find((h) => h.id === safe) || {}).targets || []).map((v) => ({ value: v }));
@@ -647,7 +710,7 @@ ipcMain.handle('history:open', (_e, id) => {
 ipcMain.handle('history:clear', () => {
   try {
     for (const r of loadHistory()) { try { fs.unlinkSync(path.join(HISTORY_DIR(), r.id + '.json')); } catch { /* egal */ } }
-    fs.writeFileSync(HISTORY_PATH(), JSON.stringify({ runs: [] }, null, 2), 'utf8');
+    secure.writeJson(HISTORY_PATH(), { runs: [] }, dataCipher, { pretty: true });
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });

@@ -12,7 +12,10 @@
     "dist": "electron-builder --win --config electron-builder.config.js",
     "dist:portable": "electron-builder --win portable --config electron-builder.config.js",
     "bench": "node tools/bench.js",
-    "e2e": "node test/e2e.js"
+    "e2e": "node test/e2e.js",
+    "visual": "node test/visual.js --update",
+    "visual:check": "node test/visual.js",
+    "coverage": "node --test --experimental-test-coverage --test-coverage-include=src/** --test-coverage-include=electron/** test/run.js"
   },
   "license": "MIT",
   "devDependencies": {

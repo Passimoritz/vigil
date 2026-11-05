@@ -1,5 +1,7 @@
 {
   "project": "vulnerable-app",
+  "minRecall": 0.95,
+  "minPrecision": 0.85,
   "issues": [
     { "id": "sqli", "label": "SQL-Injection über findUser()", "file": "src/db.js", "cats": ["Injection"], "rule": "sql|taint-sql" },
     { "id": "cmdi-js", "label": "Befehls-Injection in /ping", "file": "src/routes.js", "cats": ["Injection"], "rule": "shell|exec|command" },
@@ -19,6 +21,25 @@
     { "id": "s3", "label": "Öffentlicher S3-Bucket", "file": "infra/main.tf", "cats": ["AccessControl", "Config"], "rule": "s3" },
     { "id": "ssh", "label": "SSH für das ganze Internet offen", "file": "infra/main.tf", "cats": ["Config"], "rule": "sg-open|firewall" },
     { "id": "k8s-priv", "label": "Privilegierter Kubernetes-Container", "file": "k8s/deploy.yaml", "cats": ["Config"], "rule": "privileged" },
-    { "id": "k8s-latest", "label": "Kubernetes-Image ohne feste Version", "file": "k8s/deploy.yaml", "cats": ["Config"], "rule": "latest" }
+    { "id": "k8s-latest", "label": "Kubernetes-Image ohne feste Version", "file": "k8s/deploy.yaml", "cats": ["Config"], "rule": "latest" },
+    { "id": "shop-ssrf", "label": "SSRF beim Laden des Profilbilds (Juice-Shop-Muster)", "file": "src/shop.js", "cats": ["SSRF"], "rule": "ssrf" },
+    { "id": "shop-mass", "label": "Mass Assignment bei der Registrierung (Juice-Shop-Muster)", "file": "src/shop.js", "cats": ["AccessControl"], "rule": "mass" },
+    { "id": "shop-timing", "label": "Webhook-Signatur mit === verglichen", "file": "src/shop.js", "cats": ["Crypto"], "rule": "timing" },
+    { "id": "shop-jwt-exp", "label": "JWT ohne Ablaufzeit", "file": "src/shop.js", "cats": ["Auth"], "rule": "jwt" },
+    { "id": "shop-race", "label": "Gutschein ohne Transaktion (Race Condition)", "file": "src/shop.js", "cats": ["Other"], "rule": "toctou|race" },
+    { "id": "shop-cipher", "label": "3DES für Bestelldaten", "file": "src/shop.js", "cats": ["Crypto"], "rule": "cipher" },
+    { "id": "shop-redos", "label": "ReDoS in der E-Mail-Prüfung", "file": "src/shop.js", "cats": ["DoS"], "rule": "redos" },
+    { "id": "dvwa-sqli", "label": "SQL-Injection über $_GET (DVWA-Muster)", "file": "php/dvwa.php", "cats": ["Injection"], "rule": "sql" },
+    { "id": "dvwa-cmdi", "label": "Befehls-Injection mit shell_exec (DVWA-Muster)", "file": "php/dvwa.php", "cats": ["Injection"], "rule": "cmd|exec" },
+    { "id": "dvwa-xss", "label": "Reflektiertes XSS mit echo (DVWA-Muster)", "file": "php/dvwa.php", "cats": ["XSS"], "rule": "xss" },
+    { "id": "dvwa-lfi", "label": "Datei-Einbindung aus der Anfrage (DVWA-Muster)", "file": "php/dvwa.php", "cats": ["PathTraversal"], "rule": "include" },
+    { "id": "dvwa-unser", "label": "unserialize() mit Cookie-Daten", "file": "php/dvwa.php", "cats": ["Deserialization"], "rule": "unserialize" },
+    { "id": "dvwa-md5", "label": "Passwort mit md5()", "file": "php/dvwa.php", "cats": ["Crypto"], "rule": "hash" },
+    { "id": "dvwa-extract", "label": "extract($_POST)", "file": "php/dvwa.php", "cats": ["Injection"], "rule": "extract" },
+    { "id": "goat-sqli", "label": "SQL-Injection mit SqlCommand (WebGoat-Muster)", "file": "dotnet/Lessons.cs", "cats": ["Injection"], "rule": "sql" },
+    { "id": "goat-cmdi", "label": "Befehls-Injection mit Process.Start (WebGoat-Muster)", "file": "dotnet/Lessons.cs", "cats": ["Injection"], "rule": "process" },
+    { "id": "goat-tls", "label": "Zertifikatsprüfung abgeschaltet (WebGoat-Muster)", "file": "dotnet/Lessons.cs", "cats": ["Transport"], "rule": "cert" },
+    { "id": "goat-deser", "label": "BinaryFormatter (WebGoat-Muster)", "file": "dotnet/Lessons.cs", "cats": ["Deserialization"], "rule": "binaryformatter" },
+    { "id": "goat-md5", "label": "Passwort-Hash mit MD5 (WebGoat-Muster)", "file": "dotnet/Lessons.cs", "cats": ["Crypto"], "rule": "hash" }
   ]
 }
