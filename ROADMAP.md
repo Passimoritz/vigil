@@ -139,11 +139,11 @@ Schneller ans Ziel, auch ohne Vorwissen.
 
 - [x] **Begleitung beim ersten Start** · Aufwand mittel  
   Ein kurzer Assistent hilft bei der KI-Wahl, dem ersten Projekt und zeigt einen Beispiel-Lauf.
-- [ ] **Alles per Tastatur** · Danach · Aufwand klein  
+- [x] **Alles per Tastatur** · Danach · Aufwand klein  
   Mit Strg+K jede Aktion suchen und ausführen.
 - [x] **Betroffenen Code direkt anzeigen** · Aufwand mittel  
   In der Detailansicht die markierte Zeile mit etwas Umgebung sehen, ohne den Editor zu öffnen.
-- [ ] **Befunde anders sortieren** · Danach · Aufwand klein  
+- [x] **Befunde anders sortieren** · Danach · Aufwand klein  
   Nach Datei, Art des Problems oder Ziel gruppieren statt nur nach Dringlichkeit.
 - [x] **Hell/Dunkel und Schriftgröße wählbar** · Aufwand klein  
   Unabhängig von der Windows-Einstellung umschalten und die Schrift größer stellen.
@@ -167,11 +167,11 @@ Für mehrere Personen und Rechner.
 
 Ein Sicherheitswerkzeug muss selbst besonders sicher sein.
 
-- [ ] **Fremde Werkzeuge abgeschottet ausführen** · Danach · Aufwand mittel  
+- [x] **Fremde Werkzeuge abgeschottet ausführen** · Danach · Aufwand mittel  
   Zusatzprogramme wie trivy oder semgrep laufen mit möglichst wenig Rechten, damit ein Fehler in ihnen nicht den PC gefährdet.
-- [ ] **Heruntergeladene Daten auf Echtheit prüfen** · Danach · Aufwand klein  
+- [x] **Heruntergeladene Daten auf Echtheit prüfen** · Danach · Aufwand klein  
   Zusatzprogramme und Gefahren-Listen werden vor der Nutzung über Prüfsummen und Signaturen kontrolliert.
-- [ ] **Eigene Schwachstellen systematisch suchen** · Danach · Aufwand klein  
+- [x] **Eigene Schwachstellen systematisch suchen** · Danach · Aufwand klein  
   Ein dokumentiertes Bedrohungsmodell und regelmäßige Prüfläufe von Vigil gegen sich selbst.
 - [ ] **Externe Sicherheitsprüfung** · Später · Aufwand mittel  
   Vor einer öffentlichen Version prüfen unabhängige Fachleute Vigil.
@@ -184,39 +184,54 @@ Grundsatz: Vigil prüft nur eigene oder freigegebene Ziele, zerstörungsfrei, oh
 
 Für Vigil gedacht, noch nicht umgesetzt. Alle Ideen bleiben zerstörungsfrei und lesen nur.
 
-- [ ] **Mehr tagesaktuelle Quellen** · Aufwand klein
+- [x] **Mehr tagesaktuelle Quellen** · Aufwand klein
   Weitere geprüfte Feeds über dasselbe System einbinden:
   - Zertifikats-Transparenz (neue, unbekannte Zertifikate für die eigene Domain),
   - Phishing-Listen (taucht die eigene Domain dort auf?),
   - Have-I-Been-Pwned für die Firmen-Domain.
-- [ ] **Abgelaufene oder bald ablaufende Zertifikate und Domains** · Aufwand klein
+- [x] **Abgelaufene oder bald ablaufende Zertifikate und Domains** · Aufwand klein
   Warnung 30, 14 und 3 Tage vorher, auch für Subdomains.
-- [ ] **E-Mail-Sicherheit vollständig** · Aufwand klein
+- [x] **E-Mail-Sicherheit vollständig** · Aufwand klein
   MTA-STS, TLS-RPT, BIMI und DNSSEC, zusätzlich zu SPF, DMARC und DKIM.
-- [ ] **Browser-Erweiterungen und installierte Programme** · Aufwand mittel
+- [x] **Browser-Erweiterungen und installierte Programme** · Aufwand mittel
   Veraltete Programme auf dem PC (über winget/Registry) gegen bekannte Lücken abgleichen.
-- [ ] **WLAN und Router im eigenen Netz** · Aufwand mittel
+- [x] **WLAN und Router im eigenen Netz** · Aufwand mittel
   Nur lesend:
   - offene Verwaltungsoberflächen im LAN,
   - UPnP,
   - veraltete Router-Firmware nach Herstellerangabe.
-- [ ] **Datenbanken direkt** · Aufwand mittel
+- [x] **Datenbanken direkt** · Aufwand mittel
   Mit eigenem Lesezugang:
   - Standardpasswörter,
   - öffentliche Rechte,
   - unverschlüsselte Verbindungen,
   - veraltete Version (PostgreSQL, MySQL, MongoDB, Redis).
-- [ ] **CI/CD-Konten** · Aufwand mittel
+- [x] **CI/CD-Konten** · Aufwand mittel
   GitHub-, GitLab- und Azure-DevOps-Einstellungen über die offizielle API, nur lesend:
   - Branch-Schutz,
   - Secret-Scanning an,
   - zu weit gefasste Tokens.
-- [ ] **Microsoft 365 / Google Workspace** · Aufwand groß
+- [x] **Microsoft 365 / Google Workspace** · Aufwand groß
   Nur lesend:
   - Mehr-Faktor-Anmeldung für alle,
   - veraltete Anmeldeverfahren,
   - offene Freigaben.
-- [ ] **Datenschutz-Check von Webseiten** · Aufwand mittel
+- [x] **Datenschutz-Check von Webseiten** · Aufwand mittel
   Welche Cookies und Dritt-Dienste vor der Einwilligung geladen werden (DSGVO/TTDSG).
-- [ ] **Software-Stückliste ausgeben** · Aufwand klein
+- [x] **Software-Stückliste ausgeben** · Aufwand klein
   SBOM im CycloneDX- und SPDX-Format für jedes geprüfte Projekt.
+
+## Wunschliste vom 5. November 2026
+
+126 Punkte aus der interaktiven Wunschliste sind umgesetzt – in acht Bereichen:
+
+- **Code & Projekte:** Framework-Regeln, C/C++ und sieben weitere Sprachen, SQL-Rechte, OpenAPI/GraphQL, Krypto-Inventar, KI-Apps und MCP-Konfigurationen, Pickle-Modelldateien, personenbezogene Daten, Geheimnisse in Logs und Notebooks, Texterkennung in Bildern, Webserver-Konfigurationen, Code-Qualität, Regeln als YAML-Dateien.
+- **Lieferkette & Container:** Live-Prüfung gefundener Schlüssel (optional), verwaiste Pakete, OpenSSF Scorecard, Schadpakete, Lockfile-Abgleich, Image-Schichten, Dockerfile, Helm/Kustomize, GitHub Actions, GitLab/Azure/Jenkins, CMS, SBOM-Export.
+- **Webseiten:** Zertifikats- und Domain-Ablauf, MTA-STS/TLS-RPT/BIMI/DNSSEC, Datenschutz vor der Einwilligung, CSP- und SRI-Vorschläge, Geheimnisse in Skripten, Subdomains, Shodan InternetDB, Tippfehler-Domains, Änderungs-Wächter, security.txt, TLS im Detail, API-Abruf ohne Anmeldung, Observatory-Note, Barrierefreiheit, Ladezeit, Impressum, defekte Links, SEO.
+- **Dateien & Erkennungsdaten:** weitere Archivformate, E-Mails, Phishing-Links, YARA, verschleierte Skripte, Verknüpfungen, Programm-Schutzfunktionen, eingebaute Bibliotheken, USB-Prüfung, Zertifikats-Transparenz, Phishing-Listen, Hersteller-Warnungen, Alarm bei neuen Lücken, OSV offline, aktuelle Vorlagen.
+- **PC, Server & Cloud:** Programme, Browser-Erweiterungen, Router, Heimnetz, Linux per SSH, macOS, Datenbanken, Kubernetes, Datensicherung, CI/CD-Konten, Microsoft 365/Google Workspace, Cloud-Rechte, weitere Anbieter, Have I Been Pwned.
+- **KI & Beheben:** Fix als Diff, Erklärung in drei Stufen, Laufzusammenfassung, Modellwahl nach Hardware, sieben neue Anbieter, Monatsbudget, KI darf nachschlagen, Bedrohungsmodell, strenger Datenschutz, eigene Vorgaben, Protokoll, Datei-Rangfolge, Upgrade-Hinweise, ablaufende Risikoakzeptanz.
+- **Berichte & Bedienung:** VEX, Branding, Vergleichsbericht, Excel/CSV/Word, Audit-Paket, signierte Berichte, CRA/SOC 2/PCI DSS/ASVS/HIPAA, Badge, Befehlspalette, Gruppierung, Läufe vergleichen, Notizen, Rückgängig, Pause, Taskleiste, Glossar, anpassbare Übersicht, übersetzte Code-Kommentare, Browser-Erweiterung, CI-Formate.
+- **Vigil selbst & Qualität:** Werkzeug-Sandbox, Download-Prüfung, Bedrohungsmodell und Selbst-Scan, verschlüsselte Befunde, App-Sperre, Electron-Fuses, Dependabot und CI, SECURITY.md, Bildvergleich der Oberfläche, Testabdeckung, größerer Benchmark, Architektur-Doku, aufgeteilte Oberfläche.
+
+Nicht umgesetzt: Windows Hello für die App-Sperre (Electron bietet dafür unter Windows keine Schnittstelle). Noch nicht an echten Systemen ausprobiert: Live-Audits für Router, Linux, Datenbanken, Cloud- und SaaS-Konten sowie die neuen Feed-Adressen – die Tests laufen mit Attrappen.

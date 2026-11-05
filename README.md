@@ -11,7 +11,7 @@
   <img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-0f1b2d">
   <img alt="Electron 45" src="https://img.shields.io/badge/Electron-45-47848f">
   <img alt="AI: local or cloud" src="https://img.shields.io/badge/AI-Ollama%20%7C%20Claude%20%7C%20OpenAI%20%7C%20Gemini-2b3a55">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-294%20core%20%2B%2030%20UI-2ea44f">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-719%20core%20%2B%2065%20UI-2ea44f">
 </p>
 
 Vigil is a desktop app that checks **your own** code, websites, servers, containers, cloud accounts and files for security problems – and explains in plain language what is wrong and how to fix it.
@@ -57,13 +57,14 @@ It combines **fixed rules and live vulnerability databases** (which find known p
 
 | Area | Examples |
 | --- | --- |
-| Code | Injection, XSS, path traversal, SSRF, unsafe deserialization, JWT without verification, prototype pollution, weak crypto, `Math.random()` for tokens, taint flows across files – JS/TS, Python, Java, Go, Rust, C#, PHP, Kotlin, Swift |
+| Code | Injection, XSS, path traversal, SSRF, unsafe deserialization, JWT without verification, prototype pollution, weak crypto, `Math.random()` for tokens, taint flows across files, framework rules (Next.js, Nuxt, Laravel, Spring, Django, Rails, ASP.NET), crypto inventory, code quality – JS/TS, Python, Java, Go, Rust, C/C++, C#, PHP, Kotlin, Swift, Ruby, Dart, Scala, Elixir, Lua, PowerShell, Bash |
+| AI apps & data | LLM tools with shell/file access, prompt injection paths, MCP configurations, pickle model files, personal data (IBAN, IDs, e-mail lists), secrets in logs and notebooks, OpenAPI/GraphQL definitions, SQL privileges |
 | Credentials | API keys, passwords, private keys, connection strings – in current code and in Git history (always redacted) |
-| Dependencies | Known CVEs (OSV), actively exploited ones (KEV), exploit probability (EPSS), reachability, vulnerable JS libraries, licenses, supply chain (typosquatting, install scripts, unpinned actions) |
-| Infrastructure | Dockerfiles, Compose, Kubernetes, Terraform, CloudFormation, Ansible, GitHub Actions |
-| Websites | Certificate and protocols, security headers, CSP, cookies, CORS, exposed files (`.env`, `.git`, source maps), DNS & mail (SPF, DMARC, DKIM, CAA, subdomain takeover). For verified domains also: crawl, harmless test values in parameters, browser runtime check, login check with a test account, API access matrix (BOLA/IDOR) |
-| Files & programs | Malware scan, digital signatures, Office macros, remote templates, PDF JavaScript, RTF objects, Android/iOS apps |
-| Systems (read-only) | This Windows PC, running Docker containers, AWS, Azure, Google Cloud |
+| Dependencies | Known CVEs (OSV, also offline), actively exploited ones (KEV), exploit probability (EPSS), reachability, malicious packages, abandoned packages, OpenSSF Scorecard, lockfile drift, vulnerable JS libraries, licenses, supply chain, SBOM export (CycloneDX, SPDX), VEX |
+| Infrastructure | Dockerfiles, image layers, Compose, Kubernetes, Helm, Kustomize, Terraform, CloudFormation, Ansible, GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, nginx/Apache/Caddy configs, WordPress/Joomla/TYPO3 |
+| Websites | Certificate, chain and domain expiry, security headers with Observatory grade, CSP and SRI suggestions, cookies, CORS, exposed files, secrets in delivered scripts, DNS & mail (SPF, DMARC, DKIM, MTA-STS, TLS-RPT, BIMI, DNSSEC), subdomains, typo domains, Shodan InternetDB, security.txt, change watch, privacy before consent, accessibility, load time, imprint, broken links, SEO. For verified domains also: crawl, harmless test values, browser runtime check, login check, API access matrix, unauthenticated OpenAPI GET check |
+| Files & programs | Malware scan (Defender, MalwareBazaar, YARA), digital signatures, PE hardening, bundled vulnerable libraries, Office macros, PDF JavaScript, archives (zip, tar, ISO, 7z, RAR, MSI, DMG …), e-mails (.eml, .msg), phishing links, obfuscated scripts, shortcuts and disk images, Android/iOS apps |
+| Systems & accounts (read-only) | This Windows PC, installed programs, browser extensions, backup, router and home network, Linux servers via SSH, macOS, databases, Kubernetes, Docker, AWS/Azure/Google Cloud incl. IAM, GitHub/GitLab/Azure DevOps, Microsoft 365 / Google Workspace, Cloudflare, Hetzner, DigitalOcean, Vercel, Netlify, Have I Been Pwned |
 
 ## Safe by design
 
@@ -127,7 +128,7 @@ npm run dist      # Windows installer (electron-builder)
 ```
 electron/     app window, IPC, scan queue, local REST API, Ollama setup
 src/core/     ingest, rules, modules, feeds, AI providers, analysis, store, reports
-src/ui/       interface (index.html, styles.css, renderer.js, i18n.js)
+src/ui/       interface (index.html, styles.css, i18n.js, app/01–09 view scripts)
 src/cli.js    command line
 bench/        deliberately vulnerable practice project with expected findings
 test/         core and UI tests

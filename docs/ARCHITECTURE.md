@@ -39,7 +39,7 @@ src/core/                 security engine (no Electron)
 
 src/ui/                   renderer (sandboxed, no Node)
   index.html, styles.css  markup and styles (strict CSP)
-  renderer.js             all views
+  app/01-…09-*.js        all views (classic scripts sharing one global scope, loaded in order)
   applock.js              lock screen + lock settings
   i18n.js                 English UI dictionary (DOM text replacement)
 ```

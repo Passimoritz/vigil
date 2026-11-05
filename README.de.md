@@ -11,7 +11,7 @@
   <img alt="Plattform: Windows" src="https://img.shields.io/badge/Plattform-Windows-0f1b2d">
   <img alt="Electron 45" src="https://img.shields.io/badge/Electron-45-47848f">
   <img alt="KI: lokal oder Cloud" src="https://img.shields.io/badge/KI-Ollama%20%7C%20Claude%20%7C%20OpenAI%20%7C%20Gemini-2b3a55">
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-294%20Kern%20%2B%2030%20Oberfl%C3%A4che-2ea44f">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-719%20Kern%20%2B%2065%20Oberfl%C3%A4che-2ea44f">
 </p>
 
 Vigil ist eine Desktop-App, die **deine eigenen** Projekte, Webseiten, Server, Container, Cloud-Konten und Dateien auf Sicherheitsprobleme prüft – und in Klartext erklärt, was los ist und wie du es behebst.
@@ -57,13 +57,14 @@ Vigil kombiniert **feste Regeln und tagesaktuelle Schwachstellen-Datenbanken** (
 
 | Bereich | Beispiele |
 | --- | --- |
-| Code | Injection, XSS, Path Traversal, SSRF, unsichere Deserialisierung, JWT ohne Prüfung, Prototype Pollution, schwache Krypto, `Math.random()` für Tokens, Datenflüsse über mehrere Dateien – JS/TS, Python, Java, Go, Rust, C#, PHP, Kotlin, Swift |
+| Code | Injection, XSS, Path Traversal, SSRF, unsichere Deserialisierung, JWT ohne Prüfung, Prototype Pollution, schwache Krypto, `Math.random()` für Tokens, Datenflüsse über mehrere Dateien, Framework-Regeln (Next.js, Nuxt, Laravel, Spring, Django, Rails, ASP.NET), Krypto-Inventar, Code-Qualität – JS/TS, Python, Java, Go, Rust, C/C++, C#, PHP, Kotlin, Swift, Ruby, Dart, Scala, Elixir, Lua, PowerShell, Bash |
+| KI-Apps & Daten | KI-Werkzeuge mit Shell-/Dateizugriff, Wege für Prompt-Injection, MCP-Konfigurationen, Pickle-Modelldateien, personenbezogene Daten (IBAN, Ausweis, E-Mail-Listen), Geheimnisse in Logs und Notebooks, OpenAPI/GraphQL, SQL-Rechte |
 | Zugangsdaten | API-Schlüssel, Passwörter, private Schlüssel, Connection-Strings – im aktuellen Code und in der Git-Historie (immer geschwärzt) |
-| Abhängigkeiten | Bekannte CVEs (OSV), aktiv ausgenutzte (KEV), Ausnutzungs-Wahrscheinlichkeit (EPSS), Erreichbarkeit, verwundbare JS-Bibliotheken, Lizenzen, Lieferkette (Tippfehler-Pakete, Install-Skripte, ungepinnte Actions) |
-| Infrastruktur | Dockerfiles, Compose, Kubernetes, Terraform, CloudFormation, Ansible, GitHub Actions |
-| Webseiten | Zertifikat und Protokolle, Sicherheits-Header, CSP, Cookies, CORS, offen liegende Dateien (`.env`, `.git`, SourceMaps), DNS & Mail (SPF, DMARC, DKIM, CAA, Subdomain-Takeover). Für nachgewiesene Domains zusätzlich: Unterseiten-Durchgang, harmlose Testwerte in Parametern, Browser-Laufzeitprüfung, Login-Prüfung mit Testkonto, API-Rechtematrix (BOLA/IDOR) |
-| Dateien & Programme | Schadsoftware-Scan, digitale Signaturen, Office-Makros, nachgeladene Vorlagen, JavaScript in PDFs, RTF-Objekte, Android-/iOS-Apps |
-| Systeme (nur lesend) | Dieser Windows-PC, laufende Docker-Container, AWS, Azure, Google Cloud |
+| Abhängigkeiten | Bekannte CVEs (OSV, auch offline), aktiv ausgenutzte (KEV), Ausnutzungs-Wahrscheinlichkeit (EPSS), Erreichbarkeit, Schadpakete, verwaiste Pakete, OpenSSF Scorecard, Lockfile-Abweichungen, verwundbare JS-Bibliotheken, Lizenzen, Lieferkette, SBOM-Export (CycloneDX, SPDX), VEX |
+| Infrastruktur | Dockerfiles, Image-Schichten, Compose, Kubernetes, Helm, Kustomize, Terraform, CloudFormation, Ansible, GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, nginx/Apache/Caddy, WordPress/Joomla/TYPO3 |
+| Webseiten | Zertifikat, Kette und Domain-Ablauf, Sicherheits-Header mit Observatory-Note, CSP- und SRI-Vorschläge, Cookies, CORS, offen liegende Dateien, Geheimnisse in ausgelieferten Skripten, DNS & Mail (SPF, DMARC, DKIM, MTA-STS, TLS-RPT, BIMI, DNSSEC), Subdomains, Tippfehler-Domains, Shodan InternetDB, security.txt, Änderungs-Wächter, Datenschutz vor der Einwilligung, Barrierefreiheit, Ladezeit, Impressum, defekte Links, SEO. Für nachgewiesene Domains zusätzlich: Unterseiten, harmlose Testwerte, Browser-Prüfung, Login-Prüfung, API-Rechtematrix, OpenAPI-Abruf ohne Anmeldung |
+| Dateien & Programme | Schadsoftware (Defender, MalwareBazaar, YARA), Signaturen, Schutzfunktionen von Programmen, eingebaute verwundbare Bibliotheken, Office-Makros, PDF-JavaScript, Archive (zip, tar, ISO, 7z, RAR, MSI, DMG …), E-Mails (.eml, .msg), Phishing-Links, verschleierte Skripte, Verknüpfungen und Disk-Images, Android-/iOS-Apps |
+| Systeme & Konten (nur lesend) | Dieser Windows-PC, installierte Programme, Browser-Erweiterungen, Datensicherung, Router und Heimnetz, Linux-Server per SSH, macOS, Datenbanken, Kubernetes, Docker, AWS/Azure/Google Cloud inkl. Rechte, GitHub/GitLab/Azure DevOps, Microsoft 365 / Google Workspace, Cloudflare, Hetzner, DigitalOcean, Vercel, Netlify, Have I Been Pwned |
 
 ## Sicher von Grund auf
 
@@ -146,7 +147,7 @@ npm run dist      # Windows-Installer (electron-builder)
 ```
 electron/     App-Fenster, IPC, Prüf-Warteschlange, lokale REST-API, Ollama-Einrichtung
 src/core/     Einlesen, Regeln, Module, Feeds, KI-Anbieter, Analyse, Befund-Speicher, Berichte
-src/ui/       Oberfläche (index.html, styles.css, renderer.js, i18n.js)
+src/ui/       Oberfläche (index.html, styles.css, i18n.js, app/01–09 Ansichten)
 src/cli.js    Kommandozeile
 bench/        absichtlich unsicheres Übungsprojekt mit erwarteten Befunden
 test/         Kern- und Oberflächen-Tests
