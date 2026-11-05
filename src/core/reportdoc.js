@@ -89,6 +89,22 @@ function findingCard(f, n) {
 const SHIELD = '<svg viewBox="0 0 1024 1024" width="34" height="34" aria-hidden="true"><rect width="1024" height="1024" rx="224" fill="#0f1b2d" stroke="rgba(255,255,255,.18)" stroke-width="16"/><path fill="#f2b23a" d="M272 252 L392 252 L512 560 L632 252 L752 252 L752 500 C752 660 652 776 512 852 C372 776 272 660 272 500 Z"/></svg>';
 
 // opts: { title, targets: [{type,value}], company, logoDataUrl }
+// STRIDE-Bedrohungsmodell (meta.threatModel, auf Knopfdruck erstellt) als Berichtsabschnitt
+const STRIDE_ORDER = ['S', 'T', 'R', 'I', 'D', 'E'];
+const LEVEL_DE = { high: 'hoch', medium: 'mittel', low: 'niedrig' };
+function threatHtml(tm, n) {
+  const list = [...tm.threats].sort((a, b) => STRIDE_ORDER.indexOf(a.stride) - STRIDE_ORDER.indexOf(b.stride));
+  return `<h2 class="section-break"><span class="n">${n}</span> Bedrohungsmodell (STRIDE)</h2>
+  ${tm.summary ? `<p>${esc(tm.summary)}</p>` : ''}
+  ${(tm.assets || []).length ? `<p class="muted"><b>Schützenswert:</b> ${esc(tm.assets.join(' · '))}</p>` : ''}
+  ${(tm.entryPoints || []).length ? `<p class="muted"><b>Eingänge:</b> ${esc(tm.entryPoints.join(' · '))}</p>` : ''}
+  <table><thead><tr><th>STRIDE</th><th>Bedrohung</th><th>Wahrscheinlichkeit</th><th>Auswirkung</th><th>Gegenmaßnahmen</th></tr></thead><tbody>
+  ${list.map((t) => `<tr><td><b>${esc(t.stride)}</b> ${esc(t.category)}</td><td><b>${esc(t.title)}</b>${t.asset ? `<div class="muted">${esc(t.asset)}</div>` : ''}${t.description ? `<div>${esc(t.description)}</div>` : ''}${(t.findings || []).length ? `<div class="muted">${esc(t.findings.map((x) => '#' + x.n + ' ' + x.title).join('; '))}</div>` : ''}</td><td>${esc(LEVEL_DE[t.likelihood] || t.likelihood)}</td><td>${esc(LEVEL_DE[t.impact] || t.impact)}</td><td>${(t.mitigations || []).map((m) => `<div>${esc(m)}</div>`).join('')}</td></tr>`).join('')}
+  </tbody></table>
+  ${(tm.assumptions || []).length ? `<p class="muted">Annahmen: ${esc(tm.assumptions.join(' · '))}</p>` : ''}
+  <p class="muted">${tm.source === 'ai' ? `Erstellt von der KI${tm.model ? ' (' + esc(tm.model) + ')' : ''} – bitte fachlich prüfen.` : 'Ohne KI aus den Befunden abgeleitet.'}</p>`;
+}
+
 function toHtml(result, opts = {}) {
   if (typeof opts === 'string') opts = { title: opts };
   const all = result.findings || [];
@@ -106,7 +122,10 @@ function toHtml(result, opts = {}) {
   const ST = { ok: ['erfüllt (keine offenen Befunde)', SEV_COLOR.low], warn: ['offene Befunde', SEV_COLOR.medium], fail: ['dringende Befunde', SEV_COLOR.critical] };
   const logo = opts.logoDataUrl && /^data:image\/(png|jpe?g|svg\+xml|webp);base64,/.test(opts.logoDataUrl) ? `<img class="logo" src="${esc(opts.logoDataUrl)}" alt="Logo">` : '';
   const modules = (meta.modulesRun || []).filter(Boolean);
-  const nNorm = findings.length ? 4 : 3;
+  const tm = meta.threatModel && Array.isArray(meta.threatModel.threats) && meta.threatModel.threats.length ? meta.threatModel : null;
+  const nThreat = findings.length ? 4 : 3;
+  const nNorm = nThreat + (tm ? 1 : 0);
+  const runSummary = meta.runSummary && meta.runSummary.text ? meta.runSummary.text : '';
 
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}${targets[0] ? ' – ' + esc(targets[0]) : ''}</title>
@@ -262,6 +281,7 @@ function toHtml(result, opts = {}) {
 
 <main>
   <h2><span class="n">1</span> Auf einen Blick</h2>
+  ${runSummary ? `<div class="box" style="margin-bottom:16px"><h4>Zusammenfassung</h4><p>${esc(runSummary)}</p></div>` : ''}
   <div class="glance">
     <div class="box"><h4>Die wichtigsten Risiken</h4>
       ${top.length ? `<ul class="toplist">${top.map((f) => `<li><span class="dot" style="background:${SEV_COLOR[f.severity]}"></span><div><a href="#f${idx.get(f)}">${esc(clean(f.title))}</a><div class="muted">${esc(firstSentence(f.impact || f.description))}</div></div></li>`).join('')}</ul>` : '<p class="muted">Keine kritischen oder hohen Risiken.</p>'}
@@ -279,6 +299,8 @@ function toHtml(result, opts = {}) {
 
   <h2 class="section-break"><span class="n">3</span> Befunde im Detail</h2>
   ${groups.map((g) => `<div class="group-h"><i style="background:${SEV_COLOR[g.sv]}"></i>${SEV_LABEL[g.sv]} <small>${g.list.length} · ${esc(SEV_HELP[g.sv])}</small></div>${g.list.map((f) => findingCard(f, idx.get(f))).join('')}`).join('')}` : '<h2><span class="n">2</span> Befunde</h2><p>Bei dieser Prüfung wurden keine offenen Befunde gefunden.</p>'}
+
+  ${tm ? threatHtml(tm, nThreat) : ''}
 
   <h2 class="section-break"><span class="n">${nNorm}</span> Nachweise für Normen</h2>
   <p class="muted">Technische Einordnung der offenen Befunde in gängige Kataloge – ein prüfbarer Baustein für Audits, ersetzt aber keine Zertifizierung oder Rechtsberatung.</p>
@@ -320,6 +342,7 @@ function toMarkdown(result, opts = {}) {
   L.push(`> **Note ${s.grade}** · Sicherheitswert ${s.posture}/100 · ${s.verdict}`, '');
   L.push(`Erstellt am ${fmtDate(meta.at)}${targets.length ? ` · Ziele: ${targets.map((t) => '`' + t + '`').join(', ')}` : ''}`, '');
   L.push('| Kritisch | Hoch | Mittel | Niedrig | Hinweis | Angriffswege |', '|:-:|:-:|:-:|:-:|:-:|:-:|', `| ${s.c.critical} | ${s.c.high} | ${s.c.medium} | ${s.c.low} | ${s.c.info} | ${s.toxic} |`, '');
+  if (meta.runSummary && meta.runSummary.text) L.push('## Zusammenfassung', '', meta.runSummary.text, '');
   const top = findings.filter((f) => f.severity === 'critical' || f.severity === 'high').slice(0, 6);
   if (top.length) { L.push('## Die wichtigsten Risiken', ''); top.forEach((f) => L.push(`- **${clean(f.title)}** – ${firstSentence(f.impact || f.description, 160)}`)); L.push(''); }
   if (findings.length) {
@@ -339,6 +362,17 @@ function toMarkdown(result, opts = {}) {
       if (Array.isArray(f.links) && f.links.length) L.push('Mehr dazu: ' + f.links.slice(0, 4).map((l) => `[${l.label}](${l.url})`).join(' · '), '');
     });
   } else L.push('Keine offenen Befunde.', '');
+  const tm = meta.threatModel && Array.isArray(meta.threatModel.threats) && meta.threatModel.threats.length ? meta.threatModel : null;
+  if (tm) {
+    L.push('## Bedrohungsmodell (STRIDE)', '');
+    if (tm.summary) L.push(tm.summary, '');
+    [...tm.threats].sort((a, b) => STRIDE_ORDER.indexOf(a.stride) - STRIDE_ORDER.indexOf(b.stride)).forEach((t) => {
+      L.push(`- **[${t.stride}] ${t.category}** – ${t.title} (${t.likelihood} / ${t.impact})`);
+      if (t.description) L.push(`  ${t.description}`);
+      (t.mitigations || []).forEach((m) => L.push(`  - ${m}`));
+    });
+    L.push('');
+  }
   if (result.errors && result.errors.length) { L.push('<details><summary>Hinweise zum Lauf</summary>', ''); result.errors.forEach((e) => L.push(`- ${e}`)); L.push('', '</details>', ''); }
   L.push('---', '_Erstellt mit Vigil – zerstörungsfreie Prüfung eigener bzw. freigegebener Systeme._');
   return L.join('\n');

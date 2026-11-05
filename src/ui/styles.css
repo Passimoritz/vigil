@@ -1070,3 +1070,64 @@ button.stat:hover:not(:disabled) { border-color: var(--line-strong); }
 .set-body > .set-block + .set-block { margin-top: 14px; }
 .set-block h2 { font-size: 15px; margin-bottom: 4px; }
 @media (max-width: 900px) { .set-nav { flex-direction: row; overflow-x: auto; position: static; } .set-nav button { width: auto; flex: none; } .set-nav button small { display: none; } }
+
+/* KI-Hilfe im Befund-Detail: Erklaerstufen, Fix als Diff, Upgrade-Hinweise */
+.ai-help .lvl-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.ai-help .explain-out { margin: 6px 0 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel-2); }
+.ai-help .patch-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-help .patch-out, .ai-help .upg-out { margin-top: 10px; }
+.ai-help .sol-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.ai-help .sol-head .copy-btn { margin-left: auto; }
+.err { color: var(--crit); }
+.diff-view { margin: 0; padding: 8px 0; overflow: auto; max-height: 420px; border-radius: var(--r-sm); font: 12px/1.5 var(--mono); color: var(--code-text); background: var(--code-bg); border: 1px solid var(--line); }
+.diff-view span { display: block; padding: 0 12px; white-space: pre; }
+.diff-view .d-add { background: color-mix(in srgb, var(--low) 18%, transparent); }
+.diff-view .d-del { background: color-mix(in srgb, var(--crit) 18%, transparent); }
+.diff-view .d-hunk { color: var(--info); }
+.diff-view .d-file { color: var(--muted); font-weight: 600; }
+.upg-warn { color: var(--high); font-weight: 600; }
+.upg-hints { margin: 4px 0 8px; padding-left: 18px; font-size: 12.5px; }
+
+/* Zusammenfassung des Laufs und Bedrohungsmodell */
+.run-summary { margin-bottom: 16px; }
+.run-summary h3, .threat-panel h3 { font-size: 14px; margin: 0 0 6px; }
+.run-summary p { margin: 0 0 6px; line-height: 1.6; }
+.threat-panel { margin-bottom: 16px; }
+.tm-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.tm-head .tm-close { margin-left: auto; }
+.tm-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 8px 0; font-size: 12.5px; }
+.tm-facts ul, .tm-mit { margin: 2px 0 0; padding-left: 18px; }
+.tm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 10px; }
+.tm-card { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; background: var(--panel-2); font-size: 12.5px; }
+.tm-card p { margin: 4px 0; }
+.tm-cat { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.tm-cat b { display: inline-grid; place-items: center; width: 18px; height: 18px; margin-right: 4px; border-radius: 5px; background: var(--accent); color: var(--accent-ink); }
+.tm-title { margin: 4px 0; font-size: 13.5px; text-transform: none; letter-spacing: 0; color: var(--text); }
+.tm-links { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
+/* Hardware-Empfehlung fuer lokale Modelle */
+.hw-rec { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--accent-soft); }
+.hw-rec > div { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.hw-ico { font-size: 18px; }
+
+/* Verlauf: Details und Reproduzierbarkeits-Protokoll */
+.hist-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-bottom: 1px solid var(--line); }
+.hist-item:last-child { border-bottom: 0; }
+.hist-item .hist-row { border-bottom: 0; }
+.hist-item .hist-det { margin-right: 14px; }
+.hist-details { grid-column: 1 / -1; padding: 4px 20px 14px; font-size: 12.5px; }
+.repro-item { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 6px 10px; margin: 6px 0; }
+.repro-item summary { cursor: pointer; }
+.repro-pre { max-height: 260px; overflow: auto; padding: 8px 10px; font: 11.5px/1.5 var(--mono); background: var(--code-bg); color: var(--code-text); border-radius: var(--r-sm); white-space: pre-wrap; word-break: break-word; }
+
+/* Einstellungen: kleine Zahlenfelder, Datenschutz-Listen */
+.tiny-num { width: 80px; }
+.priv-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 4px 0 10px; }
+#aiFocusInput { width: 100%; margin: 0 0 10px; }
+
+/* Risiko akzeptieren: Frist-Dialog */
+.accept-dlg { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); padding: 18px 20px; width: min(420px, 92vw); }
+.accept-dlg::backdrop { background: rgba(0, 0, 0, .45); }
+.accept-dlg h3 { margin: 0 0 4px; font-size: 15px; }
+.accept-dlg .field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+.dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }

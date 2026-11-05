@@ -46,6 +46,29 @@
   });
   await t('Ergebnis: Suche filtert die Liste', async () => { $('findingSearch').value = 'AWS'; $('findingSearch').dispatchEvent(new Event('input')); await wait(80); const n = document.querySelectorAll('#findings .frow').length; $('findingSearch').value = ''; $('findingSearch').dispatchEvent(new Event('input')); return (n >= 1 && n < 10) || `${n} Treffer`; });
   await t('Ergebnis: Exportmenü öffnet und schließt', async () => { $('exportBtn').click(); const open = !$('exportMenu').hidden; document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await wait(30); return (open && $('exportMenu').hidden) || 'Menü reagiert nicht'; });
+  // KI & Behebung: ohne echte KI-Aufrufe (nur Darstellung und Bedienung)
+  await t('Ergebnis: Zusammenfassung des Laufs sichtbar', async () => (!$('runSummary').hidden && $('runSummary').textContent.length > 60) || 'keine Zusammenfassung');
+  await t('KI-Hilfe: Erklärstufen und Fix-Knopf im Detail', async () => {
+    const row = [...document.querySelectorAll('#findings .frow')].find((r) => { r.click(); return !!document.querySelector('#findingDetail .gen-patch'); });
+    const lv = document.querySelectorAll('#findingDetail .lvl-seg button').length;
+    return (row && lv === 3 && /Vigil ändert keine Datei/.test(document.querySelector('#findingDetail .ai-help').textContent)) || `Stufen ${lv}, Fix-Knopf ${!!row}`;
+  });
+  await t('Bedrohungsmodell: STRIDE-Karten werden angezeigt', async () => {
+    state.lastResult.meta = { ...(state.lastResult.meta || {}), threatModel: { source: 'rules', at: new Date().toISOString(), summary: 'Test', assets: ['Daten'], entryPoints: [], assumptions: [], threats: [{ stride: 'T', category: 'Manipulation', title: 'SQL', asset: '', description: 'd', likelihood: 'high', impact: 'high', mitigations: ['Parameter binden'], findings: [] }] } };
+    renderThreatModel();
+    const ok = !$('threatPanel').hidden && document.querySelectorAll('#threatPanel .tm-card').length === 1;
+    $('threatPanel').querySelector('.tm-close').click();
+    return (ok && $('threatPanel').hidden) || 'Karten fehlen';
+  });
+  await t('Risiko akzeptieren: Frist-Dialog mit 90 Tagen als Standard', async () => {
+    const p = askAcceptance(); await wait(50);
+    const dlg = document.querySelector('.accept-dlg');
+    const def = dlg && dlg.querySelector('.acc-days').value;
+    dlg.querySelector('.acc-cancel').click();
+    const r = await p;
+    return (def === '90' && r === null && !document.querySelector('.accept-dlg')) || `Standard ${def}`;
+  });
+  await t('Einstellungen: Budget, Datenschutz, Protokoll, Vorgaben vorhanden', async () => (['monthlyBudgetInput', 'aiFocusInput', 'lookupChk', 'fileBudgetInput', 'privacyChk', 'reproChk', 'runSumChk'].every((id) => $(id))) || 'Felder fehlen');
   await t('Einstellungen: Profil anwenden', async () => { showView('settings'); document.querySelector('#presetGrid [data-preset="fast"]').click(); await wait(100); return state.config.analysisDepth === 'standard' || state.config.analysisDepth; });
   await t('Einstellungen: Zugänge für System-Prüfungen (Geheimnisse leer, Status sichtbar)', async () => {
     showView('settings'); setGroup('checks'); renderSettings(); await until(() => $('sysStatus').textContent, 3000);

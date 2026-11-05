@@ -1714,6 +1714,240 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     if (leftN.length) console.log(leftN.slice(0, 15).join('\n'));
   }
 
+  // --- KI & Behebung (wish/ai-fix): alles mit Stub-Anbietern bzw. Fake-fetch, keine echten KI-Aufrufe ---
+  console.log('KI & Behebung (Patch, Stufen, Zusammenfassung, Anbieter, Budget, Nachschlagen, Datenschutz, Protokoll, Relevanz, Upgrade, Ablauf):');
+  {
+    const providers = require('../src/core/providers');
+    const cost = require('../src/core/cost');
+    const harness = require('../src/core/harness');
+    const aifix = require('../src/core/aifix');
+    const { analyze, unitKey } = require('../src/core/analyze');
+    const origCall = providers.callProvider, origTools = providers.callProviderTools, origFetch = global.fetch;
+    const restore = () => { providers.callProvider = origCall; providers.callProviderTools = origTools; global.fetch = origFetch; };
+    const fakeRes = (obj, status = 200) => ({ ok: status < 400, status, text: async () => JSON.stringify(obj), json: async () => obj });
+
+    // Anbieter & Preise
+    check('anbieter: Mistral/DeepSeek/Groq/OpenRouter/Azure/Bedrock/Vertex vorhanden', ['mistral', 'deepseek', 'groq', 'openrouter', 'azure', 'bedrock', 'vertex'].every((p) => providers.PROVIDERS[p]));
+    check('anbieter: SigV4-Signierschlüssel stimmt mit AWS-Referenzwert', providers.sigv4Key('wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY', '20120215', 'us-east-1', 'iam').toString('hex') === 'f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d');
+    const sig = providers.sigv4Headers({ host: 'bedrock-runtime.eu-central-1.amazonaws.com', path: '/model/amazon.nova-pro-v1%3A0/converse', region: 'eu-central-1', body: '{}', accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 's', now: new Date('2026-01-01T00:00:00Z') });
+    check('anbieter: Bedrock-Anfrage SigV4-signiert', /^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\/20260101\/eu-central-1\/bedrock\/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=[0-9a-f]{64}$/.test(sig.authorization) && !sig.host);
+    const az = providers.openaiTarget({ provider: 'azure', baseUrl: 'https://acme.openai.azure.com', model: 'prod-gpt4o', apiKey: 'k' });
+    check('anbieter: Azure-URL mit Deployment und api-key-Header', az.url === 'https://acme.openai.azure.com/openai/deployments/prod-gpt4o/chat/completions?api-version=2024-10-21' && az.headers['api-key'] === 'k' && !az.headers.Authorization);
+    check('preise: neue Anbieter haben Tarife', cost.priceFor('mistral', 'codestral-latest') && cost.priceFor('deepseek', 'deepseek-chat') && cost.priceFor('groq', 'llama-3.3-70b-versatile') && cost.priceFor('bedrock', 'amazon.nova-lite-v1:0'));
+    check('preise: Azure = OpenAI, Vertex = Gemini, OpenRouter/Bedrock je Hersteller', cost.priceFor('azure', 'gpt-4o-mini').in === 0.15 && cost.priceFor('vertex', 'gemini-2.0-flash').in === 0.10 && cost.priceFor('openrouter', 'openai/gpt-4.1-mini').in === 0.40 && cost.priceFor('bedrock', 'us.anthropic.claude-sonnet-4-20250514-v1:0').in === 3);
+    let seenUrl = '';
+    global.fetch = async (url, o) => { seenUrl = url; return fakeRes({ choices: [{ message: { content: '{"findings":[]}' } }], usage: { prompt_tokens: 3, completion_tokens: 2 } }); };
+    const mr = await providers.callProvider({ provider: 'groq', model: 'llama-3.3-70b-versatile', apiKey: 'g' }, { system: 's', user: 'u' });
+    check('anbieter: Groq über den OpenAI-kompatiblen Weg', seenUrl === 'https://api.groq.com/openai/v1/chat/completions' && mr.usage.inputTokens === 3);
+    restore();
+
+    // Werkzeug-Schleife (Anthropic-Format) mit Fake-fetch
+    const bodies = [];
+    let step = 0;
+    global.fetch = async (url, o) => {
+      bodies.push(JSON.parse(o.body)); step++;
+      if (step === 1) return fakeRes({ content: [{ type: 'tool_use', id: 't1', name: 'read_file', input: { path: 'lib/db.js' } }], usage: { input_tokens: 10, output_tokens: 3 } });
+      return fakeRes({ content: [{ type: 'text', text: '{"findings":[]}' }], usage: { input_tokens: 20, output_tokens: 4 } });
+    };
+    const toolsOut = await providers.callProviderTools({ provider: 'anthropic', model: 'm', apiKey: 'k' }, { system: 'S', user: 'U', tools: [{ name: 'read_file', description: 'd', parameters: { type: 'object', properties: { path: { type: 'string' } } } }], runTool: async (n, a) => `INHALT ${a.path}`, maxCalls: 2 });
+    check('nachschlagen: Anthropic-Werkzeugaufruf beantwortet und zweite Runde gesendet', toolsOut.lookups === 1 && toolsOut.text === '{"findings":[]}' && bodies[1].messages[2].content[0].type === 'tool_result' && bodies[1].messages[2].content[0].content === 'INHALT lib/db.js' && toolsOut.usage.inputTokens === 30);
+    // OpenAI-Format (Mistral): Limit erreicht -> letzte Runde mit tool_choice none
+    bodies.length = 0; step = 0;
+    global.fetch = async (url, o) => {
+      const b = JSON.parse(o.body); bodies.push(b); step++;
+      if (b.tool_choice !== 'none') return fakeRes({ choices: [{ message: { content: null, tool_calls: [{ id: 'c' + step, type: 'function', function: { name: 'find_definition', arguments: '{"name":"getUser"}' } }] } }] });
+      return fakeRes({ choices: [{ message: { content: '{"findings":[]}' } }] });
+    };
+    const mo = await providers.callProviderTools({ provider: 'mistral', model: 'codestral-latest', apiKey: 'k' }, { system: 'S', user: 'U', tools: [{ name: 'find_definition', description: 'd', parameters: { type: 'object', properties: {} } }], runTool: async () => 'DEF', maxCalls: 1 });
+    check('nachschlagen: Höchstzahl je Block wird eingehalten (OpenAI-Format)', mo.lookups === 1 && bodies.length === 2 && bodies[1].tool_choice === 'none' && bodies[1].messages.some((m) => m.role === 'tool' && m.content === 'DEF'));
+    restore();
+    let noTools = null;
+    try { await providers.callProviderTools({ provider: 'bedrock' }, { system: 's', user: 'u', tools: [], runTool: async () => '' }); } catch (e) { noTools = e.code; }
+    check('nachschlagen: Anbieter ohne Werkzeuge meldet NO_TOOLS', noTools === 'NO_TOOLS' && !providers.supportsTools('bedrock') && providers.supportsTools('ollama'));
+
+    // Nachschlagen in analyze(): Werkzeug-Ausgabe wird fuer die Cloud geschwaerzt; Fallback ohne Werkzeuge
+    const aUnits = [{ label: 'proj/routes/user.js', kind: 'file', language: 'javascript', content: 'const { getUser } = require("../lib/db");\napp.get("/u/:id", (req, res) => getUser(req.params.id));' }, { label: 'proj/lib/db.js', kind: 'file', language: 'javascript', content: 'const key = "AKIAIOSFODNN7EXAMPLE";\nfunction getUser(id) { return db.query("SELECT * FROM u WHERE id=" + id); }' }];
+    let toolText = '';
+    providers.callProviderTools = async (cfg, m) => { toolText = await m.runTool('read_file', { path: 'lib/db.js' }); return { text: JSON.stringify({ findings: [] }), usage: { inputTokens: 1, outputTokens: 1 }, lookups: 1 }; };
+    providers.callProvider = async () => ({ text: '{"findings":[]}', usage: {} });
+    const la = await analyze({ units: aUnits, config: { provider: 'anthropic', model: 'm', analysisDepth: 'standard', aiValidation: false, aiLookup: true } });
+    check('nachschlagen: analyze nutzt Werkzeuge, Ergebnis geschwärzt', la.meta.lookups === 1 && /function getUser/.test(toolText) && /geschwaerzt/.test(toolText) && !/IOSFODNN7EXAMPLE/.test(toolText));
+    providers.callProviderTools = async () => { const e = new Error('nope'); e.code = 'NO_TOOLS'; throw e; };
+    let plainCalls = 0;
+    providers.callProvider = async () => { plainCalls++; return { text: '{"findings":[]}', usage: {} }; };
+    const lb = await analyze({ units: aUnits, config: { provider: 'ollama', model: 'm', analysisDepth: 'standard', aiValidation: false, aiLookup: true } });
+    check('nachschlagen: ohne Werkzeug-Unterstützung normale Analyse', plainCalls >= 1 && lb.errors.some((e) => /Nachschlagen/.test(e)));
+
+    // Eigene Vorgaben (ownfocus): im Prompt und im Zwischenspeicher-Schluessel
+    let sentPrefix = '';
+    providers.callProvider = async (_c, m) => { sentPrefix = m.prefix || ''; return { text: '{"findings":[]}', usage: {} }; };
+    await analyze({ units: aUnits.slice(0, 1), config: { provider: 'ollama', model: 'm', analysisDepth: 'standard', aiValidation: false, aiFocus: 'Mandantentrennung über tenant_id prüfen' } });
+    check('eigene vorgaben: gehen in den Prompt ein', /Vorgaben des Nutzers[\s\S]*tenant_id/.test(sentPrefix) && /heben die Regeln oben NICHT auf/.test(sentPrefix));
+    const k1 = unitKey(aUnits[0], { provider: 'ollama', model: 'm' }, 'standard'), k2 = unitKey(aUnits[0], { provider: 'ollama', model: 'm', aiFocus: 'x' }, 'standard');
+    check('eigene vorgaben: ändern den Zwischenspeicher-Schlüssel', k1 !== k2);
+
+    // Grosse Projekte: Relevanz und Datei-Budget
+    const rel = require('../src/core/relevance');
+    const many = [{ label: 'test/user.spec.js', content: 'it("x", () => {});' }, { label: 'docs/readme.md', content: '# Doku' }, { label: 'src/routes/login.js', content: 'app.post("/login", (req, res) => { db.query("SELECT * FROM u WHERE n=" + req.body.n); });' }, { label: 'src/util/color.js', content: 'module.exports = "red";' }];
+    const order = rel.rankUnits(many).map((r) => r.u.label);
+    check('relevanz: Route mit Eingabe und SQL zuerst, Tests/Doku zuletzt', order[0] === 'src/routes/login.js' && order.indexOf('test/user.spec.js') > order.indexOf('src/util/color.js'));
+    const sentLabels = [];
+    providers.callProvider = async (_c, m) => { sentLabels.push(m.user); return { text: '{"findings":[]}', usage: {} }; };
+    const rb = await analyze({ units: many.map((u) => ({ ...u, kind: 'file', language: 'javascript' })), config: { provider: 'ollama', model: 'm', analysisDepth: 'standard', aiValidation: false, aiFileBudget: 1 } });
+    check('relevanz: Datei-Budget schickt nur die wichtigste Datei', rb.meta.skippedByBudget === 3 && sentLabels.join('').includes('src/routes/login.js') && !sentLabels.join('').includes('user.spec.js') && rb.errors.some((e) => /^Budget:/.test(e)));
+    const emb = await rel.embedScores(many, { model: 'nomic-embed-text', fetchImpl: async (url, o) => ({ ok: true, json: async () => ({ embeddings: JSON.parse(o.body).input.map((t) => (/QUERY|security sensitive/.test(t) || /login/.test(t) ? [1, 0] : [0, 1])) }) }) });
+    check('relevanz: lokale Embeddings bewerten ähnliche Dateien höher', emb && emb.get('src/routes/login.js') === 1 && emb.get('docs/readme.md') === 0);
+    check('relevanz: Embeddings nur lokal (fremde Adresse abgelehnt)', (await rel.embedScores(many, { model: 'x', baseUrl: 'https://example.com' })) === null);
+
+    // Strenger Datenschutz (privmode)
+    const priv = harness.redactPrivate('// @author Max Mustermann <max@acme-corp.com>\nconst h = "db01.prod.internal"; ip = "10.1.2.3"; // Acme Corp intern, api.acme.io', { terms: ['Acme Corp'], hosts: ['acme.io'] });
+    check('datenschutz: Person, E-Mail, interner Host, IP, Firma, eigene Domain geschwärzt', !/Mustermann|max@|db01\.prod|10\.1\.2\.3|Acme Corp|api\.acme\.io/.test(priv.text) && /«person-1»/.test(priv.text) && /«firma-1»/.test(priv.text) && priv.count === 6);
+    const both = harness.redactForCloud('k="AKIAIOSFODNN7EXAMPLE"; mail="a.b@firma.de"', { privacyMode: true });
+    check('datenschutz: zusammen mit Secrets in einem Schritt', !/IOSFODNN7EXAMPLE|a\.b@firma/.test(both.text) && both.count === 2);
+    check('datenschutz: ohne privmode bleiben E-Mails stehen', /a\.b@firma\.de/.test(harness.redactForCloud('mail="a.b@firma.de"', {}).text));
+    check('datenschutz: lokal wird nie geschwärzt, privmode schaltet für Cloud ein', !harness.shouldRedact({ provider: 'ollama', privacyMode: true }) && harness.shouldRedact({ provider: 'openai', redactSecrets: false, privacyMode: true }));
+    let cloudUser = '';
+    providers.callProvider = async (_c, m) => { cloudUser = m.user; return { text: '{"findings":[]}', usage: {} }; };
+    await analyze({ units: [{ label: 'a.js', kind: 'file', language: 'javascript', content: '// Kontakt: jane.doe@corp.example\nconst u = "https://intranet.firma.intern/x";' }], config: { provider: 'openai', model: 'gpt-4.1-mini', analysisDepth: 'standard', aiValidation: false, privacyMode: true } });
+    check('datenschutz: analyze schwärzt E-Mail und internen Host vor der Cloud-KI', cloudUser && !/jane\.doe|intranet\.firma\.intern/.test(cloudUser));
+    restore();
+
+    // Reproduzierbarkeit: Protokoll ueber den echten Anbieter-Weg (Fake-fetch)
+    const repro = require('../src/core/repro');
+    global.fetch = async () => fakeRes({ choices: [{ message: { content: '{"findings":[]}' } }], usage: { prompt_tokens: 7, completion_tokens: 2 } });
+    const rr = await analyze({ units: aUnits, config: { provider: 'openai', model: 'gpt-4.1-mini', apiKey: 'x', analysisDepth: 'standard', aiValidation: false, aiRepro: true, temperature: 0.1, maxTokens: 999 } });
+    restore();
+    const log = rr.meta.repro;
+    check('protokoll: je KI-Aufruf Modell, Parameter und Prüfsummen', log && log.calls >= 1 && log.entries[0].model === 'gpt-4.1-mini' && log.entries[0].params.maxTokens === 999 && /^[0-9a-f]{64}$/.test(log.entries[0].promptSha256) && /^[0-9a-f]{64}$/.test(log.entries[0].responseSha256));
+    check('protokoll: gespeicherter Prompt ist der geschwärzte', log.entries.every((e) => !JSON.stringify(e.prompt || {}).includes('IOSFODNN7EXAMPLE')) && repro.verifyLog(log).ok);
+    const tampered = JSON.parse(JSON.stringify(log)); tampered.entries[0].response = 'geändert';
+    check('protokoll: Manipulation wird erkannt', !repro.verifyLog(tampered).ok);
+    const noRepro = await analyze({ units: [], config: { provider: 'ollama', model: 'm', aiValidation: false } });
+    check('protokoll: ohne Opt-in kein Protokoll', !noRepro.meta.repro);
+    const js = JSON.parse(require('../src/core/report').toJson({ findings: [], summary: {}, meta: { repro: log, files: ['a'] } }));
+    check('protokoll: JSON-Bericht enthält nur Prüfsummen, keine Prompts', js.meta.repro.entries.length === log.entries.length && !js.meta.repro.entries[0].prompt && !js.meta.files);
+
+    // Fix als unified diff
+    const code = { file: 'proj/lib/db.js', from: 1, line: 2, lines: ['const key = process.env.KEY;', 'function getUser(id) { return db.query("SELECT * FROM u WHERE id=" + id); }', ''] };
+    let patchUser = '';
+    providers.callProvider = async (_c, m) => { patchUser = m.user; return { text: JSON.stringify({ summary: 'Parametrisierte Abfrage', diff: '--- a/proj/lib/db.js\n+++ b/proj/lib/db.js\n@@ -2,1 +2,1 @@\n-function getUser(id) { return db.query("SELECT * FROM u WHERE id=" + id); }\n+function getUser(id) { return db.query("SELECT * FROM u WHERE id=?", [id]); }\n', notes: '', confidence: 'high' }), usage: { inputTokens: 100, outputTokens: 50 } }; };
+    const fx = { title: 'SQL-Injection', severity: 'high', location: 'proj/lib/db.js:2', category: 'Injection', description: 'Konkatenation' };
+    const p1 = await aifix.generatePatch({ finding: fx, code: { ...code, lines: ['const key = "AKIAIOSFODNN7EXAMPLE";', ...code.lines.slice(1)] }, config: { provider: 'anthropic', model: 'claude-x', lang: 'en' } });
+    check('patch: Diff geliefert, Statistik und Prüfung gegen den Code', p1.ok && /^--- a\/proj\/lib\/db\.js/m.test(p1.diff) && p1.stats.added === 1 && p1.stats.removed === 1 && p1.check.applies === true);
+    check('patch: Code geht geschwärzt an die Cloud-KI, englische Anweisung', !/IOSFODNN7EXAMPLE/.test(patchUser) && /Answer in English/.test(patchUser));
+    const p2 = aifix.checkDiff('@@ -1,1 +1,1 @@\n-gibt es nicht\n+neu\n', code);
+    check('patch: nicht passender Diff wird erkannt', p2.checked && p2.applies === false);
+    check('patch: Diff ohne Kopf wird ergänzt', /^--- a\/x\.js\n\+\+\+ b\/x\.js\n@@/.test(aifix.normalizeDiff('@@ -1 +1 @@\n-a\n+b', 'x.js')));
+    providers.callProvider = async () => ({ text: '{"summary":"","diff":"","notes":"Server-Konfiguration anpassen.","confidence":"low"}', usage: {} });
+    const p3 = await aifix.generatePatch({ finding: { title: 'Header fehlt', location: 'https://x' }, code: null, config: { provider: 'ollama', model: 'm' } });
+    check('patch: ohne Code-Änderung nur Hinweis, kein Diff', p3.ok && p3.diff === '' && /Server-Konfiguration/.test(p3.notes));
+
+    // Erklaerstufen mit Zwischenspeicher
+    const mem = new Map(); const ecache = { get: (k) => mem.get(k), set: (k, v) => mem.set(k, v) };
+    let ecalls = 0, lastUser = '';
+    providers.callProvider = async (_c, m) => { ecalls++; lastUser = m.user; return { text: 'Erklärung ' + ecalls, usage: {} }; };
+    const ecfg = { provider: 'ollama', model: 'm', lang: 'de' };
+    const e1 = await aifix.explainFinding({ finding: fx, level: 'lay', config: ecfg, cache: ecache });
+    const e2 = await aifix.explainFinding({ finding: fx, level: 'lay', config: ecfg, cache: ecache });
+    const e3 = await aifix.explainFinding({ finding: fx, level: 'expert', config: ecfg, cache: ecache });
+    check('stufen: Erklärung je Stufe, zweiter Aufruf aus dem Zwischenspeicher', e1.text === 'Erklärung 1' && e2.cached && e2.text === 'Erklärung 1' && e3.text === 'Erklärung 2' && ecalls === 2);
+    check('stufen: Experten-Stufe fragt nach CWE/CVSS, auf Deutsch', /CWE/.test(lastUser) && /Antworte auf Deutsch/.test(lastUser));
+    const e4 = await aifix.explainFinding({ finding: fx, level: 'lay', config: ecfg, cache: ecache, refresh: true });
+    check('stufen: "neu erklären" umgeht den Zwischenspeicher', !e4.cached && ecalls === 3);
+    check('stufen: Schlüssel hängt an Sprache und Modell', aifix.explainKey(fx, 'dev', ecfg) !== aifix.explainKey(fx, 'dev', { ...ecfg, lang: 'en' }) && aifix.explainKey(fx, 'dev', ecfg) !== aifix.explainKey(fx, 'dev', { ...ecfg, model: 'n' }));
+
+    // Zusammenfassung des Laufs
+    const runRes = { findings: [{ title: 'SQL-Injection', severity: 'critical', category: 'Injection', assurance: 'unverified', remediation: 'Parameter binden.' }, { title: 'Header fehlt', severity: 'low', category: 'Config', assurance: 'deterministic' }], meta: { units: 12, batches: 0 } };
+    const rs = await aifix.summarizeRun(runRes, { provider: 'ollama', lang: 'en' });
+    check('zusammenfassung: ohne KI-Lauf regelbasiert, englisch', rs.source === 'rules' && /12 file\(s\)/.test(rs.text) && /2 open finding/.test(rs.text) && /1 critical/.test(rs.text) && /unconfirmed/.test(rs.text));
+    check('zusammenfassung: regelbasiert auf Deutsch', /Am dringendsten: „SQL-Injection“/.test(aifix.ruleSummary(runRes, { lang: 'de' })));
+    providers.callProvider = async () => ({ text: 'The project has one critical SQL injection that should be fixed first; another low-risk header issue is cosmetic. Start with the database query.', usage: {} });
+    const rs2 = await aifix.summarizeRun({ ...runRes, meta: { units: 12, batches: 1 } }, { provider: 'ollama', model: 'm', lang: 'en' });
+    check('zusammenfassung: mit KI ein Absatz von der KI', rs2.source === 'ai' && /critical SQL injection/.test(rs2.text));
+    providers.callProvider = async () => { throw new Error('offline'); };
+    const rs3 = await aifix.summarizeRun({ ...runRes, meta: { units: 12, batches: 1 } }, { provider: 'ollama', model: 'm', lang: 'en' });
+    check('zusammenfassung: KI-Fehler -> regelbasiert', rs3.source === 'rules' && rs3.text.length > 40);
+    const { toHtml, toMarkdown } = require('../src/core/reportdoc');
+    const repRes = { ...runRes, errors: [], meta: { at: '2026-11-05T10:00:00Z', runSummary: { text: 'Kurzfassung des Laufs.' }, threatModel: aifix.ruleThreatModel(runRes, { lang: 'de' }) } };
+    check('zusammenfassung & bedrohungsmodell: im HTML- und Markdown-Bericht', /Kurzfassung des Laufs/.test(toHtml(repRes, {})) && /Bedrohungsmodell \(STRIDE\)/.test(toHtml(repRes, {})) && /## Zusammenfassung/.test(toMarkdown(repRes, {})) && /## Bedrohungsmodell \(STRIDE\)/.test(toMarkdown(repRes, {})));
+
+    // STRIDE-Bedrohungsmodell
+    providers.callProvider = async () => ({ text: JSON.stringify({ summary: 'Web-API mit Datenbank.', assets: ['Kundendaten'], entryPoints: ['/u/:id'], threats: [{ stride: 'T', title: 'SQL-Injection über /u/:id', asset: 'Datenbank', description: 'x', likelihood: 'high', impact: 'high', mitigations: ['Parameter binden'], findings: [1, 99] }, { stride: 'X', title: 'ungültig' }, { stride: 'S', title: 'Session-Diebstahl', likelihood: 'egal', mitigations: [] }] }), usage: {} });
+    const tm = await aifix.threatModel({ result: runRes, targets: ['C:/proj'], config: { provider: 'ollama', model: 'm', lang: 'en' } });
+    check('bedrohungsmodell: STRIDE-Karten normalisiert, Befund-Verweise geprüft', tm.source === 'ai' && tm.threats.length === 2 && tm.threats[0].stride === 'S' && tm.threats[1].findings.length === 1 && tm.threats[1].findings[0].title === 'SQL-Injection' && tm.threats[0].likelihood === 'medium' && tm.threats[1].category === 'Tampering');
+    providers.callProvider = async () => ({ text: 'kein JSON', usage: {} });
+    const tm2 = await aifix.threatModel({ result: runRes, config: { provider: 'ollama', model: 'm', lang: 'de' } });
+    check('bedrohungsmodell: unbrauchbare KI-Antwort -> aus Befunden abgeleitet', tm2.source === 'rules' && tm2.threats.some((t) => t.stride === 'T') && tm2.threats.some((t) => t.stride === 'I') && tm2.error);
+    restore();
+
+    // Budget
+    const budget = require('../src/core/budget');
+    const led = { entries: [] };
+    budget.record(led, { kind: 'run', usd: 1.5, model: 'a' }, '2026-11-02T10:00:00Z');
+    budget.record(led, { kind: 'ask', usd: 0.25 }, '2026-11-03T10:00:00Z');
+    budget.record(led, { kind: 'run', usd: 9 }, '2026-10-20T10:00:00Z');
+    budget.record(led, { kind: 'run', usd: 0 }, '2026-11-03T10:00:00Z');
+    const bs = budget.stats(led, 2, '2026-11-05T00:00:00Z');
+    check('budget: Ausgaben je Monat und je Lauf', bs.month === '2026-11' && bs.spent === 1.75 && bs.runs === 1 && bs.calls === 1 && bs.remaining === 0.25 && !bs.exceeded && bs.months.length === 2 && bs.avgRunUsd === 1.5);
+    const bc = budget.check(led, 2, 0.5, '2026-11-05T00:00:00Z');
+    check('budget: würde überschritten -> Rückfrage nötig', !bc.ok && bc.wouldExceed);
+    budget.record(led, { kind: 'run', usd: 0.5 }, '2026-11-04T10:00:00Z');
+    check('budget: erreicht -> gesperrt, ohne Budget nie gesperrt', budget.stats(led, 2, '2026-11-05T00:00:00Z').exceeded && budget.check(led, 0, 100).ok);
+
+    // Hardware & lokales Modell
+    const hw = require('../src/core/hwdetect');
+    check('hardware: nvidia-smi wird gelesen', hw.parseNvidiaSmi('NVIDIA GeForce RTX 4090, 24564\n')[0].vramGB === 24);
+    const ps = hw.parsePsJson(JSON.stringify({ video: [{ Name: 'AMD Radeon RX 7800 XT', AdapterRAM: 4293918720 }, { Name: 'Microsoft Basic Display Adapter', AdapterRAM: 0 }], reg: [{ DriverDesc: 'AMD Radeon RX 7800 XT', 'HardwareInformation.qwMemorySize': 17163091968 }] }));
+    check('hardware: Grafikspeicher aus der Registry statt des 4-GB-Felds', ps.length === 1 && ps[0].vramGB === 16 && ps[0].vendor === 'amd');
+    check('hardware: wmic-Fallback', hw.parseWmicCsv('Node,AdapterRAM,Name\nPC,8589934592,NVIDIA GeForce RTX 3070\n')[0].vramGB === 8);
+    const fake = (out) => async (cmd) => (cmd === 'nvidia-smi' ? out : '');
+    const h24 = await hw.detectHardware({ exec: fake('NVIDIA GeForce RTX 4090, 24564'), platform: 'linux', totalmem: 64 * 1024 ** 3, cpus: 16 });
+    check('hardware: 24 GB Grafikspeicher -> 32B-Modell', hw.recommendModel(h24).name === 'qwen2.5-coder:32b' && hw.recommendModel(h24).mode === 'gpu');
+    check('hardware: 8 GB Grafikspeicher -> 7B, installiertes passendes Modell bevorzugt', hw.recommendModel({ ramGB: 16, gpus: [{ name: 'RTX 3070', vendor: 'nvidia', vramGB: 8 }] }, ['llama3.1:8b', 'qwen2.5-coder:3b']).name === 'qwen2.5-coder:7b' && hw.recommendModel({ ramGB: 16, gpus: [{ name: 'RTX 3070', vendor: 'nvidia', vramGB: 8 }] }, ['llama3.1:8b', 'qwen2.5-coder:3b']).installedChoice === 'qwen2.5-coder:3b');
+    check('hardware: ohne Grafikkarte 8 GB RAM -> kleines Modell auf dem Prozessor', hw.recommendModel({ ramGB: 8, gpus: [{ name: 'Intel UHD', vendor: 'intel', vramGB: 1 }] }).name === 'qwen2.5-coder:3b' && hw.recommendModel({ ramGB: 8, gpus: [] }).mode === 'cpu');
+
+    // Upgrade-Hinweise
+    const up = require('../src/core/upgrade');
+    check('upgrade: semver-Sprünge erkannt', up.semverJump('4.17.20', '5.0.0').breaking && up.semverJump('0.3.1', '0.4.0').breaking && !up.semverJump('1.2.3', '1.4.0').breaking && up.semverJump('1.2.3', '1.2.9').kind === 'patch' && up.semverJump('x', '1').kind === 'unknown');
+    const fakeReg = async (url) => {
+      if (url.startsWith('https://registry.npmjs.org/')) return fakeRes({ repository: { url: 'git+https://github.com/acme/lib.git' }, homepage: 'https://acme.dev' });
+      if (url.startsWith('https://api.github.com/repos/acme/lib/releases')) return fakeRes([{ tag_name: 'v5.0.0', html_url: 'https://github.com/acme/lib/releases/tag/v5.0.0', body: '## Changes\n- BREAKING CHANGE: removed the callback API\n- faster' }, { tag_name: 'v4.17.21', html_url: 'https://github.com/acme/lib/releases/tag/v4.17.21', body: '- fix' }, { tag_name: 'v4.0.0', body: 'old' }]);
+      return fakeRes({}, 404);
+    };
+    let upPrompt = '';
+    const ug = await up.upgradeGuide({ pkg: { ecosystem: 'npm', name: 'acme-lib', version: '4.17.20', fixed: '5.0.0' }, config: { provider: 'ollama', lang: 'en' }, fetchImpl: fakeReg, aiCall: async (_c, m) => { upPrompt = m.user; return { text: '- **Callback API removed** – switch to promises.', cost: { usd: 0 } }; } });
+    check('upgrade: Changelog-/Release-Links aus den Registry-Metadaten', ug.links.some((l) => l.url === 'https://github.com/acme/lib/releases') && ug.links.some((l) => /compare\/v4\.17\.20\.\.\.v5\.0\.0$/.test(l.url)) && ug.jump.kind === 'major');
+    check('upgrade: brechende Änderungen aus den Release Notes, KI-Zusammenfassung', ug.hints.length === 1 && /callback API/.test(ug.hints[0].text) && /Callback API removed/.test(ug.aiSummary) && /v5\.0\.0/.test(upPrompt) && !/v4\.0\.0/.test(upPrompt));
+    const ug2 = await up.upgradeGuide({ pkg: { ecosystem: 'pypi', name: 'x', version: '1.0', fixed: '1.1' }, fetchImpl: async () => fakeRes({}, 500) });
+    check('upgrade: Registry nicht erreichbar -> trotzdem Ergebnis mit Hinweis', ug2.ok && ug2.error && ug2.jump.kind === 'minor' && !ug2.aiSummary);
+
+    // Befristete Risikoakzeptanz
+    const st2 = require('../src/core/store');
+    const db2 = st2.emptyStore();
+    const ap = st2.applyRun(db2, { targets: [{ type: 'path', value: 'C:/q' }], findings: [{ ruleId: 'r1', title: 'A', location: 'q/a.js:1', category: 'Config', severity: 'medium', source: 'prescan' }, { ruleId: 'r2', title: 'B', location: 'q/b.js:1', category: 'Config', severity: 'low', source: 'prescan' }], scannersRun: [], now: '2026-01-01T00:00:00Z' });
+    const [ida, idb] = ap.findings.map((f) => f.id);
+    const sa = st2.setStatus(db2, ida, 'ACCEPTED_RISK', 'intern', { now: '2026-01-01T00:00:00Z' });
+    st2.setStatus(db2, idb, 'ACCEPTED_RISK', '', { now: '2026-01-01T00:00:00Z', expiresInDays: 365 });
+    check('ablauf: Risiko akzeptiert gilt standardmäßig 90 Tage', sa.ok && sa.finding.acceptedUntil === '2026-04-01T00:00:00.000Z');
+    const ex = st2.expireAcceptedRisks(db2, '2026-04-02T00:00:00Z');
+    check('ablauf: abgelaufen -> wieder offen mit Hinweis, längere Frist bleibt', ex.expired === 1 && db2.findings[ida].status === 'OPEN' && /abgelaufen/.test(db2.findings[ida].statusNote) && db2.findings[idb].status === 'ACCEPTED_RISK');
+    st2.setStatus(db2, idb, 'IN_PROGRESS');
+    check('ablauf: anderer Status entfernt die Frist', !db2.findings[idb].acceptedUntil);
+    const { StatusUpdateSchema } = require('../src/core/validation');
+    check('ablauf: Frist wird validiert', StatusUpdateSchema.safeParse({ status: 'ACCEPTED_RISK', expiresInDays: 30 }).success && !StatusUpdateSchema.safeParse({ status: 'ACCEPTED_RISK', expiresInDays: 0 }).success);
+
+    // Nachschlage-Werkzeuge ueber die Units
+    const { makeLookupTools } = require('../src/core/lookup');
+    const lt = makeLookupTools(aUnits);
+    check('nachschlagen: Datei nur aus dem geprüften Material', /nicht Teil/.test(await lt.run('read_file', { path: 'C:/Windows/win.ini' })) && /getUser/.test(await lt.run('read_file', { path: 'lib/db' })));
+    check('nachschlagen: Definition wird gefunden', /proj\/lib\/db\.js Zeilen 2-/.test(await lt.run('find_definition', { name: 'getUser' })));
+
+    // Englische Fassungen der neuen Texte
+    const i18n = require('../src/core/findings-i18n');
+    check('englisch: neue Hinweise und Notizen übersetzt', /^Risk acceptance expired on 2026-04-01/.test(i18n.translate('Risikoakzeptanz am 2026-04-01 abgelaufen – wieder offen. Bitte neu bewerten.')) && /^Budget: only the 5 most relevant of 9 files/.test(i18n.translate('Budget: nur die 5 relevantesten von 9 Dateien gingen an die KI – 4 weniger relevante übersprungen (z. B. a.js).')));
+    restore();
+  }
+
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);
 })();

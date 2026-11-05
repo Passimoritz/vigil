@@ -41,10 +41,12 @@ const TargetSchema = z.object({
 
 const ScanRequestSchema = z.object({
   targets: z.array(TargetSchema).min(1).max(50),
-  providerId: z.enum(['ollama', 'anthropic', 'openai', 'gemini', 'compat']).optional(),
+  providerId: z.enum(['ollama', 'anthropic', 'openai', 'gemini', 'compat', 'mistral', 'deepseek', 'groq', 'openrouter', 'azure', 'bedrock', 'vertex']).optional(),
+  // Monatsbudget ueberschritten und der Nutzer hat ausdruecklich bestaetigt
+  budgetConfirmed: z.boolean().optional(),
 });
 
-const StatusUpdateSchema = z.object({ status: z.enum(FINDING_STATUSES), note: z.string().max(500).optional() });
+const StatusUpdateSchema = z.object({ status: z.enum(FINDING_STATUSES), note: z.string().max(500).optional(), expiresInDays: z.number().int().min(1).max(3650).optional() });
 
 // --- Rohausgaben externer Scanner (nur die Felder, die Vigil liest) --------
 const TrivyOutputSchema = z.object({

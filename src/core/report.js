@@ -156,7 +156,7 @@ function toJson(result, posture) {
   return JSON.stringify({
     generatedAt: new Date().toISOString(),
     posture: posture ? { score: posture.posture, open: posture.open, toxic: posture.toxic, kev: posture.kev, newSinceBaseline: posture.newSinceBaseline } : null,
-    summary: result.summary, lifecycle: result.lifecycle || null, meta: { ...(result.meta || {}), sbom: undefined },
+    summary: result.summary, lifecycle: result.lifecycle || null, meta: { ...(result.meta || {}), sbom: undefined, files: undefined, repro: result.meta && result.meta.repro ? { ...result.meta.repro, entries: (result.meta.repro.entries || []).map((e) => ({ ...e, prompt: undefined, response: undefined })) } : undefined },
     findings: (result.findings || []).map((f) => ({ id: f.id, ruleId: f.ruleId, title: f.title, severity: f.severity, status: f.status, cvss: f.cvss, epssScore: f.epssScore, inCisaKev: !!f.inCisaKev, contextualRiskScore: f.contextualRiskScore, category: f.category, location: f.location, evidence: f.evidence, sources: f.sources, remediation: f.remediation, steps: f.steps, versionPatch: f.versionPatch, links: f.links, linkedFindingIds: f.linkedFindingIds })),
   }, null, 2);
 }

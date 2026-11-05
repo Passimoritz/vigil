@@ -33,6 +33,14 @@ function finalize(findings, targets, config, units = []) {
 const DID_NOT_RUN = /nicht ausgefuehrt|nicht installiert|abgebrochen|nicht lesbar|unerwartet|nicht erreichbar|uebersprungen|fehlgeschlagen|konnte nicht/i;
 const completed = (notes) => !(notes || []).some((n) => DID_NOT_RUN.test(n));
 
+// Ein Absatz in Alltagssprache ueber den ganzen Lauf (KI, falls sie lief, sonst Regeln)
+async function runSummaryOf(result, config) {
+  const { summarizeRun, ruleSummary } = require('./aifix');
+  if (config.signal && config.signal.aborted) return { text: ruleSummary(result, config), source: 'rules' };
+  try { const s = await summarizeRun(result, config); return { text: s.text, source: s.source, ...(s.model ? { model: s.model } : {}), ...(s.cost ? { usd: s.cost.usd || 0 } : {}) }; }
+  catch { return { text: ruleSummary(result, config), source: 'rules' }; }
+}
+
 // targets: [{type:'path'|'url'|'endpoint'|'image', value, authorized?}]
 // config:  { provider, model, apiKey, baseUrl, temperature, maxTokens }
 async function runAudit(targets, config, onProgress = () => {}) {
@@ -262,6 +270,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
       errors: [...(webTargets.length || targets.some((t) => t.type === 'image' || t.type === 'system') ? [] : ['Kein lesbares Pruefmaterial gefunden.']), ...webNotes, ...cveNotes, ...moduleNotes, ...ing.notes],
       meta: { provider: config.provider, model: config.model, at: new Date().toISOString(), units: 0, batches: 0, ...extraMeta },
     };
+    empty.meta.runSummary = await runSummaryOf(empty, config);
     return { result: empty, ingest: ing, prescan: pre };
   }
 
@@ -276,6 +285,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   result.summary = summarize(result.findings);
   result.errors = [...result.errors, ...webNotes, ...cveNotes, ...moduleNotes, ...ing.notes];
   Object.assign(result.meta, extraMeta);
+  result.meta.runSummary = await runSummaryOf(result, config);
   onProgress({ phase: 'done', message: `Fertig: ${result.summary.total} Befund(e).` });
   return { result, ingest: ing, prescan: pre };
 }

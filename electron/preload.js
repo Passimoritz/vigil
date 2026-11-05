@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld('vigil', {
   saveSbom: (format) => ipcRenderer.invoke('report:save', { format: format === 'spdx' ? 'spdx' : 'cyclonedx' }),
 
   // Befund-Lebenszyklus & Uebersicht
-  setFindingStatus: (id, status, note) => ipcRenderer.invoke('finding:setStatus', id, { status, ...(note ? { note } : {}) }),
+  setFindingStatus: (id, status, note, expiresInDays) => ipcRenderer.invoke('finding:setStatus', id, { status, ...(note ? { note } : {}), ...(expiresInDays ? { expiresInDays: Number(expiresInDays) } : {}) }),
   dashboard: (filter) => ipcRenderer.invoke('dashboard:get', filter),
   clearStore: () => ipcRenderer.invoke('store:clear'),
   apiInfo: () => ipcRenderer.invoke('api:info'),
@@ -50,6 +50,13 @@ contextBridge.exposeInMainWorld('vigil', {
   onUsbScan: (cb) => { const h = (_e, drive) => cb(String(drive || '')); ipcRenderer.on('usb:scan', h); return () => ipcRenderer.removeListener('usb:scan', h); },
   findingSnippet: (location) => ipcRenderer.invoke('finding:snippet', String(location || '')),
   askFinding: (payload) => ipcRenderer.invoke('finding:ask', payload),
+  // KI-Hilfen: nur Vorschlaege, nichts wird automatisch angewendet
+  patchFinding: (finding) => ipcRenderer.invoke('finding:patch', { finding }),
+  explainFinding: (finding, level, refresh) => ipcRenderer.invoke('finding:explain', { finding, level, refresh: !!refresh }),
+  threatModel: () => ipcRenderer.invoke('threat:model'),
+  upgradeGuide: (pkg) => ipcRenderer.invoke('upgrade:guide', pkg),
+  budgetStats: () => ipcRenderer.invoke('budget:stats'),
+  historyDetails: (id) => ipcRenderer.invoke('history:details', id),
   crashInfo: () => ipcRenderer.invoke('crash:info'),
   crashOpen: () => ipcRenderer.invoke('crash:open'),
   sampleDemo: () => ipcRenderer.invoke('sample:demo'),
@@ -75,6 +82,7 @@ contextBridge.exposeInMainWorld('vigil', {
   ollama: {
     status: () => ipcRenderer.invoke('ollama:status'),
     detectLocal: () => ipcRenderer.invoke('localai:detect'),
+    hardware: () => ipcRenderer.invoke('localai:hardware'),
     recommended: () => ipcRenderer.invoke('ollama:recommended'),
     start: () => ipcRenderer.invoke('ollama:start'),
     install: () => ipcRenderer.invoke('ollama:install'),

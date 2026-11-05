@@ -77,7 +77,7 @@ function createApi({ orchestrator, getConfig, enforceScope }) {
       if (req.method === 'PATCH' && res1 === 'findings' && id && sub === 'status') {
         const v = check(StatusUpdateSchema, await readJson(req));
         if (!v.ok) return send(res, 400, { error: v.error });
-        const r = orchestrator.setStatus(id, v.data.status, v.data.note);
+        const r = orchestrator.setStatus(id, v.data.status, v.data.note, { expiresInDays: v.data.expiresInDays });
         return r.ok ? send(res, 200, { finding: r.finding }) : send(res, 404, { error: r.error });
       }
       if (req.method === 'POST' && res1 === 'scans' && !id) {
