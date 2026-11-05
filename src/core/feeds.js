@@ -5,7 +5,11 @@
 //  live bei jedem Lauf   OSV.dev (Schwachstellen aller Paket-Oekosysteme), Defender-Signaturen (Windows)
 //  taeglich (intel.js)   CISA KEV (aktiv ausgenutzt), FIRST EPSS (Ausnutzungs-Wahrscheinlichkeit)
 //  taeglich (hier)       gitleaks-Regeln (Zugangsdaten-Formate vieler Dienste),
-//                        retire.js-Datenbank (verwundbare JavaScript-Bibliotheken)
+//                        retire.js-Datenbank (verwundbare JavaScript-Bibliotheken),
+//                        Phishing-/Schadsoftware-Adressen (OpenPhish, URLhaus), BSI CERT-Bund-Hinweise,
+//                        YARA- und Semgrep-Regeln (nur wenn das Werkzeug installiert ist),
+//                        nuclei-Vorlagen (aktualisiert nuclei selbst, wenn installiert)
+//  optional              OSV-Komplettabzug fuer den Offline-Betrieb (osvoffline.js)
 //
 // Sicherheit: nur feste HTTPS-Quellen, Groessengrenze, Pruefung von Form und Mindestumfang, die
 // letzte gute Fassung bleibt bei jedem Fehler erhalten. Feeds sind reine DATEN – es wird nie Code
@@ -96,41 +100,119 @@ const FEEDS = [
     parse: (text) => { const j = JSON.parse(text); const n = Object.values(j).filter((l) => l && Array.isArray(l.vulnerabilities)).length; if (n < 20) throw new Error(`nur ${n} Bibliotheken – Format unerwartet`); return j; },
     count: (d) => Object.keys(d).length,
   },
+  // Phishing- und Schadsoftware-Adressen: fuer Links in Dokumenten/Mails und die eigene Domain
+  {
+    id: 'openphish', label: 'Phishing-Adressen (OpenPhish Community)', unit: 'Adressen',
+    urls: ['https://openphish.com/feed.txt'],
+    maxBytes: 8 * 1024 * 1024,
+    parse: (text) => parseUrlList(text, 20, 150000),
+    count: (d) => d.length,
+  },
+  {
+    id: 'urlhaus', label: 'Schadsoftware-Adressen (URLhaus, abuse.ch)', unit: 'Adressen',
+    urls: ['https://urlhaus.abuse.ch/downloads/text_online/'],
+    maxBytes: 24 * 1024 * 1024,
+    parse: (text) => parseUrlList(text, 20, 250000),
+    count: (d) => d.length,
+  },
+  // Sicherheitshinweise des BSI (CERT-Bund WID) – werden mit den Paketen der gespeicherten SBOMs abgeglichen
+  {
+    id: 'certbund', label: 'Sicherheitshinweise (BSI CERT-Bund)', unit: 'Meldungen',
+    urls: ['https://wid.cert-bund.de/content/public/securityAdvisory/rss'],
+    maxBytes: 6 * 1024 * 1024,
+    parse: (text) => { const items = parseRss(text); if (items.length < 3) throw new Error(`nur ${items.length} Meldungen – Format unerwartet`); return items; },
+    count: (d) => d.length,
+  },
+  // Nur wenn das jeweilige Werkzeug installiert ist
+  {
+    id: 'yara-rules', label: 'YARA-Regeln (signature-base)', unit: 'Regeln', when: (ctx) => !!(ctx.tools && ctx.tools.yara), sidecar: 'yar',
+    urls: ['https://raw.githubusercontent.com/Neo23x0/signature-base/master/yara/gen_webshells.yar', 'https://raw.githubusercontent.com/Neo23x0/signature-base/master/yara/gen_mimikatz.yar'],
+    maxBytes: 4 * 1024 * 1024,
+    parse: (text) => { if (/^\s*include\s+"/m.test(text)) throw new Error('Regeln mit include werden nicht geladen'); const n = countYaraRules(text); if (n < 3) throw new Error(`nur ${n} Regeln – Format unerwartet`); return text; },
+    count: (d) => countYaraRules(d),
+  },
+  {
+    id: 'semgrep-rules', label: 'Semgrep-Regeln (Registry p/default)', unit: 'Regeln', when: (ctx) => !!(ctx.tools && ctx.tools.semgrep), sidecar: 'yml',
+    urls: ['https://semgrep.dev/c/p/default'],
+    maxBytes: 12 * 1024 * 1024,
+    parse: (text) => { if (!/^rules:/m.test(text)) throw new Error('kein Semgrep-Regelsatz'); const n = (text.match(/^\s*-\s+id:/gm) || []).length; if (n < 20) throw new Error(`nur ${n} Regeln – Format unerwartet`); return text; },
+    count: (d) => (d.match(/^\s*-\s+id:/gm) || []).length,
+  },
+  // nuclei aktualisiert seine Vorlagen selbst (nuclei -update-templates); Vigil stoesst das nur an
+  { id: 'nuclei-templates', label: 'nuclei-Vorlagen (vom Werkzeug selbst aktualisiert)', unit: 'Vorlagen', tool: true, when: (ctx) => !!(ctx.updaters && ctx.updaters['nuclei-templates']) },
 ];
 
-const file = (dir, id) => path.join(dir, `${id}.json`);
-function loadFeed(dir, id) { try { return JSON.parse(fs.readFileSync(file(dir, id), 'utf8')); } catch { return null; } }
-const ALLOWED = ['https://raw.githubusercontent.com/', 'https://www.cisa.gov/', 'https://epss.cyentia.com/'];
+function parseUrlList(text, min, cap) {
+  const urls = String(text).split(/\r?\n/).map((l) => l.trim()).filter((l) => /^https?:\/\/\S+$/i.test(l) && l.length < 2000).slice(0, cap);
+  if (urls.length < min) throw new Error(`nur ${urls.length} Adressen – Format unerwartet`);
+  return urls;
+}
+function parseRss(text) {
+  const items = [];
+  const dec = (s) => String(s || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const m of String(text).matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)) {
+    const get = (k) => dec((m[1].match(new RegExp(`<${k}\\b[^>]*>([\\s\\S]*?)<\\/${k}>`, 'i')) || [])[1]);
+    const title = get('title').slice(0, 300), link = get('link').slice(0, 500);
+    if (title) items.push({ title, link: /^https:\/\//.test(link) ? link : '', date: get('pubDate'), summary: get('description').slice(0, 600) });
+    if (items.length >= 1000) break;
+  }
+  return items;
+}
+const countYaraRules = (t) => (String(t).match(/^\s*(?:(?:private|global)\s+)*rule\s+[A-Za-z_]\w*/gm) || []).length;
 
-async function fetchLimited(url, maxBytes, fetchImpl) {
+const file = (dir, id) => path.join(dir, `${id}.json`);
+const sidecarFile = (dir, f) => path.join(dir, `${f.id}.${f.sidecar}`);
+function loadFeed(dir, id) { try { return JSON.parse(fs.readFileSync(file(dir, id), 'utf8')); } catch { return null; } }
+const ALLOWED = ['https://raw.githubusercontent.com/', 'https://www.cisa.gov/', 'https://epss.cyentia.com/', 'https://openphish.com/', 'https://urlhaus.abuse.ch/', 'https://wid.cert-bund.de/', 'https://semgrep.dev/', 'https://crt.sh/', 'https://api.osv.dev/', 'https://osv-vulnerabilities.storage.googleapis.com/'];
+// Ist eine Quelle aktiv? (z. B. YARA-Regeln nur, wenn yara installiert ist)
+const isActive = (f, ctx) => !f.when || !!f.when(ctx || {});
+
+async function fetchLimited(url, maxBytes, fetchImpl, { binary = false, timeoutMs = 60000 } = {}) {
   if (!ALLOWED.some((p) => url.startsWith(p))) throw new Error('Quelle nicht erlaubt');
-  const r = await fetchImpl(url, { signal: AbortSignal.timeout(60000), headers: { 'User-Agent': 'Vigil-Feeds/1' } });
+  const r = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs), headers: { 'User-Agent': 'Vigil-Feeds/1' } });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const buf = Buffer.from(await r.arrayBuffer());
   if (buf.length > maxBytes) throw new Error('zu groß');
-  return buf.toString('utf8');
+  return binary ? buf : buf.toString('utf8');
+}
+
+function writeRec(dir, f, rec) {
+  fs.writeFileSync(file(dir, f.id) + '.tmp', JSON.stringify(rec));
+  fs.renameSync(file(dir, f.id) + '.tmp', file(dir, f.id));
+  // Regeldateien fuer externe Werkzeuge (yara, semgrep) zusaetzlich als Datei ablegen
+  if (f.sidecar && typeof rec.data === 'string') { fs.writeFileSync(sidecarFile(dir, f) + '.tmp', rec.data); fs.renameSync(sidecarFile(dir, f) + '.tmp', sidecarFile(dir, f)); }
 }
 
 // Laedt alle faelligen Feeds; bei Fehlern bleibt die letzte gute Fassung.
-async function syncFeeds(dir, { force = false, fetchImpl = fetch, now = Date.now() } = {}) {
+// ctx: { tools: { yara, semgrep }, updaters: { 'nuclei-templates': async () => ({ count }) } }
+async function syncFeeds(dir, { force = false, fetchImpl = fetch, now = Date.now(), ctx = {} } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const results = [];
   for (const f of FEEDS) {
+    if (!isActive(f, ctx)) { results.push({ id: f.id, skipped: true, inactive: true }); continue; }
     const old = loadFeed(dir, f.id);
-    if (!force && old && now - Date.parse(old.fetchedAt) < MAX_AGE_MS) { results.push({ id: f.id, skipped: true }); continue; }
+    if (!force && old && now - Date.parse(old.fetchedAt) < (f.maxAgeMs || MAX_AGE_MS)) { results.push({ id: f.id, skipped: true }); continue; }
     let lastErr = null;
-    for (const url of f.urls) {
+    if (f.tool) {
       try {
-        const text = await fetchLimited(url, f.maxBytes, fetchImpl);
-        const data = f.parse(text);
-        const sha256 = crypto.createHash('sha256').update(text).digest('hex');
-        const rec = { id: f.id, url, fetchedAt: new Date(now).toISOString(), sha256, count: f.count(data), changed: !old || old.sha256 !== sha256, data };
-        fs.writeFileSync(file(dir, f.id) + '.tmp', JSON.stringify(rec));
-        fs.renameSync(file(dir, f.id) + '.tmp', file(dir, f.id));
-        results.push({ id: f.id, ok: true, count: rec.count, changed: rec.changed });
-        lastErr = null;
-        break;
+        const r = await ctx.updaters[f.id]();
+        if (!r || r.ok === false) throw new Error((r && r.error) || 'Aktualisierung fehlgeschlagen');
+        writeRec(dir, f, { id: f.id, fetchedAt: new Date(now).toISOString(), count: r.count || null, changed: true, data: null });
+        results.push({ id: f.id, ok: true, count: r.count || null });
       } catch (e) { lastErr = e.message; }
+    } else {
+      for (const url of f.urls) {
+        try {
+          const text = await fetchLimited(url, f.maxBytes, fetchImpl);
+          const data = f.parse(text);
+          const sha256 = crypto.createHash('sha256').update(text).digest('hex');
+          const rec = { id: f.id, url, fetchedAt: new Date(now).toISOString(), sha256, count: f.count(data), changed: !old || old.sha256 !== sha256, data };
+          writeRec(dir, f, rec);
+          results.push({ id: f.id, ok: true, count: rec.count, changed: rec.changed });
+          lastErr = null;
+          break;
+        } catch (e) { lastErr = e.message; }
+      }
     }
     if (lastErr) {
       if (old) { old.lastError = lastErr; old.lastErrorAt = new Date(now).toISOString(); try { fs.writeFileSync(file(dir, f.id), JSON.stringify(old)); } catch { /* egal */ } }
@@ -144,11 +226,20 @@ async function syncFeeds(dir, { force = false, fetchImpl = fetch, now = Date.now
 function loadCompiled(dir) {
   const g = loadFeed(dir, 'gitleaks-rules');
   const r = loadFeed(dir, 'retirejs');
-  return { secretRules: g ? compileSecretRules(g.data) : [], retire: r ? compileRetire(r.data) : [], at: { gitleaks: g && g.fetchedAt, retire: r && r.fetchedAt } };
+  const lists = ['openphish', 'urlhaus'].map((id) => { const d = loadFeed(dir, id); return d && Array.isArray(d.data) ? { source: id === 'openphish' ? 'OpenPhish' : 'URLhaus', urls: d.data } : null; }).filter(Boolean);
+  const cb = loadFeed(dir, 'certbund');
+  const side = (id, ext) => { const p = path.join(dir, `${id}.${ext}`); return fs.existsSync(p) ? p : null; };
+  return {
+    secretRules: g ? compileSecretRules(g.data) : [], retire: r ? compileRetire(r.data) : [],
+    phishLists: lists, phish: require('./linkcheck').buildPhishIndex(lists),
+    advisories: cb && Array.isArray(cb.data) ? cb.data : [],
+    yaraFile: side('yara-rules', 'yar'), semgrepFile: side('semgrep-rules', 'yml'),
+    at: { gitleaks: g && g.fetchedAt, retire: r && r.fetchedAt },
+  };
 }
-function feedStatus(dir) {
-  return FEEDS.map((f) => { const d = loadFeed(dir, f.id); return { id: f.id, label: f.label, fetchedAt: d && d.fetchedAt, count: d && d.count, lastError: d && d.lastError, lastErrorAt: d && d.lastErrorAt }; });
+function feedStatus(dir, ctx) {
+  return FEEDS.map((f) => { const d = loadFeed(dir, f.id); return { id: f.id, label: f.label, unit: f.unit || (f.id === 'retirejs' ? 'Bibliotheken' : 'Regeln'), inactive: ctx ? !isActive(f, ctx) : false, fetchedAt: d && d.fetchedAt, count: d && d.count, lastError: d && d.lastError, lastErrorAt: d && d.lastErrorAt }; });
 }
-const needsFeedSync = (dir, now = Date.now()) => FEEDS.some((f) => { const d = loadFeed(dir, f.id); return !d || now - Date.parse(d.fetchedAt) >= MAX_AGE_MS; });
+const needsFeedSync = (dir, now = Date.now(), ctx) => FEEDS.some((f) => { if (ctx && !isActive(f, ctx)) return false; if (!ctx && f.when) return false; const d = loadFeed(dir, f.id); return !d || now - Date.parse(d.fetchedAt) >= (f.maxAgeMs || MAX_AGE_MS); });
 
-module.exports = { syncFeeds, loadCompiled, feedStatus, needsFeedSync, parseGitleaksToml, goRegexToJs, compileSecretRules, compileRetire, shannon, FEEDS };
+module.exports = { syncFeeds, loadCompiled, feedStatus, needsFeedSync, parseGitleaksToml, goRegexToJs, compileSecretRules, compileRetire, shannon, fetchLimited, parseUrlList, parseRss, countYaraRules, FEEDS, ALLOWED, MAX_AGE_MS };

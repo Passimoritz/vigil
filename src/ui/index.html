@@ -403,6 +403,7 @@
       <div class="card hero-kpis" id="dashTrendKpis"></div>
     </div>
     <div id="dashToxic"></div>
+    <div id="dashWatch"></div>
     <p class="intel-line muted small" id="intelLine"></p>
 
     <!-- Reiter -->
@@ -635,6 +636,22 @@
           <p class="hint">Vigil holt sich neue Erkennungsdaten selbst, ganz ohne App-Update: beim Start und danach alle 6 Stunden, spätestens einmal am Tag. Es werden nur Daten geladen, nie Programmcode. Jede Quelle wird vor der Nutzung geprüft; schlägt ein Download fehl, bleibt die letzte gute Fassung aktiv.</p>
           <ul class="feed-list" id="feedList"><li class="muted small">Lade Stand …</li></ul>
           <div class="row-inline"><button id="feedsSyncBtn" type="button" class="btn">Jetzt alles aktualisieren</button><span id="feedsSyncStatus" class="hint"></span></div>
+          <div class="set-row">
+            <div class="set-label"><b>Neue Lücken in geprüften Paketen melden</b><span>Alle 6 Stunden gleicht Vigil die Pakete aus gespeicherten Prüfungen mit neuen OSV-Meldungen (u. a. GitHub Advisory Database) und den Sicherheitshinweisen des BSI ab – ohne neuen Scan. Neues erscheint in der Übersicht und als Windows-Benachrichtigung.</span></div>
+            <label class="switch"><input type="checkbox" id="watchCvesChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Neue Zertifikate für eigene Domains melden</b><span>Prüft für nachgewiesene eigene Domains die öffentlichen Certificate-Transparency-Logs (crt.sh). Taucht ein bisher unbekanntes Zertifikat auf, meldet Vigil es.</span></div>
+            <label class="switch"><input type="checkbox" id="watchCtChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>OSV-Datenbank offline vorhalten</b><span>Lädt die komplette OSV-Datenbank für die Paket-Arten aus deinen Prüfungen (z. B. npm, PyPI) und nutzt sie, wenn OSV.dev nicht erreichbar ist. Braucht je Paket-Art bis zu einige Hundert MB. <span id="osvOfflineStatus"></span></span></div>
+            <label class="switch"><input type="checkbox" id="osvOfflineChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Eigene YARA-Regeln</b><span>Ist YARA installiert, prüft Vigil Dateien zusätzlich mit allen .yar-Dateien aus diesem Ordner und den geladenen YARA-Regeln. <span id="yaraStatus"></span></span></div>
+            <button id="yaraFolderBtn" type="button" class="btn">Ordner öffnen</button>
+          </div>
         </section>
 
         <section class="card set-block" id="set-login">
@@ -663,6 +680,10 @@
           <div class="set-row">
             <div class="set-label"><b>Unterseiten und Formulare durchgehen</b><span>Folgt Links derselben Domain (bis 40 Seiten) und prüft Formulare. Bei nachgewiesenen Domains zusätzlich harmlose Testwerte in Parametern: XSS, SQL-Fehler, offene Weiterleitung, Pfad-Ausbruch – nur Seiten abrufen, nie Formulare abschicken.</span></div>
             <label class="switch"><input type="checkbox" id="crawlChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>USB-Laufwerke beim Einstecken prüfen</b><span>Erkennt Vigil einen neuen Wechseldatenträger, fragt es per Benachrichtigung nach. Erst nach deinem Klick kommt das Laufwerk in die Prüfliste – geprüft wird nur lesend.</span></div>
+            <label class="switch"><input type="checkbox" id="usbChk" /><span></span></label>
           </div>
         </section>
 

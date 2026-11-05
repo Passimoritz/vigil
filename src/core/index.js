@@ -48,6 +48,8 @@ async function runAudit(targets, config, onProgress = () => {}) {
   for (const t of targets) if (t.type === 'path') for (const id of mods.ran) scannersRun.push({ target: t.value, source: id });
   const moduleNotes = [...mods.errors];
   let throttled = false;
+  // In Programmen/JARs eingebaute Bibliotheken (z. B. log4j in einer WAR) zaehlen wie Abhaengigkeiten
+  for (const d of ing.bundledDeps || []) if (!pre.deps.some((x) => x.ecosystem === d.ecosystem && x.name === d.name && x.version === d.version)) pre.deps.push(d);
   // Paket-Inventar (SBOM) fuer die globale Suche nach betroffenen Versionen
   const sbom = pre.deps.map((d) => ({ ecosystem: d.ecosystem, name: d.name, version: d.version }));
 
@@ -57,7 +59,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   const aborted = () => !!(config.signal && config.signal.aborted);
   if (config.cveLookup !== false && pre.deps.length && !aborted()) {
     try {
-      const cve = await lookupCves(pre.deps, onProgress, config.signal);
+      const cve = await lookupCves(pre.deps, onProgress, config.signal, { offline: config.osvOffline });
       cveFindings = cve.findings;
       cveNotes = cve.notes;
       if (completed(cve.notes)) for (const t of targets) if (t.type === 'path') scannersRun.push({ target: t.value, source: 'osv' });
@@ -158,7 +160,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
       for (const [nm, fn] of [['gitleaks', runGitleaks], ['trufflehog', runTrufflehog], ['trivy', runTrivyFs], ['grype', runGrype], ['semgrep', runSemgrep], ['bandit', runBandit], ['checkov', runCheckov], ['retire', runRetire], ['hadolint', runHadolint], ['osv-scanner', runOsvScanner]]) {
         if (aborted()) break;
         try {
-          const r = await fn(t.value, { signal: config.signal, onProgress });
+          const r = await fn(t.value, { signal: config.signal, onProgress, rulesFile: nm === 'semgrep' && config.feeds ? config.feeds.semgrepFile : undefined });
           webFindings.push(...r.findings); webNotes.push(...r.notes);
           if (completed(r.notes)) scannersRun.push({ target: t.value, source: nm === 'retire' ? 'retire' : nm });
         } catch (e) { webNotes.push(`${nm} ${t.value}: ${e.message}`); }
@@ -173,6 +175,24 @@ async function runAudit(targets, config, onProgress = () => {}) {
     webFindings.push(...f1, ...f2);
     if (config.feeds.secretRules.length) for (const t of targets.filter((x) => x.type === 'path')) scannersRun.push({ target: t.value, source: 'gitleaks-feed' });
     if (config.feeds.retire.length) for (const t of targets.filter((x) => x.type === 'path')) scannersRun.push({ target: t.value, source: 'retire-feed' });
+  }
+  // Phishing-Listen: Links aus Dokumenten/Mails und die eigenen (freigegebenen) Domains
+  if (config.feeds && config.feeds.phish && config.feeds.phish.size) {
+    const lc = require('./linkcheck');
+    if (ing.links && ing.links.length) webFindings.push(...lc.checkLinks(ing.links, config.feeds.phish));
+    const own = webTargets.filter((t) => t.authorized).map((t) => hostOf(t)).filter(Boolean);
+    if (own.length) webFindings.push(...lc.checkOwnDomains(own, config.feeds.phish, config.feeds.phishLists));
+  }
+  // Optionale YARA-Regeln (nur wenn yara installiert ist und Regeln vorliegen)
+  if (config.yara && !aborted()) {
+    const { runYara } = require('./yara');
+    for (const t of targets.filter((x) => x.type === 'path')) {
+      try {
+        const y = await runYara(t.value, { rulesDir: config.yara.rulesDir, feedFile: config.feeds && config.feeds.yaraFile, signal: config.signal, onProgress });
+        webFindings.push(...y.findings); moduleNotes.push(...y.notes);
+        if (y.ran) scannersRun.push({ target: t.value, source: 'yara' });
+      } catch (e) { moduleNotes.push('YARA: ' + e.message); }
+    }
   }
   // Schadsoftware: Defender (ohne Loeschen), Signaturen, Abgleich bekannter Schadprogramme
   if (config.malwareScan !== false && !aborted()) {

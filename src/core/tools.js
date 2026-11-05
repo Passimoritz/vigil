@@ -259,9 +259,11 @@ async function runTrivyImage(image, { signal, onProgress = () => {} } = {}) {
 }
 
 // --- semgrep: statische Code-Analyse (SAST) ----------------------------
-async function runSemgrep(targetPath, { signal, onProgress = () => {} } = {}) {
+async function runSemgrep(targetPath, { signal, onProgress = () => {}, rulesFile } = {}) {
   onProgress({ phase: 'active', message: `semgrep: SAST in ${targetPath} …` });
-  const res = await runTool(SEMGREP, ['scan', '--config', 'auto', '--json', '--quiet', targetPath], { signal, timeoutMs: 360000 });
+  // Per Feed aktuell gehaltene Regeln (feeds.js) nutzen, sonst die Registry ("auto")
+  const config = rulesFile && fs.existsSync(rulesFile) ? rulesFile : 'auto';
+  const res = await runTool(SEMGREP, ['scan', '--config', config, '--json', '--quiet', ...(config !== 'auto' ? ['--metrics', 'off'] : []), targetPath], { signal, timeoutMs: 360000 });
   if (!res.ok) return { findings: [], notes: ['semgrep nicht ausgefuehrt (nicht installiert?).'] };
   if (res.aborted) return { findings: [], notes: ['semgrep abgebrochen.'] };
   let raw; try { raw = JSON.parse(res.stdout); } catch { return { findings: [], notes: ['semgrep: Ausgabe nicht lesbar.'] }; }
@@ -558,4 +560,18 @@ async function runBandit(targetPath, { signal, onProgress = () => {} } = {}) {
   return { findings, notes: [`bandit: ${findings.length} Fund(e).`] };
 }
 
-module.exports = { runNmap, runNuclei, runGitleaks, parseGitleaks, runTrivyFs, runTrivyImage, parseTrivy, runSemgrep, runCheckov, runRetire, runHadolint, runOsvScanner, parseOsv, runGrype, parseGrype, runTrufflehog, parseTrufflehog, runBandit, parseBandit, NMAP, NUCLEI, GITLEAKS, TRIVY, SEMGREP, CHECKOV, RETIRE_JS, HADOLINT, OSV, GRYPE, TRUFFLEHOG, BANDIT };
+// Fuer die Feed-Verwaltung: ist ein Werkzeug installiert? (nur "--version", sonst nichts)
+async function toolAvailable(which) {
+  const cmd = { nuclei: NUCLEI, semgrep: SEMGREP }[which];
+  if (!cmd) return false;
+  const r = await runTool(cmd, ['--version'], { timeoutMs: 20000 });
+  return !!(r.ok && r.code === 0);
+}
+// nuclei-Vorlagen ueber nuclei selbst aktualisieren (laedt nur Vorlagen, prueft kein Ziel)
+async function updateNucleiTemplates() {
+  const r = await runTool(NUCLEI, ['-update-templates', '-silent', '-disable-update-check'], { timeoutMs: 600000 });
+  if (!r.ok || r.code !== 0) return { ok: false, error: r.error || `nuclei meldete Code ${r.code}` };
+  return { ok: true };
+}
+
+module.exports = { toolAvailable, updateNucleiTemplates, runNmap, runNuclei, runGitleaks, parseGitleaks, runTrivyFs, runTrivyImage, parseTrivy, runSemgrep, runCheckov, runRetire, runHadolint, runOsvScanner, parseOsv, runGrype, parseGrype, runTrufflehog, parseTrufflehog, runBandit, parseBandit, NMAP, NUCLEI, GITLEAKS, TRIVY, SEMGREP, CHECKOV, RETIRE_JS, HADOLINT, OSV, GRYPE, TRUFFLEHOG, BANDIT };

@@ -57,12 +57,101 @@ const FEEDS_DIR = () => path.join(app.getPath('userData'), 'feeds');
 let feedsCompiled = null;
 let feedsSyncing = null;
 const currentFeeds = () => (feedsCompiled = feedsCompiled || feeds.loadCompiled(FEEDS_DIR()));
+// Welche optionalen Werkzeuge sind installiert? (steuert YARA-/Semgrep-Regeln und nuclei-Vorlagen)
+let feedCtx = null;
+async function getFeedCtx() {
+  if (feedCtx) return feedCtx;
+  const tools = require('../src/core/tools');
+  const [yara, semgrep, nuclei] = await Promise.all([require('../src/core/yara').findYara().then(Boolean).catch(() => false), tools.toolAvailable('semgrep').catch(() => false), tools.toolAvailable('nuclei').catch(() => false)]);
+  feedCtx = { tools: { yara, semgrep, nuclei }, updaters: nuclei ? { 'nuclei-templates': tools.updateNucleiTemplates } : {} };
+  return feedCtx;
+}
 function syncFeedsInBackground(force = false) {
   if (feedsSyncing) return feedsSyncing;
-  if (!force && !feeds.needsFeedSync(FEEDS_DIR())) return Promise.resolve({ ok: true, skipped: true });
-  feedsSyncing = feeds.syncFeeds(FEEDS_DIR(), { force }).then((r) => { feedsCompiled = feeds.loadCompiled(FEEDS_DIR()); return { ok: r.every((x) => x.ok || x.skipped), results: r }; })
-    .catch((e) => ({ ok: false, error: e.message })).finally(() => { feedsSyncing = null; });
+  feedsSyncing = getFeedCtx().then((ctx) => {
+    if (!force && !feeds.needsFeedSync(FEEDS_DIR(), Date.now(), ctx)) return { ok: true, skipped: true };
+    return feeds.syncFeeds(FEEDS_DIR(), { force, ctx }).then((r) => { feedsCompiled = feeds.loadCompiled(FEEDS_DIR()); return { ok: r.every((x) => x.ok || x.skipped), results: r }; });
+  }).catch((e) => ({ ok: false, error: e.message })).finally(() => { feedsSyncing = null; });
   return feedsSyncing;
+}
+
+// --- Hintergrund-Ueberwachung: neue CVEs fuer gespeicherte SBOMs, BSI-Hinweise, CT-Logs ---
+const watch = require('../src/core/watch');
+const osvOffline = require('../src/core/osvoffline');
+const WATCH_FILE = () => path.join(app.getPath('userData'), 'watch-alerts.json');
+const WATCH_SBOM_STATE = () => path.join(app.getPath('userData'), 'watch-sbom-state.json');
+const WATCH_CT_STATE = () => path.join(app.getPath('userData'), 'watch-ct-state.json');
+const OSV_DIR = () => path.join(app.getPath('userData'), 'osv-offline');
+const YARA_DIR = () => { const d = path.join(app.getPath('userData'), 'yara-rules'); try { fs.mkdirSync(d, { recursive: true }); } catch { /* egal */ } return d; };
+let watchRunning = null;
+let osvOfflineSyncing = null;
+function notify(title, body, onClick) {
+  try {
+    const { Notification } = require('electron');
+    if (!Notification.isSupported()) return;
+    const n = new Notification({ title, body: String(body).slice(0, 250), icon: path.join(__dirname, '..', 'assets', 'icon.png') });
+    if (onClick) n.on('click', onClick);
+    n.show();
+  } catch { /* ohne Benachrichtigung weiter */ }
+}
+function focusWindow() { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } }
+function syncOsvOffline(force = false) {
+  const c = loadConfig();
+  if (!c.osvOffline || !orchestrator) return Promise.resolve({ ok: true, skipped: true });
+  if (osvOfflineSyncing) return osvOfflineSyncing;
+  osvOfflineSyncing = osvOffline.syncOffline(OSV_DIR(), osvOffline.ecosystemsOf(orchestrator.sboms()), { force })
+    .then((r) => ({ ok: r.every((x) => x.ok || x.skipped), results: r })).catch((e) => ({ ok: false, error: e.message })).finally(() => { osvOfflineSyncing = null; });
+  return osvOfflineSyncing;
+}
+function runWatch() {
+  if (watchRunning || !orchestrator) return watchRunning || Promise.resolve({ ok: false });
+  watchRunning = (async () => {
+    const c = loadConfig();
+    const sboms = orchestrator.sboms();
+    const alerts = [], notes = [];
+    if (c.watchCves !== false && Object.keys(sboms).length) {
+      const offline = c.osvOffline ? osvOffline.createOfflineQuery(OSV_DIR()) : null;
+      // OSV online, bei Ausfall der lokale Vorrat
+      const query = async (pkgs) => {
+        try { return await watch.osvQueryOnline(pkgs); } catch (e) {
+          if (!offline) throw e;
+          const hits = offline(pkgs);
+          return new Map(pkgs.map((p) => { const k = `${p.ecosystem}|${p.name}|${p.version}`; return [k, (hits.get(k) || []).map((r) => ({ id: r.id, s: r.s, a: r.a }))]; }));
+        }
+      };
+      try { const r = await watch.checkSbomCves(sboms, WATCH_SBOM_STATE(), { query, details: (id) => watch.osvDetails(id, fetch) }); alerts.push(...r.alerts); } catch (e) { notes.push('Neue CVEs: ' + e.message); }
+      alerts.push(...watch.advisoryAlerts(currentFeeds().advisories, sboms));
+    }
+    if (c.watchCt !== false) {
+      const domains = orchestrator.allTargets().filter((t) => t.type === 'url' && t.ownershipVerified).map((t) => { try { return new URL(t.identifier).hostname; } catch { return ''; } }).filter(Boolean);
+      if (domains.length) { try { const r = await watch.checkCt(domains, WATCH_CT_STATE()); alerts.push(...r.alerts); notes.push(...r.notes); } catch (e) { notes.push('CT-Log: ' + e.message); } }
+    }
+    const fresh = watch.addAlerts(WATCH_FILE(), alerts);
+    if (fresh.length) {
+      const lang = c.lang === 'de' ? 'de' : 'en';
+      const tr = (s) => (lang === 'en' ? require('../src/core/findings-i18n').translate(s) : s);
+      notify(lang === 'en' ? `Vigil: ${fresh.length} new security notice(s)` : `Vigil: ${fresh.length} neue Sicherheitshinweis(e)`, tr(fresh[0].title), () => { focusWindow(); if (win && !win.isDestroyed()) win.webContents.send('watch:open'); });
+      if (win && !win.isDestroyed()) win.webContents.send('watch:update', { count: fresh.length });
+    }
+    return { ok: true, added: fresh.length, notes };
+  })().catch((e) => ({ ok: false, error: e.message })).finally(() => { watchRunning = null; });
+  return watchRunning;
+}
+
+// --- Wechseldatentraeger: auf Wunsch nach dem Einstecken pruefen (Standard AUS) ---
+let usbWatcher = null;
+function applyUsbWatch(cfg) {
+  if (process.platform !== 'win32') return;
+  if (cfg.usbAutoScan && !usbWatcher) {
+    usbWatcher = require('../src/core/usbwatch').createUsbWatcher({
+      isEnabled: () => !!loadConfig().usbAutoScan,
+      onNew: (drive) => {
+        const de = loadConfig().lang === 'de';
+        notify(de ? `Wechseldatenträger ${drive} erkannt` : `Removable drive ${drive} detected`, de ? 'Klicken, um das Laufwerk mit Vigil zu prüfen (nur lesend).' : 'Click to check the drive with Vigil (read-only).', () => { focusWindow(); if (win && !win.isDestroyed()) win.webContents.send('usb:scan', drive); });
+      },
+    });
+    usbWatcher.start();
+  } else if (!cfg.usbAutoScan && usbWatcher) { usbWatcher.stop(); usbWatcher = null; }
 }
 
 function syncIntelInBackground(force = false) {
@@ -321,14 +410,17 @@ app.whenReady().then(() => {
     runAudit,
     buildConfig: (providerId) => {
       const c = loadConfig(); applyProxySafe(c);
-      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), webCrawl: c.webCrawl !== false, malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4 };
+      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), webCrawl: c.webCrawl !== false, malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4, yara: { rulesDir: YARA_DIR() }, osvOffline: c.osvOffline ? osvOffline.createOfflineQuery(OSV_DIR()) : null };
     },
   });
   api = createApi({ orchestrator, getConfig: loadConfig, enforceScope });
   applyApi(cfg);
   intel = loadIntel(INTEL_PATH());
-  setTimeout(() => { syncIntelInBackground(); syncFeedsInBackground(); }, 5000); // nach dem Start, ohne ihn zu bremsen
-  setInterval(() => { syncIntelInBackground(); syncFeedsInBackground(); }, 6 * 60 * 60 * 1000);
+  // Nach der Feed-Aktualisierung: neue CVEs fuer gespeicherte SBOMs, BSI-Hinweise, CT-Logs, OSV-Vorrat
+  const background = () => { syncIntelInBackground(); syncFeedsInBackground().then(() => (process.env.VIGIL_E2E_DATA ? null : syncOsvOffline().then(runWatch))).catch(() => {}); };
+  setTimeout(background, 5000); // nach dem Start, ohne ihn zu bremsen
+  setInterval(background, 6 * 60 * 60 * 1000);
+  applyUsbWatch(cfg);
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -352,6 +444,8 @@ ipcMain.handle('config:save', async (_e, cfg) => {
   const ok = saveConfig(cfg);
   applyProxySafe(cfg);
   if (prev.apiEnabled !== !!cfg.apiEnabled || prev.apiPort !== cfg.apiPort) await applyApi(loadConfig());
+  applyUsbWatch(loadConfig());
+  if (!prev.osvOffline && cfg.osvOffline) syncOsvOffline(true).catch(() => {});
   return { ok };
 });
 
@@ -565,8 +659,14 @@ ipcMain.handle('sbom:search', (_e, q) => orchestrator.searchSbom(String(q || '')
 ipcMain.handle('intel:status', () => ({ updatedAt: intel && intel.updatedAt, kev: intel ? intel.kev.size : 0, epss: intel ? intel.epss.size : 0, syncing: !!intelSyncing }));
 ipcMain.handle('intel:sync', () => syncIntelInBackground(true));
 // Uebersicht aller Erkennungsquellen fuer die Einstellungen
-ipcMain.handle('feeds:status', () => ({ feeds: feeds.feedStatus(FEEDS_DIR()), intel: { updatedAt: intel && intel.updatedAt, kev: intel ? intel.kev.size : 0, epss: intel ? intel.epss.size : 0 }, syncing: !!(feedsSyncing || intelSyncing) }));
-ipcMain.handle('feeds:sync', async () => { const [a, b] = await Promise.all([syncFeedsInBackground(true), syncIntelInBackground(true)]); return { ok: !!(a && a.ok !== false) && !!(b && b.ok !== false), feeds: a, intel: b }; });
+ipcMain.handle('watch:alerts', () => watch.loadAlerts(WATCH_FILE()).filter((a) => !a.dismissed).slice(0, 60));
+ipcMain.handle('watch:dismiss', (_e, key) => watch.dismissAlert(WATCH_FILE(), String(key || '').slice(0, 600)));
+ipcMain.handle('watch:run', () => runWatch());
+ipcMain.handle('yara:openFolder', () => shell.openPath(YARA_DIR()).then((err) => ({ ok: !err })));
+ipcMain.handle('yara:info', async () => { const ctx = await getFeedCtx(); let n = 0; try { n = fs.readdirSync(YARA_DIR()).filter((f) => /\.(yar|yara)$/i.test(f)).length; } catch { /* egal */ } return { installed: !!ctx.tools.yara, rules: n, dir: YARA_DIR() }; });
+ipcMain.handle('osvoffline:status', () => ({ enabled: !!loadConfig().osvOffline, ecosystems: osvOffline.offlineStatus(OSV_DIR()), syncing: !!osvOfflineSyncing }));
+ipcMain.handle('feeds:status', async () => ({ feeds: feeds.feedStatus(FEEDS_DIR(), await getFeedCtx()), intel: { updatedAt: intel && intel.updatedAt, kev: intel ? intel.kev.size : 0, epss: intel ? intel.epss.size : 0 }, syncing: !!(feedsSyncing || intelSyncing) }));
+ipcMain.handle('feeds:sync', async () => { const [a, b] = await Promise.all([syncFeedsInBackground(true), syncIntelInBackground(true)]); if (!process.env.VIGIL_E2E_DATA) syncOsvOffline(true).then(runWatch).catch(() => {}); return { ok: !!(a && a.ok !== false) && !!(b && b.ok !== false), feeds: a, intel: b }; });
 
 // --- Links: nur geprüfte Ziele im Standardbrowser öffnen --------------------
 ipcMain.handle('link:open', (_e, url) => (isAllowedLink(String(url || '')) ? shell.openExternal(String(url)).then(() => ({ ok: true })) : { ok: false, error: 'Link nicht erlaubt.' }));

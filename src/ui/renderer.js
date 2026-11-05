@@ -1317,6 +1317,7 @@ async function loadDashboard() {
     <div><span class="kpi-n">${k.resolved}</span><span class="kpi-l">behoben (30 Tage)</span></div>
     <div><span class="kpi-n">${k.created}</span><span class="kpi-l">neu gefunden (30 Tage)</span></div>
     <div><span class="kpi-n${stats.toxic.length ? ' warn' : ''}">${stats.toxic.length}</span><span class="kpi-l">offene Angriffswege</span></div>`;
+  renderWatch();
   $('dashToxic').innerHTML = stats.toxic.length ? `<div class="toxic-banner" role="alert"><div class="toxic-ico">⚠</div><div><b>${stats.toxic.length} ${stats.toxic.length === 1 ? 'Angriffsweg' : 'Angriffswege'} offen</b><ul>${stats.toxic.map((t) => `<li>${esc(t.title.replace(/^(Möglicher )?Angriffsweg:\s*/, ''))} <span class="muted small">· ${esc(t.targetName)}</span></li>`).join('')}</ul></div></div>` : '';
   try {
     const it = await window.vigil.intelStatus();
@@ -1668,10 +1669,30 @@ function renderFeeds() {
       row('Paket-Schwachstellen (OSV.dev)', 'npm, PyPI, Maven, Go, Cargo, NuGet, RubyGems … – wird bei jedem Lauf live abgefragt', 'immer aktuell', null),
       row('Aktiv ausgenutzte Lücken (CISA KEV)', `${s.intel.kev || 0} Einträge`, s.intel.updatedAt ? age(s.intel.updatedAt) : 'noch nicht geladen', fresh(s.intel.updatedAt)),
       row('Ausnutzungs-Wahrscheinlichkeit (EPSS)', `${s.intel.epss || 0} Werte`, s.intel.updatedAt ? age(s.intel.updatedAt) : 'noch nicht geladen', fresh(s.intel.updatedAt)),
-      ...s.feeds.map((f) => row(f.label, f.count ? `${f.count} ${f.id === 'retirejs' ? 'Bibliotheken' : 'Regeln'}` : 'noch nicht geladen', f.fetchedAt ? age(f.fetchedAt) : 'noch nicht geladen', f.fetchedAt ? fresh(f.fetchedAt) && !f.lastError : false, f.lastError ? ` · letzter Versuch fehlgeschlagen: ${esc(f.lastError)}` : '')),
+      ...s.feeds.map((f) => (f.inactive ? row(f.label, 'Werkzeug nicht installiert', 'nicht aktiv', null)
+        : row(f.label, f.count ? `${f.count} ${f.unit || (f.id === 'retirejs' ? 'Bibliotheken' : 'Regeln')}` : f.fetchedAt ? 'aktualisiert' : 'noch nicht geladen', f.fetchedAt ? age(f.fetchedAt) : 'noch nicht geladen', f.fetchedAt ? fresh(f.fetchedAt) && !f.lastError : false, f.lastError ? ` · letzter Versuch fehlgeschlagen: ${esc(f.lastError)}` : ''))),
       row('Schadsoftware-Signaturen (Microsoft Defender)', 'aktualisiert Windows selbst mehrmals täglich', 'von Windows', null),
     ];
     $('feedList').innerHTML = rows.join('');
+  }).catch(() => {});
+  if (window.vigil.osvOfflineStatus) window.vigil.osvOfflineStatus().then((o) => {
+    $('osvOfflineStatus').textContent = o.ecosystems.length ? `Vorrat: ${o.ecosystems.map((e) => `${e.eco} (${e.count})`).join(', ')}` : o.enabled ? 'Wird beim nächsten Abgleich geladen.' : '';
+  }).catch(() => {});
+  if (window.vigil.yaraInfo) window.vigil.yaraInfo().then((y) => {
+    $('yaraStatus').textContent = `${y.installed ? 'YARA ist installiert.' : 'YARA ist nicht installiert – die Regeln werden übersprungen.'} ${y.rules} eigene Regeldatei(en).`;
+  }).catch(() => {});
+}
+// Hinweise aus der Hintergrund-Ueberwachung (neue CVEs, BSI-Hinweise, neue Zertifikate)
+function renderWatch() {
+  if (!window.vigil.watchAlerts) return;
+  window.vigil.watchAlerts().then((list) => {
+    const box = $('dashWatch');
+    if (!list.length) { box.innerHTML = ''; return; }
+    const tr = (s) => (wantEnglish() && window.VigilFindingsI18n ? window.VigilFindingsI18n.translate(s) : s);
+    const kind = { newcve: 'Neue Lücke', advisory: 'BSI-Hinweis', ct: 'Zertifikat' };
+    box.innerHTML = `<section class="watch-box" aria-label="Hinweise aus der Überwachung"><h3>Neu seit der letzten Prüfung (${list.length})</h3><p class="hint small">Ohne neuen Scan erkannt: neue Schwachstellen in Paketen aus gespeicherten Prüfungen, passende BSI-Sicherheitshinweise und neue Zertifikate für deine Domains.</p><ul class="watch-list">${list.slice(0, 20).map((a, i) => `<li class="watch-item"><span class="feed-dot ${esc(a.severity || '')}" aria-hidden="true"></span><div><b>${esc(tr(a.title))}</b><span class="muted small">${esc(kind[a.type] || '')} · ${esc(fmtDate(a.at))}</span><span class="small">${esc(tr(a.detail || ''))}</span></div><span class="acts">${a.link ? `<button type="button" class="btn ghost tiny" data-watch-link="${i}">Details</button>` : ''}<button type="button" class="btn ghost tiny" data-watch-dismiss="${i}">Ausblenden</button></span></li>`).join('')}</ul>${list.length > 1 ? '<button type="button" class="btn ghost tiny" data-watch-dismiss="*">Alle ausblenden</button>' : ''}</section>`;
+    box.querySelectorAll('[data-watch-link]').forEach((b) => { b.onclick = () => window.vigil.openLink(list[Number(b.dataset.watchLink)].link); });
+    box.querySelectorAll('[data-watch-dismiss]').forEach((b) => { b.onclick = () => { const k = b.dataset.watchDismiss; window.vigil.watchDismiss(k === '*' ? '*' : list[Number(k)].key).then(renderWatch); }; });
   }).catch(() => {});
 }
 // Einstellungs-Bereiche: welche Karten gehoeren wohin (Reihenfolge = Anzeige)
@@ -1732,6 +1753,10 @@ function renderSettings() {
   $('reportCompanyInput').value = state.config.reportCompany || '';
   $('malwareChk').checked = state.config.malwareScan !== false;
   $('crawlChk').checked = state.config.webCrawl !== false;
+  $('usbChk').checked = !!state.config.usbAutoScan;
+  $('watchCvesChk').checked = state.config.watchCves !== false;
+  $('watchCtChk').checked = state.config.watchCt !== false;
+  $('osvOfflineChk').checked = !!state.config.osvOffline;
   renderLoginStatus(); renderMalwareStatus(); renderFeeds();
   applyAppearance();
   if (window.vigil.crashInfo) window.vigil.crashInfo().then((c) => { $('crashInfo').textContent = c.count ? `Bisher ${c.count} Bericht(e) gespeichert.` : 'Bisher keine Abstürze.'; }).catch(() => {});
@@ -1784,6 +1809,10 @@ function collectSettings() {
   state.config.costWarnUsd = Math.max(0, parseFloat($('costWarnInput').value) || 0);
   state.config.malwareScan = $('malwareChk').checked;
   state.config.webCrawl = $('crawlChk').checked;
+  state.config.usbAutoScan = $('usbChk').checked;
+  state.config.watchCves = $('watchCvesChk').checked;
+  state.config.watchCt = $('watchCtChk').checked;
+  state.config.osvOffline = $('osvOfflineChk').checked;
   // Testkonto und Schadsoftware-Schluessel separat – Geheimnisse gehen verschluesselt in den Main-Prozess
   if ($('wlUrl').value.trim()) {
     window.vigil.webLoginSave([{ loginUrl: $('wlUrl').value, username: $('wlUser').value, password: $('wlPass').value, userField: $('wlUserField').value, passField: $('wlPassField').value }]).then(() => { $('wlPass').value = ''; renderLoginStatus(); });
@@ -1943,6 +1972,10 @@ async function init() {
     $('feedsSyncStatus').textContent = r.ok ? '✓ Alles aktuell.' : 'Teilweise fehlgeschlagen – die letzte gute Fassung bleibt aktiv.';
     renderFeeds();
   };
+  $('yaraFolderBtn').onclick = () => window.vigil.yaraOpenFolder();
+  // Hintergrund-Ueberwachung und USB-Laufwerke (Benachrichtigung -> Klick -> Pruefliste)
+  if (window.vigil.onWatchUpdate) window.vigil.onWatchUpdate(() => { renderWatch(); });
+  if (window.vigil.onUsbScan) window.vigil.onUsbScan((drive) => { if (!/^[A-Z]:\\$/.test(drive)) return; addTarget('path', drive); showView('scan'); toast(`${drive} zur Prüfliste hinzugefügt`, 'ok'); });
   $('cacheClearBtn').onclick = async () => { await window.vigil.aiCacheClear(); $('cacheInfo').textContent = ''; toast('KI-Zwischenspeicher geleert – der nächste Lauf prüft alles neu', 'ok'); };
   ['depthSelect', 'validateChk', 'cveChk', 'activeChk', 'domChk', 'malwareChk', 'crawlChk'].forEach((id) => $(id).addEventListener('change', () => { collectSettings(); renderPresets(); }));
   // Einstellungen: vier Bereiche statt einer langen Seite

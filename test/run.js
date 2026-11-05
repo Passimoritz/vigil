@@ -943,13 +943,13 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-feeds-'));
     const urls = { [feeds.FEEDS[0].urls[0]]: toml, [feeds.FEEDS[1].urls[0]]: JSON.stringify(repo) };
     const r1 = await feeds.syncFeeds(dir, { fetchImpl: fake(urls) });
-    check('feeds: beide Quellen geladen und geprüft', r1.every((x) => x.ok) && r1[0].count === 61 && r1[1].count === 25);
+    check('feeds: beide Quellen geladen und geprüft', r1.slice(0, 2).every((x) => x.ok) && r1[0].count === 61 && r1[1].count === 25);
     const r2 = await feeds.syncFeeds(dir, { fetchImpl: fake({}) });
-    check('feeds: frische Daten werden nicht erneut geladen', r2.every((x) => x.skipped));
+    check('feeds: frische Daten werden nicht erneut geladen', r2.slice(0, 2).every((x) => x.skipped));
     const r3 = await feeds.syncFeeds(dir, { force: true, fetchImpl: fake({ [feeds.FEEDS[0].urls[0]]: 'kaputt', [feeds.FEEDS[1].urls[0]]: new Error('offline'), [feeds.FEEDS[1].urls[1]]: new Error('offline') }) });
     const st = feeds.feedStatus(dir);
-    check('feeds: fehlerhafte Quelle – letzte gute Fassung bleibt aktiv', r3.every((x) => !x.ok) && st[0].count === 61 && /Format unerwartet/.test(st[0].lastError) && st[1].count === 25);
-    check('feeds: nur erlaubte HTTPS-Quellen', feeds.FEEDS.every((f) => f.urls.every((u) => u.startsWith('https://raw.githubusercontent.com/'))));
+    check('feeds: fehlerhafte Quelle – letzte gute Fassung bleibt aktiv', r3.slice(0, 2).every((x) => !x.ok) && st[0].count === 61 && /Format unerwartet/.test(st[0].lastError) && st[1].count === 25);
+    check('feeds: nur erlaubte HTTPS-Quellen', feeds.FEEDS.every((f) => f.tool || f.urls.every((u) => u.startsWith('https://') && feeds.ALLOWED.some((a) => u.startsWith(a)))));
     const c = feeds.loadCompiled(dir);
     check('feeds: Go-Regex nach JavaScript übersetzt', c.secretRules.length === 61 && c.secretRules[0].re.flags.includes('i') && feeds.goRegexToJs('(?P<k>a)\\z').source === '(?<k>a)$' && feeds.goRegexToJs('\\p{L}+') === null);
     const sec = fscan.scanSecretsWithFeed([{ label: 'p/a.js', content: 'x = "DEMO7_abcdefghij0123456789"\ny = "ghp_' + 'A'.repeat(18) + 'b'.repeat(18) + '"\nz = "demo3_example_example_ex"' }], c.secretRules);
@@ -1017,6 +1017,9 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('englisch: Bericht (Markdown) übersetzt', /^# Security report/m.test(md) && /\*\*What is wrong\?\*\*/.test(md) && !/Was ist los\?|Lösung:/.test(md));
     check('englisch: Code-Blöcke im Bericht bleiben unverändert', md0.split('```').filter((x, i) => i % 2).join() === md.split('```').filter((x, i) => i % 2).join());
   }
+
+  // --- Dateien, Programme, Erkennungsdaten (Archive, Mails, Skripte, LNK, PE, Bibliotheken, Feeds, Ueberwachung) ---
+  await require('./files-feeds')(check);
 
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);
   process.exit(fail ? 1 : 0);

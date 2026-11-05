@@ -99,7 +99,7 @@ function affectedSymbols(vuln, pkgName) {
 }
 
 // deps: [{ecosystem,name,version,raw}]
-async function lookupCves(deps, onProgress = () => {}, signal) {
+async function lookupCves(deps, onProgress = () => {}, signal, { offline } = {}) {
   const notes = [];
   const withVer = deps.filter((d) => d.name && d.version);
   if (!withVer.length) {
@@ -114,6 +114,8 @@ async function lookupCves(deps, onProgress = () => {}, signal) {
       queries: withVer.map((d) => ({ package: { name: d.name, ecosystem: d.ecosystem }, version: d.version })),
     }, 20000, signal);
   } catch (e) {
+    // Offline-Vorrat (osvoffline.js), falls eingerichtet
+    if (typeof offline === 'function') { const r = offlineFindings(withVer, offline); if (r) return r; }
     return { findings: [], notes: [`CVE-Abgleich nicht moeglich (offline/OSV nicht erreichbar?): ${e.message}`] };
   }
 
@@ -172,4 +174,32 @@ async function lookupCves(deps, onProgress = () => {}, signal) {
   return { findings, notes };
 }
 
-module.exports = { lookupCves, cvssFromVector };
+// Treffer aus dem lokalen OSV-Vorrat in Befunde umsetzen (ohne Netz)
+function offlineFindings(deps, query) {
+  let hits;
+  try { hits = query(deps); } catch { return null; }
+  if (!hits || (!hits.size && !deps.some((d) => query.available && query.available(d.ecosystem)))) return null;
+  const findings = [];
+  for (const d of deps) {
+    for (const rec of hits.get(`${d.ecosystem}|${d.name}|${d.version}`) || []) {
+      const cvss = cvssFromVector(rec.sev);
+      const label = String(rec.sev || '').toUpperCase();
+      const severity = cvss ? cvssToSeverity(cvss) : ({ CRITICAL: 'critical', HIGH: 'high', MODERATE: 'medium', MEDIUM: 'medium', LOW: 'low' }[label] || 'medium');
+      const fixed = [...new Set((rec.r || []).flat().filter((e) => e[0] === 'f').map((e) => e[1]))];
+      const cve = (rec.a || [])[0] || rec.id;
+      findings.push(normalizeFinding({
+        title: `Verwundbare Abhaengigkeit: ${d.name} ${d.version} (${cve})`,
+        severity, cvss: cvss || null, category: 'Dependencies',
+        location: `${d.ecosystem}: ${d.name}@${d.version}`,
+        package: { ecosystem: d.ecosystem, name: d.name, version: d.version, fixed: fixed[0] || '' },
+        description: `${rec.s || rec.id}. (Aus dem lokalen OSV-Vorrat, OSV.dev war nicht erreichbar.)`,
+        impact: `Bekannte Schwachstelle laut ${rec.id}${(rec.a || []).length ? ' / ' + rec.a.join(', ') : ''}.`,
+        remediation: fixed.length ? `Auf eine gepatchte Version aktualisieren (behoben ab: ${fixed.join(', ')}).` : 'Auf die neueste gepatchte Version aktualisieren (siehe Advisory).',
+        confidence: 'high',
+      }, 'osv'));
+    }
+  }
+  return { findings, notes: [`CVE-Abgleich offline: ${findings.length} Treffer aus dem lokalen OSV-Vorrat.`] };
+}
+
+module.exports = { lookupCves, cvssFromVector, offlineFindings };

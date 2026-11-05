@@ -1002,6 +1002,16 @@ button.stat:hover:not(:disabled) { border-color: var(--line-strong); }
 .feed-dot.bad { background: var(--med); }
 .feed-dot.live { background: var(--accent); }
 .feed-when { color: var(--muted); text-align: right; max-width: 280px; }
+/* Hinweise aus der Hintergrund-Ueberwachung (neue CVEs, BSI, CT-Logs) */
+.watch-box { margin: 10px; padding: 12px 14px; border-radius: var(--r); border: 1px solid var(--line); background: var(--panel); }
+.watch-box h3 { margin: 0 0 6px; font-size: 1em; }
+.watch-list { list-style: none; margin: 0; padding: 0; }
+.watch-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.watch-item:last-child { border-bottom: 0; }
+.watch-item > div { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.watch-item .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.watch-item .feed-dot.high, .watch-item .feed-dot.critical { background: var(--crit); }
+.watch-item .feed-dot.medium { background: var(--med); }
 
 /* Detail-Fenster der Uebersicht: breit, zweispaltig, Breite ziehbar */
 .drawer { width: var(--drawer-w, min(1180px, 92vw)); max-width: calc(100vw - 60px); container-type: inline-size; }
