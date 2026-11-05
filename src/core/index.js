@@ -68,6 +68,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   // Zerstoerungsfreie Server-Checks fuer Web-Ziele (TLS, Header, Cookies, CORS, offene Pfade).
   let webFindings = [];
   let webNotes = [];
+  const webCms = []; // CMS-Hinweise freigegebener Webseiten (Abgleich spaeter in supplychain.js)
   const webTargets = targets.filter((t) => t.type === 'url' || t.type === 'endpoint');
   for (const t of webTargets) {
     if (aborted()) break;
@@ -99,6 +100,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
         if (config.feeds && config.feeds.retire.length && dw.scripts && dw.scripts.length) webFindings.push(...require('./feedscan').scanScriptUris(dw.scripts, config.feeds.retire, t.value));
         if (dw.throttled) throttled = true;
         else for (const id of dw.ran) scannersRun.push({ target: t.value, source: id });
+        if (!dw.throttled && (dw.ran || []).includes('web-crawl')) webCms.push({ target: t.value, items: dw.cmsHints || [] });
       }
       // Browser-Laufzeitpruefung (nur in der App verfuegbar, nur verifiziert/intern)
       if (deep && t.type === 'url' && typeof config.domAudit === 'function' && !throttled && !aborted()) {
@@ -140,6 +142,14 @@ async function runAudit(targets, config, onProgress = () => {}) {
       webFindings.push(...r.findings); webNotes.push(...r.notes);
       if (completed(r.notes)) scannersRun.push({ target: t.value, source: 'trivy' });
     } catch (e) { webNotes.push(`trivy ${t.value}: ${e.message}`); }
+    // Schichten-Analyse: geloeschte, aber noch enthaltene Dateien mit Zugangsdaten (docker save)
+    if (config.layerAnalysis !== false && !aborted()) {
+      try {
+        const l = await require('./layers').analyzeImageLayers(t.value, { signal: config.signal, onProgress });
+        webFindings.push(...l.findings); webNotes.push(...l.notes);
+        if (l.ran) scannersRun.push({ target: t.value, source: 'image-layers' });
+      } catch (e) { webNotes.push(`Schichten-Analyse ${t.value}: ${e.message}`); }
+    }
   }
   // System-Pruefungen: dieser PC, Docker, Cloud-Konten – nur lesend
   for (const t of targets.filter((x) => x.type === 'system')) {
@@ -197,6 +207,13 @@ async function runAudit(targets, config, onProgress = () => {}) {
         if (g.ran) scannersRun.push({ target: t.value, source: 'git-history' });
       } catch (e) { moduleNotes.push('Git-Historie: ' + e.message); }
     }
+  }
+  // Lieferkette & Container: Live-Pruefung von Schluesseln (opt-in), Helm/Kustomize, deps.dev, CMS/NVD
+  if (!aborted()) {
+    try {
+      const sx = await require('./supplychain').runSupplyExtras({ targets, units: ing.units, deps: pre.deps, prescanFindings: pre.findings, webCms, config, onProgress });
+      pre.findings = sx.prescanFindings; webFindings.push(...sx.findings); moduleNotes.push(...sx.notes); scannersRun.push(...sx.ran);
+    } catch (e) { moduleNotes.push('Lieferkette: ' + e.message); }
   }
   const staticFindings = [...pre.findings, ...gitFindings, ...mods.findings, ...cveFindings, ...webFindings, ...(ing.findings || [])];
   const extraMeta = { scannersRun, throttled, sbom, modulesRun: [...new Set(scannersRun.map((s) => s.source))] };

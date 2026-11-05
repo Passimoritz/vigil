@@ -98,6 +98,26 @@ function affectedSymbols(vuln, pkgName) {
   return [...out].slice(0, 30);
 }
 
+// Schadpaket laut OSV (MAL-…): immer kritisch, egal welche Version
+function maliciousFinding(id, vuln, dep) {
+  return normalizeFinding({
+    ruleId: 'malicious-package',
+    title: `Bekanntes Schadpaket: ${dep.name} ${dep.version}`,
+    severity: 'critical',
+    cvss: null,
+    category: 'Dependencies',
+    location: `${dep.ecosystem}: ${dep.name}@${dep.version}`,
+    package: { ecosystem: dep.ecosystem, name: dep.name, version: dep.version, fixed: '' },
+    description: `„${dep.name}“ ist in der OSV-Datenbank als Schadsoftware eingetragen (${id}). Solche Pakete stehlen beim Installieren typischerweise Zugangsdaten, Tokens und Krypto-Wallets oder installieren Hintertüren.`,
+    ...(vuln && vuln.summary ? { evidence: String(vuln.summary).slice(0, 300) } : {}),
+    reachability: 'Der Schadcode läuft meist schon beim Installieren (Install-Skript) – ein Aufruf im Code ist nicht nötig.',
+    impact: `Laut ${id} enthält das Paket absichtlich eingebauten Schadcode.`,
+    remediation: 'Paket sofort entfernen, Lockfile bereinigen und alle Rechner und CI-Runner, auf denen es installiert wurde, als kompromittiert behandeln: Zugangsdaten und Tokens dort neu erzeugen.',
+    links: [{ label: `OSV: ${id}`, url: `https://osv.dev/vulnerability/${id}` }],
+    confidence: 'high',
+  }, 'osv');
+}
+
 // deps: [{ecosystem,name,version,raw}]
 async function lookupCves(deps, onProgress = () => {}, signal) {
   const notes = [];
@@ -131,7 +151,8 @@ async function lookupCves(deps, onProgress = () => {}, signal) {
     return { findings: [], notes: [`CVE-Abgleich: keine bekannten Schwachstellen in ${withVer.length} gepruefte(n) Paket(en).`] };
   }
 
-  const ids = [...idToPkgs.keys()].slice(0, MAX_DETAILS);
+  // Bekannte Schadpakete (OSV "MAL-…", u. a. aus der OpenSSF Malicious Packages Datenbank) zuerst
+  const ids = [...idToPkgs.keys()].sort((a, b) => (/^MAL-/.test(b) ? 1 : 0) - (/^MAL-/.test(a) ? 1 : 0)).slice(0, MAX_DETAILS);
   if (idToPkgs.size > MAX_DETAILS) notes.push(`CVE-Abgleich: ${idToPkgs.size} Advisories gefunden, Details für die ersten ${MAX_DETAILS} geholt.`);
   onProgress({ phase: 'cve', message: `CVE-Abgleich: hole Details zu ${ids.length} Advisory(s) …` });
 
@@ -141,7 +162,8 @@ async function lookupCves(deps, onProgress = () => {}, signal) {
     if (signal && signal.aborted) break;
     let vuln;
     try { vuln = await getJson(OSV_VULN + id, 20000, signal); }
-    catch { done++; continue; }
+    catch { if (/^MAL-/.test(id)) findings.push(...(idToPkgs.get(id) || []).map((dep) => maliciousFinding(id, null, dep))); done++; continue; }
+    if (/^MAL-/.test(id)) { findings.push(...(idToPkgs.get(id) || []).map((dep) => maliciousFinding(id, vuln, dep))); done++; continue; }
     const { cvss, severity } = severityFromVuln(vuln);
     const pkgs = idToPkgs.get(id) || [];
     const cve = (vuln.aliases || []).find((a) => /^CVE-/.test(a)) || id;
@@ -172,4 +194,4 @@ async function lookupCves(deps, onProgress = () => {}, signal) {
   return { findings, notes };
 }
 
-module.exports = { lookupCves, cvssFromVector };
+module.exports = { lookupCves, cvssFromVector, maliciousFinding };

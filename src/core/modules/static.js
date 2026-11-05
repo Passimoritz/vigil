@@ -254,6 +254,12 @@ const MODULES = [
   { id: 'taint-flow', label: 'Datenflüsse über mehrere Dateien', run: analyzeTaint },
   { id: 'mobile-audit', label: 'Handy-Apps (Android, iOS)', run: runMobile },
   { id: 'lang-rules', label: 'Regeln für Go, Rust, C#, PHP, Kotlin, Swift', run: runLangs },
+  // Lieferkette, Container-Build, CI und CMS (modules/supply.js, modules/cms.js)
+  { id: 'lockfile-drift', label: 'Lockfile passt zum Manifest', run: (u) => require('./supply').lockDrift(u) },
+  { id: 'dockerfile-audit', label: 'Dockerfile (ADD, curl|bash, HEALTHCHECK, Geheimnisse)', run: (u) => require('./supply').dockerfile(u) },
+  { id: 'gha-audit', label: 'GitHub Actions (Script-Injection, Rechte, Runner)', run: (u) => require('./supply').githubActions(u) },
+  { id: 'ci-audit', label: 'GitLab CI, Azure Pipelines, Jenkins', run: (u) => require('./supply').ciOther(u) },
+  { id: 'cms-audit', label: 'WordPress, Joomla, TYPO3', run: (u) => require('./cms').cmsConfig(u) },
 ];
 
 function runStaticModules(units, onProgress = () => {}) {

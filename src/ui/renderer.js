@@ -1727,6 +1727,7 @@ function renderSettings() {
   $('consensusModelInput').value = pcfg(state.config.selected || 'ollama').consensusModel || '';
   if (window.vigil.aiCacheInfo) window.vigil.aiCacheInfo().then((c) => { $('cacheInfo').textContent = c.entries ? `Derzeit ${c.entries} Dateien gemerkt.` : ''; }).catch(() => {});
   $('redactChk').checked = state.config.redactSecrets !== false;
+  $('secretLiveChk').checked = state.config.secretLiveCheck === true;
   $('domChk').checked = state.config.domAudit !== false;
   $('costWarnInput').value = state.config.costWarnUsd ?? 2;
   $('reportCompanyInput').value = state.config.reportCompany || '';
@@ -1780,6 +1781,7 @@ function collectSettings() {
   pcfg(state.config.selected || 'ollama').triageModel = $('triageModelInput').value.trim();
   pcfg(state.config.selected || 'ollama').consensusModel = $('consensusModelInput').value.trim();
   state.config.redactSecrets = $('redactChk').checked;
+  state.config.secretLiveCheck = $('secretLiveChk').checked;
   state.config.domAudit = $('domChk').checked;
   state.config.costWarnUsd = Math.max(0, parseFloat($('costWarnInput').value) || 0);
   state.config.malwareScan = $('malwareChk').checked;
@@ -1948,6 +1950,8 @@ async function init() {
   // Einstellungen: vier Bereiche statt einer langen Seite
   $('setNav').querySelectorAll('[data-group]').forEach((b) => b.onclick = () => setGroup(b.dataset.group));
   $('exportJsonBtn').onclick = exportAs('json');
+  $('exportCdxBtn').onclick = exportAs('cyclonedx');
+  $('exportSpdxBtn').onclick = exportAs('spdx');
   $('exportExecBtn').onclick = exportAs('execpdf');
   $('reportCompanyInput').addEventListener('change', () => { state.config.reportCompany = $('reportCompanyInput').value.trim(); saveCfg(); });
   $('reportLogoFile').addEventListener('change', () => {

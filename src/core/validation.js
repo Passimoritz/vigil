@@ -61,6 +61,23 @@ const SemgrepOutputSchema = z.object({
 
 const GitleaksOutputSchema = z.array(z.object({ RuleID: z.string().optional(), File: z.string().optional(), StartLine: z.number().optional(), Secret: z.string().optional(), Match: z.string().optional(), Description: z.string().optional() }).passthrough());
 
+// --- Lieferkette, Container, CMS (deps.dev, NVD, docker save, helm/kustomize) ---
+const DepsDevPackageSchema = z.object({
+  versions: z.array(z.object({ versionKey: z.object({ version: z.string() }).passthrough(), publishedAt: z.string().optional(), isDefault: z.boolean().optional() }).passthrough()).default([]),
+}).passthrough();
+const DepsDevVersionSchema = z.object({
+  relatedProjects: z.array(z.object({ projectKey: z.object({ id: z.string() }).passthrough(), relationType: z.string().optional() }).passthrough()).default([]),
+}).passthrough();
+const DepsDevProjectSchema = z.object({
+  scorecard: z.object({ overallScore: z.number().min(0).max(10), date: z.string().optional(), checks: z.array(z.object({ name: z.string(), score: z.number().optional(), reason: z.string().optional() }).passthrough()).default([]) }).passthrough().optional(),
+}).passthrough();
+const NvdResponseSchema = z.object({
+  totalResults: z.number().optional(),
+  vulnerabilities: z.array(z.object({ cve: z.object({ id: z.string().regex(/^CVE-\d{4}-\d{4,}$/), metrics: z.object({}).passthrough().optional() }).passthrough() }).passthrough()).default([]),
+}).passthrough();
+const DockerSaveManifestSchema = z.array(z.object({ Layers: z.array(z.string().max(300)).max(500) }).passthrough()).min(1);
+const RenderedManifestsSchema = z.string().max(20 * 1024 * 1024);
+
 // Ergebnis: { ok, data } oder { ok:false, error } mit lesbarer Meldung.
 function check(schema, value) {
   const r = schema.safeParse(value);
@@ -72,4 +89,5 @@ module.exports = {
   SEVERITIES, FINDING_STATUSES, TARGET_TYPES, IMAGE_RE,
   UnifiedFindingSchema, TargetSchema, ScanRequestSchema, StatusUpdateSchema,
   TrivyOutputSchema, SemgrepOutputSchema, GitleaksOutputSchema, check,
+  DepsDevPackageSchema, DepsDevVersionSchema, DepsDevProjectSchema, NvdResponseSchema, DockerSaveManifestSchema, RenderedManifestsSchema,
 };

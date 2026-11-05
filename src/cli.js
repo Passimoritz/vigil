@@ -29,6 +29,9 @@ function parseArgs(argv) {
     else if (a === '--fail-on') opts.failOn = argv[++i];
     else if (a === '--format') opts.format = argv[++i];
     else if (a === '--lang') opts.lang = argv[++i] === 'de' ? 'de' : 'en';
+    else if (a === '--sbom') opts.sbom = argv[++i];
+    else if (a === '--sbom-format') opts.sbomFormat = argv[++i] === 'spdx' ? 'spdx' : 'cyclonedx';
+    else if (a === '--live-secrets') opts.secretLive = true;
     else opts.targets.push({ type: 'path', value: path.resolve(a) });
   }
   return opts;
@@ -46,7 +49,7 @@ function keyFor(provider) {
 (async () => {
   const o = parseArgs(process.argv.slice(2));
   if (!o.targets.length) {
-    console.error('Nutzung: node src/cli.js [--provider ollama|anthropic|openai|gemini|compat] [--model …] [--out report.html] <pfad|--url URL|--endpoint HOST> …');
+    console.error('Nutzung: node src/cli.js [--provider ollama|anthropic|openai|gemini|compat] [--model …] [--out report.html] [--sbom sbom.cdx.json|sbom.spdx.json] [--live-secrets] <pfad|--url URL|--endpoint HOST> …');
     process.exit(1);
   }
   const config = {
@@ -61,6 +64,7 @@ function keyFor(provider) {
     aiValidation: o.validate,
     redactSecrets: o.redact,
     lang: o.lang,
+    secretLiveCheck: !!o.secretLive,
   };
 
   const { result } = await runAudit(o.targets, config, (p) => {
@@ -87,6 +91,14 @@ function keyFor(provider) {
           : en ? R.localizeReportHtml(report.toHtml(res)) : report.toHtml(res);
     fs.writeFileSync(o.out, out, 'utf8');
     console.log(`\nReport (${fmt}) geschrieben: ${o.out}`);
+  }
+
+  // --sbom <datei>: Paketliste als CycloneDX 1.5 (Standard) bzw. SPDX 2.3 (--sbom-format spdx oder *.spdx.json)
+  if (o.sbom) {
+    const format = o.sbomFormat || (/\.spdx(\.json)?$/i.test(o.sbom) ? 'spdx' : 'cyclonedx');
+    const name = (o.targets.find((t) => t.type === 'path') || o.targets[0]).value;
+    fs.writeFileSync(o.sbom, require('./core/sbom').sbomJson(result, format, { name }), 'utf8');
+    console.log(`SBOM (${format === 'spdx' ? 'SPDX 2.3' : 'CycloneDX 1.5'}, ${require('./core/sbom').packagesOf(result).length} Pakete) geschrieben: ${o.sbom}`);
   }
 
   // --fail-on <severity>: Exit-Code 2, wenn Befunde mit diesem Schweregrad oder hoeher existieren (fuer CI).
