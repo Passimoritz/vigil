@@ -138,7 +138,16 @@ async function danglingCname(host) {
   return W('dns-mail-drift', { ruleId: 'dns-dangling-cname', severity: 'critical', category: 'Config', title: `Verwaister CNAME: ${host} → ${provider[1]}`, location: `DNS ${host}`, evidence: `${host} CNAME ${cname} (NXDOMAIN)`, description: `${host} zeigt auf ${cname}, das nicht mehr existiert. Wer die Ressource bei ${provider[1]} neu anlegt, übernimmt die Subdomain.`, remediation: 'DNS-Eintrag löschen oder Ressource wieder belegen.', confidence: 'medium' });
 }
 
+// Ergebnis je Domain 10 Minuten merken: DNS-Pruefung und Subdomain-Suche fragen crt.sh nur einmal.
+const crtCache = new Map();
 async function crtShSubdomains(domain, signal) {
+  const hit = crtCache.get(domain);
+  if (hit && Date.now() - hit.at < 600000) return hit.names;
+  const names = await crtShFetch(domain, signal);
+  if (names.length) crtCache.set(domain, { at: Date.now(), names });
+  return names;
+}
+async function crtShFetch(domain, signal) {
   try {
     const ctrl = AbortSignal.timeout(15000);
     const res = await fetch(`https://crt.sh/?q=${encodeURIComponent('%.' + domain)}&output=json`, { headers: { 'User-Agent': UA }, signal: signal ? AbortSignal.any([ctrl, signal]) : ctrl });
@@ -208,4 +217,4 @@ async function runWebModules(targetUrl, { deep = false, rps = 4, signal, onProgr
   return { findings, ran, notes, throttled };
 }
 
-module.exports = { runWebModules, WafGuard, Throttled, dnsMail, registrableDomain, TAKEOVER, request };
+module.exports = { runWebModules, WafGuard, Throttled, dnsMail, registrableDomain, TAKEOVER, request, crtShSubdomains };

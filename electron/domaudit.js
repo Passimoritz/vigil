@@ -8,6 +8,7 @@
 const { BrowserWindow, session } = require('electron');
 const crypto = require('crypto');
 const { normalizeFinding, redactSecret } = require('../src/core/schema');
+const { DOM_COLLECT_SCRIPT } = require('../src/core/modules/webpage');
 
 const LOAD_TIMEOUT = 25000;
 const SETTLE_MS = 2500;
@@ -29,6 +30,9 @@ async function domAudit(url, { signal, onProgress = () => {} } = {}) {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(details.method)) { blocked++; return cb({ cancel: true }); }
     cb({});
   });
+  // Uebertragene Bytes (Content-Length) fuer das Seitengewicht – fremde Server melden sonst oft 0
+  let bytes = 0;
+  ses.webRequest.onCompleted((details) => { const h = details.responseHeaders || {}; const k = Object.keys(h).find((x) => x.toLowerCase() === 'content-length'); const n = k ? Number([].concat(h[k])[0]) : 0; if (n > 0) bytes += n; });
   ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false)); // Kamera, Standort … immer ablehnen
 
   const win = new BrowserWindow({
@@ -84,7 +88,15 @@ async function domAudit(url, { signal, onProgress = () => {} } = {}) {
     if (leaks.length) findings.push(F({ ruleId: 'dom-console-leak', severity: leaks.some((m) => JWT.test(m.message)) ? 'medium' : 'low', category: 'Logging', title: `${leaks.length} auffällige Konsolenausgabe(n) in Produktion`, location: url, evidence: redactSecret(leaks[0].message.slice(0, 200)), description: 'Die Seite schreibt Tokens, Schlüssel oder Stacktraces in die Browser-Konsole.', remediation: 'console-Ausgaben im Produktions-Build entfernen.', confidence: 'medium' }));
 
     notes.push(`Browser-Prüfung: ${requests.length} Anfragen beobachtet${blocked ? `, ${blocked} schreibende blockiert` : ''}, ${ext.length} Drittskripte.`);
-    return { ok: true, findings, notes };
+    // Rohdaten fuer die Zusatzpruefungen (Datenschutz vor Einwilligung, Barrierefreiheit, Ladezeit, CSP)
+    let observed = null;
+    try {
+      const page = await win.webContents.executeJavaScript(DOM_COLLECT_SCRIPT, true);
+      const cookies = (await ses.cookies.get({})).map((c) => ({ name: c.name, domain: c.domain, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite, session: !!c.session }));
+      const perf = { ...page.perf, bytes: Math.max(page.perf.bytes || 0, bytes), requests: Math.max(page.perf.requests || 0, requests.length) };
+      observed = { origin, requests: requests.slice(0, 2000), cookies, scripts: page.scripts || data.scripts, perf, a11y: { lang: page.lang, imgNoAlt: page.imgNoAlt, imgNoAltEx: page.imgNoAltEx, unlabeled: page.unlabeled, unlabeledEx: page.unlabeledEx, contrast: page.contrast, contrastEx: page.contrastEx } };
+    } catch { /* Seite hat das Skript verhindert – Zusatzpruefungen fallen auf das HTML zurueck */ }
+    return { ok: true, findings, notes, observed };
   } catch (e) {
     return { ok: false, findings, notes: ['Browser-Prüfung fehlgeschlagen: ' + e.message] };
   } finally {

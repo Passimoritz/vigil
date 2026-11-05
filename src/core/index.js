@@ -68,6 +68,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   // Zerstoerungsfreie Server-Checks fuer Web-Ziele (TLS, Header, Cookies, CORS, offene Pfade).
   let webFindings = [];
   let webNotes = [];
+  const webWatch = {}; // Skripte/Formularziele je Webseite fuer den Vergleich beim naechsten Lauf
   const webTargets = targets.filter((t) => t.type === 'url' || t.type === 'endpoint');
   for (const t of webTargets) {
     if (aborted()) break;
@@ -90,10 +91,11 @@ async function runAudit(targets, config, onProgress = () => {}) {
       if (wm.throttled) throttled = true;
       else for (const id of wm.ran) scannersRun.push({ target: t.value, source: id });
       // Unterseiten, Formulare, Schwachstellen-Proben und Login (Proben/Login nur verifiziert/intern)
+      let dw = null, observed = null;
       if (!throttled && !aborted() && t.type === 'url' && config.webCrawl !== false) {
         const { runDeepWeb } = require('./modules/webdeep');
         const login = deep && typeof config.webLogin === 'function' ? config.webLogin(t.value) : null;
-        const dw = await runDeepWeb(t.value, { deep, login, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress });
+        dw = await runDeepWeb(t.value, { deep, login, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress });
         webFindings.push(...dw.findings); webNotes.push(...dw.notes);
         // Eingebundene Skripte gegen die taeglich aktualisierte retire.js-Datenbank
         if (config.feeds && config.feeds.retire.length && dw.scripts && dw.scripts.length) webFindings.push(...require('./feedscan').scanScriptUris(dw.scripts, config.feeds.retire, t.value));
@@ -106,7 +108,21 @@ async function runAudit(targets, config, onProgress = () => {}) {
           const d = await config.domAudit(t.value, { signal: config.signal, onProgress });
           webFindings.push(...d.findings); webNotes.push(...d.notes);
           if (d.ok) scannersRun.push({ target: t.value, source: 'headless-dom-audit' });
+          if (d.ok && d.observed) observed = d.observed;
         } catch (e) { webNotes.push('Browser-Prüfung: ' + e.message); }
+      }
+      // Zusatzpruefungen: security.txt, SEO, Impressum, Header-Note, TLS/DNS/Mail im Detail, Subdomains,
+      // Shodan InternetDB, Tippfehler-Domains, JS-Bundles, SRI/CSP-Vorschlag, Datenschutz, Barrierefreiheit,
+      // Ladezeit, defekte Links, API-Endpunkte (nur verifiziert) und Aenderungen seit dem letzten Lauf
+      if (t.type === 'url' && config.webSuite !== false && !throttled && !aborted()) {
+        try {
+          const { runWebSuite } = require('./modules/websuite');
+          const s = await runWebSuite(t.value, { deep, pages: (dw && dw.pages) || [], scripts: (dw && dw.scripts) || [], observed, allowlist: config.allowlist || [], previous: config.webWatch ? config.webWatch[t.value] : null, feeds: config.feeds, openApi: typeof config.openApiFor === 'function' ? config.openApiFor(t.value) : null, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress });
+          webFindings.push(...s.findings); webNotes.push(...s.notes);
+          if (s.throttled) throttled = true;
+          else for (const id of s.ran) scannersRun.push({ target: t.value, source: id });
+          if (s.watch) webWatch[t.value] = s.watch;
+        } catch (e) { webNotes.push('Web-Zusatzprüfungen: ' + e.message); }
       }
       // API-Rechtematrix (BOLA/IDOR) fuer konfigurierte Endpunkte dieses Hosts
       if (deep && typeof config.apiMatrix === 'function' && !aborted()) {
@@ -199,7 +215,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
     }
   }
   const staticFindings = [...pre.findings, ...gitFindings, ...mods.findings, ...cveFindings, ...webFindings, ...(ing.findings || [])];
-  const extraMeta = { scannersRun, throttled, sbom, modulesRun: [...new Set(scannersRun.map((s) => s.source))] };
+  const extraMeta = { scannersRun, throttled, sbom, modulesRun: [...new Set(scannersRun.map((s) => s.source))], ...(Object.keys(webWatch).length ? { webWatch } : {}) };
 
   if (!ing.units.length) {
     const findings = finalize(enrich(dedupeFindings(staticFindings)), targets, config);
