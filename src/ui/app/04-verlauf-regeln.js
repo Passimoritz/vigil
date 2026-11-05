@@ -14,8 +14,9 @@ function renderHistory(runs) {
   state.histSel = (state.histSel || []).filter((id) => runs.some((r) => r.id === id));
   box.innerHTML = runs.map((r) => {
     const c = r.counts || {};
-    const when = new Date(r.at).toLocaleString('de-DE');
-    const tgt = (r.targets || []).join(', ');
+    const when = new Date(r.at).toLocaleString(uiLocale());
+    const systemName = (v) => { const c = document.querySelector(`.sys-chip[data-system="${CSS.escape(v)}"]`); return c ? c.textContent : v; };
+    const tgt = (r.targets || []).map(systemName).join(', ');
     return `<div class="hist-item"><input type="checkbox" class="hist-sel" data-id="${esc(r.id)}" aria-label="Für den Vergleich auswählen"${state.histSel.includes(r.id) ? ' checked' : ''}><button type="button" class="hist-row" data-id="${esc(r.id)}">
       <span class="hist-when">${esc(when)}</span>
       <span class="hist-tgt" title="${esc(tgt)}">${esc(tgt || '—')}</span>

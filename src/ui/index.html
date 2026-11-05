@@ -40,6 +40,11 @@
 
     <div class="side-spacer"></div>
 
+    <button class="gb-chip" id="gbChip" type="button" hidden title="Einrichtung von Greenbone ansehen">
+      <span class="gb-chip-top"><span id="gbChipLabel">Greenbone</span><b id="gbChipPct"></b></span>
+      <span class="gb-bar"><span id="gbChipFill"></span></span>
+    </button>
+
     <button class="ai-pill" id="aiPill" type="button" title="KI wählen">
       <span class="dot" id="sbDot"></span>
       <span class="ai-pill-text"><span class="ai-pill-label">Aktive KI</span><b id="sbAi">–</b></span>
@@ -86,6 +91,10 @@
             <p id="imageNote" class="note" hidden>Container-Images prüft Vigil mit <b>trivy</b> (Pakete, CVEs, Fehlkonfigurationen). trivy muss installiert sein; mit Präfix <code>image:</code> wird immer als Image erkannt.</p>
           </div>
 
+          <div id="targets" class="targets" hidden>
+            <div class="targets-head"><span>Prüfliste <span class="count" id="targetCount">0</span></span><button id="clearBtn" class="btn ghost tiny">Alle entfernen</button></div>
+            <ul id="targetList"></ul>
+          </div>
           <div class="quick" role="group" aria-label="Art des Ziels">
             <button id="pickFolderBtn" class="quick-tile" type="button">
               <span class="q-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
@@ -104,31 +113,12 @@
               <b>Container-Image</b><span>Pakete und bekannte Lücken</span>
             </button>
           </div>
-          <div class="sys-row" role="group" aria-label="System prüfen">
-            <span class="sys-label">Oder ein System prüfen – nur lesend:</span>
-            <button type="button" class="sys-chip" data-system="windows">Dieser Windows-PC</button>
-            <button type="button" class="sys-chip" data-system="docker">Laufende Docker-Container</button>
-            <button type="button" class="sys-chip" data-system="aws">AWS-Konto</button>
-            <button type="button" class="sys-chip" data-system="azure">Azure</button>
-            <button type="button" class="sys-chip" data-system="gcp">Google Cloud</button>
-          </div>
-          <div class="sys-row" role="group" aria-label="Weitere Systeme prüfen">
-            <span class="sys-label">PC, Netz, Server &amp; Konten:</span>
-            <button type="button" class="sys-chip" data-system="winapps">Installierte Programme</button>
-            <button type="button" class="sys-chip" data-system="browserext">Browser-Erweiterungen</button>
-            <button type="button" class="sys-chip" data-system="backup">Datensicherung</button>
-            <button type="button" class="sys-chip" data-system="macos" hidden>Dieser Mac</button>
-            <button type="button" class="sys-chip" data-system="router">Router</button>
-            <button type="button" class="sys-chip" data-system="lan">Geräte im Netz</button>
-            <button type="button" class="sys-chip" data-system="linuxssh">Linux-Server (SSH)</button>
-            <button type="button" class="sys-chip" data-system="dbdirect">Datenbanken</button>
-            <button type="button" class="sys-chip" data-system="k8s">Kubernetes</button>
-            <button type="button" class="sys-chip" data-system="iam">Cloud-Berechtigungen</button>
-            <button type="button" class="sys-chip" data-system="cicd">GitHub / GitLab / Azure DevOps</button>
-            <button type="button" class="sys-chip" data-system="m365">Microsoft 365 / Google Workspace</button>
-            <button type="button" class="sys-chip" data-system="hosting">Cloudflare &amp; Hosting</button>
-            <button type="button" class="sys-chip" data-system="hibp">Datenlecks (HIBP)</button>
-          </div>
+          <details class="sys-more" id="sysMore">
+            <summary><span class="sys-sum-title">Systeme und Konten prüfen</span><span class="sys-sum-sub">nur lesend</span><span class="count" id="sysCount" hidden>0</span><span class="chev" aria-hidden="true">▾</span></summary>
+            <div class="sys-group" role="group" aria-label="Dieser Rechner"><span class="sys-label">Dieser Rechner</span><div class="sys-chips"><button type="button" class="sys-chip" data-system="windows">Dieser Windows-PC</button><button type="button" class="sys-chip" data-system="winapps">Installierte Programme</button><button type="button" class="sys-chip" data-system="browserext">Browser-Erweiterungen</button><button type="button" class="sys-chip" data-system="backup">Datensicherung</button><button type="button" class="sys-chip" data-system="macos" hidden>Dieser Mac</button></div></div>
+            <div class="sys-group" role="group" aria-label="Netzwerk und Server"><span class="sys-label">Netzwerk und Server</span><div class="sys-chips"><button type="button" class="sys-chip" data-system="router">Router</button><button type="button" class="sys-chip" data-system="lan">Geräte im Netz</button><button type="button" class="sys-chip" data-system="linuxssh">Linux-Server (SSH)</button><button type="button" class="sys-chip" data-system="dbdirect">Datenbanken</button><button type="button" class="sys-chip" data-system="docker">Laufende Docker-Container</button><button type="button" class="sys-chip" data-system="k8s">Kubernetes</button></div></div>
+            <div class="sys-group" role="group" aria-label="Cloud und Konten"><span class="sys-label">Cloud und Konten</span><div class="sys-chips"><button type="button" class="sys-chip" data-system="aws">AWS-Konto</button><button type="button" class="sys-chip" data-system="azure">Azure</button><button type="button" class="sys-chip" data-system="gcp">Google Cloud</button><button type="button" class="sys-chip" data-system="iam">Cloud-Berechtigungen</button><button type="button" class="sys-chip" data-system="cicd">GitHub / GitLab / Azure DevOps</button><button type="button" class="sys-chip" data-system="m365">Microsoft 365 / Google Workspace</button><button type="button" class="sys-chip" data-system="hosting">Cloudflare &amp; Hosting</button><button type="button" class="sys-chip" data-system="hibp">Datenlecks (HIBP)</button></div></div>
+          </details>
           <div id="knownBox" class="known" hidden>
             <button type="button" id="knownToggle" class="known-toggle" aria-expanded="false" aria-controls="knownPanel">
               <span class="known-ico" aria-hidden="true">★</span>
@@ -149,10 +139,6 @@
             </div>
           </div>
 
-          <div id="targets" class="targets" hidden>
-            <div class="targets-head"><span>Prüfliste <span class="count" id="targetCount">0</span></span><button id="clearBtn" class="btn ghost tiny">Alle entfernen</button></div>
-            <ul id="targetList"></ul>
-          </div>
         </section>
 
         <!-- 2 · KI -->
@@ -318,7 +304,7 @@
           </div>
         </div>
         <button id="threatBtn" class="btn" title="STRIDE-Bedrohungsmodell des Projekts erstellen">Bedrohungsmodell</button>
-        <button id="newScanBtn" class="btn primary">Neue Prüfung</button>
+        <button id="newScanBtn" class="btn">Neue Prüfung</button>
       </div>
     </header>
 
@@ -409,6 +395,12 @@
 
   <!-- ===================== Übersicht ===================== -->
   <section id="dashView" class="view" hidden aria-labelledby="dashTitle">
+    <div class="empty-hero dash-empty-hero">
+      <div class="empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="30" height="30"><rect x="3.5" y="3.5" width="7" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13.5" y="3.5" width="7" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13.5" y="11.5" width="7" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="3.5" y="15.5" width="7" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></div>
+      <h2>Hier entsteht deine Übersicht</h2>
+      <p>Nach der ersten Prüfung siehst du hier den Sicherheitswert, offene Befunde und die Entwicklung über alle Läufe.</p>
+      <button class="btn primary" type="button" id="dashEmptyScan">Erste Prüfung starten</button>
+    </div>
     <header class="page-head">
       <div>
         <span class="eyebrow">Alle Prüfungen zusammen</span>
@@ -797,8 +789,52 @@
           <p id="amStatus" class="hint"></p>
         </section>
 
+        <section class="card set-block" id="set-schedules">
+          <h2>Geplante Prüfungen</h2>
+          <p class="hint">Vigil prüft täglich oder wöchentlich von selbst und meldet nur neue Befunde: als Windows-Benachrichtigung und auf Wunsch an einen Webhook (Slack, Teams, Discord oder eigene Adresse). Der Webhook bekommt nur Schwere, Titel und Ort. Webadressen und Server müssen bereits freigegeben sein, unbeaufsichtigt fragt Vigil nicht nach. Verpasste Läufe werden beim nächsten Start nachgeholt.</p>
+          <div id="schedList" class="sched-list"></div>
+          <div class="sched-form">
+            <input id="schedName" class="set-input" type="text" maxlength="80" placeholder="Name, z. B. Eigene Webseite" autocomplete="off" />
+            <textarea id="schedTargets" rows="2" placeholder="Ziele, eins pro Zeile: https://…, Ordnerpfad oder Host"></textarea>
+            <div class="sched-when">
+              <select id="schedFreq" aria-label="Häufigkeit"><option value="daily">Täglich</option><option value="weekly">Wöchentlich</option></select>
+              <select id="schedDay" aria-label="Wochentag" hidden><option value="1">Montag</option><option value="2">Dienstag</option><option value="3">Mittwoch</option><option value="4">Donnerstag</option><option value="5">Freitag</option><option value="6">Samstag</option><option value="0">Sonntag</option></select>
+              <input id="schedTime" type="time" value="03:00" aria-label="Uhrzeit" />
+              <select id="schedMin" aria-label="Melden ab"><option value="critical">Melden ab Kritisch</option><option value="high" selected>Melden ab Hoch</option><option value="medium">Melden ab Mittel</option><option value="low">Melden ab Niedrig</option></select>
+            </div>
+            <input id="schedHook" class="set-input" type="password" placeholder="Webhook-Adresse (optional, https)" autocomplete="off" />
+            <div class="row-inline"><button id="schedAdd" type="button" class="btn">Prüfung planen</button></div>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Beim Schließen im Hintergrund weiterlaufen</b><span>Das Fenster verschwindet in den Infobereich, geplante Prüfungen laufen weiter. Ohne das läuft ein Plan nur, solange Vigil offen ist.</span></div>
+            <label class="switch"><input type="checkbox" id="schedBackground" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Mit Windows starten</b><span>Vigil startet beim Anmelden ohne Fenster im Hintergrund.</span></div>
+            <label class="switch"><input type="checkbox" id="schedLogin" /><span></span></label>
+          </div>
+        </section>
+
+        <section class="card set-block" id="set-greenbone">
+          <h2>Greenbone OpenVAS</h2>
+          <p class="hint">Zusätzlicher Netzwerk-Scanner mit täglich aktualisierten Tests. Vigil richtet die kostenlose Greenbone Community Edition auf Wunsch ein: in einer eigenen WSL-Umgebung mit Docker Engine, ohne Docker Desktop. Das belegt mindestens 40 GB auf der Festplatte. Arbeitsspeicher braucht Greenbone nur während eines Scans (4 bis 8 GB), danach wird es wieder beendet. Ein Scan kann pro Host deutlich über eine Stunde dauern und ist im Netz sichtbar. Geprüft werden nur freigegebene Ziele, ohne Passwort-Rateversuche, Standard-Zugänge und Denial-of-Service-Tests.</p>
+          <div id="gbProgress" class="gb-progress" hidden aria-live="polite"></div>
+          <div class="row-inline"><button id="gbAuto" type="button" class="btn">Einrichten</button><button id="gbCancel" type="button" class="btn" hidden>Abbrechen</button><span id="gbAutoStatus" class="small muted" aria-live="polite"></span></div>
+          <div class="set-row">
+            <div class="set-label"><b>Bei Prüfungen freigegebener Server mitlaufen lassen</b><span>Verlängert jede Prüfung einer Webadresse oder eines Servers deutlich.</span></div>
+            <label class="switch"><input type="checkbox" id="gbEnabled" /><span></span></label>
+          </div>
+          <div class="row-inline"><button id="gbTest" type="button" class="btn">Verbindung testen</button><button id="gbRemove" type="button" class="btn danger">Entfernen</button><span id="gbResult" class="small muted" aria-live="polite"></span></div>
+        </section>
+
         <section class="card set-block" id="set-tools">
           <h2>Externe Sicherheits-Tools</h2>
+          <div id="toolHealth" class="tool-health" aria-live="polite"></div>
+          <div class="set-row">
+            <div class="set-label"><b>Werkzeuge automatisch aktualisieren</b><span>Einmal am Tag von den offiziellen Quellen, mit Prüfsumme. Läuft eine neue Datei nicht, kommt die alte zurück. Für nmap fragt Windows einmal nach Administratorrechten. Vigil selbst wird aktualisiert, wenn es aus einer unveränderten Git-Kopie läuft.</span><span id="toolUpdateStatus" class="tool-update-status" aria-live="polite"></span></div>
+            <button id="toolUpdateNow" type="button" class="btn">Jetzt prüfen</button>
+            <label class="switch"><input type="checkbox" id="toolUpdateChk" /><span></span></label>
+          </div>
           <div class="set-row">
             <div class="set-label"><b>Installierte Tools einbeziehen</b><span>gitleaks, trufflehog, trivy, grype, semgrep, bandit, checkov, retire.js, hadolint, osv-scanner. Bei freigegebenen Servern zusätzlich nmap und nuclei, ohne DoS und ohne Brute-Force. Fehlende Tools werden übersprungen.</span></div>
             <label class="switch"><input type="checkbox" id="activeChk" /><span></span></label>
@@ -1024,5 +1060,19 @@
 <script src="app/07-einstellungen.js"></script>
 <script src="app/08-start.js"></script>
 <script src="app/09-erweiterungen.js"></script>
+<dialog id="gbAsk" class="gb-ask" aria-labelledby="gbAskTitle">
+  <div class="gb-ask-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m9 12 2.2 2.2L15.5 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+  <h2 id="gbAskTitle">Greenbone OpenVAS einrichten?</h2>
+  <p>Damit bekommt Vigil viele zusätzliche, täglich aktualisierte Netzwerk-Tests.</p>
+  <dl class="gb-facts">
+    <dt>Download</dt><dd>rund 12 GB</dd>
+    <dt>Festplatte</dt><dd>mindestens 40 GB frei</dd>
+    <dt>Arbeitsspeicher</dt><dd>4 bis 8 GB, nur während eines Scans</dd>
+    <dt>Dauer</dt><dd>beim ersten Mal bis zu mehrere Stunden, im Hintergrund</dd>
+  </dl>
+  <p class="small muted">Es läuft in einer eigenen WSL-Umgebung, ohne Docker Desktop. Prüfungen freigegebener Server dauern danach deutlich länger. Du kannst es jederzeit unter Einstellungen › Prüfungen abschalten oder entfernen.</p>
+  <div class="gb-ask-actions"><button id="gbAskNo" type="button" class="btn">Nicht jetzt</button><button id="gbAskYes" type="button" class="btn primary">Einrichten</button></div>
+</dialog>
+<script src="app/10-wartung.js"></script>
 </body>
 </html>

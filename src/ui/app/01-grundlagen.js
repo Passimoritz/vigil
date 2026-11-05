@@ -4,6 +4,7 @@
 // Die Oberfläche ist auf mehrere klassische Skripte in src/ui/app/ verteilt (Reihenfolge siehe index.html).
 
 const $ = (id) => document.getElementById(id);
+const uiLocale = () => (typeof state !== 'undefined' && state.config && state.config.lang === 'de' ? 'de-DE' : 'en-GB');
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
@@ -137,6 +138,7 @@ function renderTargets() {
   });
   document.querySelectorAll('.sys-chip').forEach((b) => b.classList.toggle('on', state.targets.some((t) => t.type === 'system' && t.value === b.dataset.system)));
   $('targetCount').textContent = state.targets.length;
+  { const n = state.targets.filter((t) => t.type === 'system').length; const c = $('sysCount'); if (c) { c.textContent = n; c.hidden = !n; } }
   $('targets').hidden = state.targets.length === 0;
   if (known.list.length) renderKnown();
   updateRunState();

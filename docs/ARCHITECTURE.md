@@ -27,6 +27,11 @@ src/core/                 security engine (no Electron)
   analyze.js, harness.js  AI analysis, redaction, validation of AI findings
   providers.js            AI providers (Ollama, Anthropic, OpenAI, Gemini, OpenAI-compatible)
   feeds.js, feedscan.js   daily detection data (gitleaks rules, retire.js) + matching
+  eol.js                  end-of-support data from endoflife.date (feed), used by DB, Linux and bundled-library checks
+  greenbone.js            optional Greenbone/OpenVAS scanner: GMP via gvm-cli in the WSL distro, gentle scan config, result mapping
+  greenbone-setup.js      automatic Greenbone setup: own WSL distro with Docker Engine, official compose.yaml, random password; runs only during scans
+  toolupdate.js           daily updates of installed tools (checksum, rollback), nmap via signed installer, Vigil via git fast-forward
+  schedule.js             scheduled checks: due logic, what to report, webhook payloads (runner lives in electron/main.js)
   intel.js                CISA KEV / EPSS, contextual risk, attack paths
   verify.js               SHA-256 pinning and minisign verification of downloads
   store.js                findings lifecycle (fingerprints, regressions, auto-resolve, baseline)

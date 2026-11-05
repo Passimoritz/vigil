@@ -29,12 +29,27 @@ function loadIntel(file) {
   } catch { return emptyIntel(); }
 }
 
+// Nur Stand und Anzahl aus dem Dateianfang lesen: Die vollen Listen belegen rund 45 MB und werden nur
+// waehrend eines Laufs gebraucht. Aeltere Dateien ohne "counts" gelten als veraltet (naechster Abgleich schreibt sie).
+function readIntelMeta(file) {
+  const empty = { updatedAt: null, kev: { size: 0 }, epss: { size: 0 } };
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(256);
+    const n = fs.readSync(fd, buf, 0, 256, 0);
+    const head = buf.toString('utf8', 0, n);
+    const m = head.match(/^\{"updatedAt":"([^"]+)","counts":\{"kev":(\d+),"epss":(\d+)\}/);
+    return m ? { updatedAt: m[1], kev: { size: Number(m[2]) }, epss: { size: Number(m[3]) } } : empty;
+  } catch { return empty; } finally { if (fd != null) { try { fs.closeSync(fd); } catch { /* egal */ } } }
+}
+
 const needsSync = (intel) => !intel.updatedAt || Date.now() - new Date(intel.updatedAt).getTime() > DAY;
 
 // Laedt beide Feeds und schreibt den Cache. Fehler eines Feeds behalten den alten Stand.
 async function syncIntel(file, { fetchImpl = fetch } = {}) {
   const prev = loadIntel(file);
-  const out = { updatedAt: new Date().toISOString(), kev: [...prev.kev], epss: Object.fromEntries(prev.epss) };
+  const out = { updatedAt: new Date().toISOString(), counts: { kev: 0, epss: 0 }, kev: [...prev.kev], epss: Object.fromEntries(prev.epss) };
   const notes = [];
   try {
     const r = await fetchImpl(KEV_URL, { signal: AbortSignal.timeout(30000) });
@@ -56,6 +71,7 @@ async function syncIntel(file, { fetchImpl = fetch } = {}) {
     out.epss = epss;
     notes.push(`EPSS: ${Object.keys(epss).length} relevante CVEs`);
   } catch (e) { notes.push('EPSS nicht aktualisiert: ' + e.message); }
+  out.counts = { kev: out.kev.length, epss: Object.keys(out.epss).length };
   fs.writeFileSync(file, JSON.stringify(out));
   return { ok: true, notes, updatedAt: out.updatedAt };
 }
@@ -210,4 +226,4 @@ function correlate(findings) {
   return out;
 }
 
-module.exports = { loadIntel, syncIntel, needsSync, applyIntel, contextualRisk, correlate, cvesOf, findingKey: key, CHAINS, emptyIntel };
+module.exports = { readIntelMeta, loadIntel, syncIntel, needsSync, applyIntel, contextualRisk, correlate, cvesOf, findingKey: key, CHAINS, emptyIntel };

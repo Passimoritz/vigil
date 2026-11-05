@@ -44,6 +44,7 @@ async function runSummaryOf(result, config) {
 // targets: [{type:'path'|'url'|'endpoint'|'image', value, authorized?}]
 // config:  { provider, model, apiKey, baseUrl, temperature, maxTokens }
 async function runAudit(targets, config, onProgress = () => {}) {
+  require('./eol').use(config.feeds && config.feeds.eol);
   onProgress({ phase: 'ingest', message: 'Sammle Prüfmaterial …' });
   const ing = await ingestTargets(targets, onProgress);
   const scannersRun = []; // [{ target, source }] – vollstaendig gelaufene Pruefungen je Ziel
@@ -55,6 +56,10 @@ async function runAudit(targets, config, onProgress = () => {}) {
   const mods = runStaticModules(ing.units, onProgress);
   for (const t of targets) if (t.type === 'path') for (const id of mods.ran) scannersRun.push({ target: t.value, source: id });
   const moduleNotes = [...mods.errors];
+  // Aktive Werkzeuge veraltet oder ohne Vorlagen? Sonst sieht ein leeres Ergebnis wie "alles sauber" aus.
+  if (config.activeScan && targets.some((t) => t.type === 'url' || t.type === 'endpoint')) {
+    try { for (const h of await require('./tools').toolHealth()) if (h.state !== 'ok' && h.state !== 'missing') moduleNotes.push(`${h.tool}: ${h.detail}. ${h.fix}`); } catch { /* nur ein Hinweis */ }
+  }
   let throttled = false;
   // In Programmen/JARs eingebaute Bibliotheken (z. B. log4j in einer WAR) zaehlen wie Abhaengigkeiten
   for (const d of ing.bundledDeps || []) if (!pre.deps.some((x) => x.ecosystem === d.ecosystem && x.name === d.name && x.version === d.version)) pre.deps.push(d);
@@ -84,6 +89,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   const webCms = []; // CMS-Hinweise freigegebener Webseiten (Abgleich spaeter in supplychain.js)
   const webWatch = {}; // Skripte/Formularziele je Webseite fuer den Vergleich beim naechsten Lauf
   const webTargets = targets.filter((t) => t.type === 'url' || t.type === 'endpoint');
+  let gbSession = null;
   for (const t of webTargets) {
     await checkpoint();
     if (aborted()) break;
@@ -163,7 +169,24 @@ async function runAudit(targets, config, onProgress = () => {}) {
         } catch (e) { webNotes.push(`nuclei ${t.value}: ${e.message}`); }
       }
     }
+    // Greenbone Community Edition (OpenVAS), falls eingerichtet – gleiche Freigabe wie nmap/nuclei
+    if (config.greenbone && config.greenbone.enabled && authorized && !aborted()) {
+      const gb = require('./greenbone');
+      try {
+        // Greenbone laeuft nur waehrend der Scans: einmal je Lauf starten, am Ende wieder beenden
+        if (!gbSession) {
+          onProgress({ phase: 'active', message: 'Greenbone wird gestartet …' });
+          gbSession = await require('./greenbone-setup').startSession({ signal: config.signal });
+          if (!gbSession.ok) { const why = gbSession.error; gbSession = null; throw new Error(why); }
+        }
+        const call = gb.createClient({ user: config.greenbone.user, password: config.greenbone.password, signal: config.signal });
+        const r = await gb.scanHost(hostOf(t), call, { signal: config.signal, onProgress, readyWaitMs: 30 * 60 * 1000 });
+        webFindings.push(...r.findings); webNotes.push(...r.notes);
+        if (r.ran) scannersRun.push({ target: t.value, source: 'greenbone' });
+      } catch (e) { webNotes.push(`Greenbone nicht ausgeführt: ${e.message}`); }
+    }
   }
+  if (gbSession) { await gbSession.stop().catch(() => {}); gbSession = null; }
   // Container-Images: SBOM + CVE-Abgleich ueber trivy (einziger sinnvolle Check fuer ein Image).
   for (const t of targets.filter((x) => x.type === 'image')) {
     if (aborted()) break;
@@ -185,7 +208,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   for (const t of targets.filter((x) => x.type === 'system')) {
     if (aborted()) break;
     try {
-      const r = await require('./hostaudit').auditSystem(t.value, { signal: config.signal, onProgress, settings: config.systemSettings || {} });
+      const r = await require('./hostaudit').auditSystem(t.value, { signal: config.signal, onProgress, settings: { ...(config.systemSettings || {}), osvLookup: config.cveLookup !== false } });
       webFindings.push(...r.findings); webNotes.push(...r.notes);
       if (r.ok) scannersRun.push({ target: t.value, source: `system-${t.value}` });
     } catch (e) { webNotes.push(`System-Prüfung ${t.value}: ${e.message}`); }

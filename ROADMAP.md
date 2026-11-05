@@ -107,8 +107,8 @@ Vom Befund zur fertigen Korrektur.
 
 Vigil dort einsetzen, wo ohnehin gearbeitet wird.
 
-- [ ] **Geplante Prüfungen mit Benachrichtigung** · **Als Nächstes** · Aufwand mittel  
-  Täglich oder wöchentlich automatisch prüfen und per E-Mail, Slack, Teams oder Webhook melden, wenn etwas Neues und Kritisches auftaucht.
+- [x] **Geplante Prüfungen mit Benachrichtigung** · Erledigt (November 2026)  
+  Täglich oder wöchentlich automatisch prüfen und per Windows-Benachrichtigung oder Webhook (Slack, Teams, Discord, eigene Adresse) melden, wenn etwas Neues auftaucht. E-Mail ist noch offen.
 - [ ] **Prüfung bei jeder Code-Änderung** · Danach · Aufwand mittel  
   Fertige Vorlagen für GitHub und GitLab: Vigil prüft jeden Push und stoppt, wenn etwas Kritisches dazukommt.
 - [ ] **Zugangsdaten schon vor dem Speichern abfangen** · Danach · Aufwand klein  
@@ -220,6 +220,18 @@ Für Vigil gedacht, noch nicht umgesetzt. Alle Ideen bleiben zerstörungsfrei un
   Welche Cookies und Dritt-Dienste vor der Einwilligung geladen werden (DSGVO/TTDSG).
 - [x] **Software-Stückliste ausgeben** · Aufwand klein
   SBOM im CycloneDX- und SPDX-Format für jedes geprüfte Projekt.
+
+## Abgleich mit OpenVAS (November 2026)
+
+Vergleich mit der [BSI-Beschreibung von OpenVAS](https://www.bsi.bund.de/DE/Themen/Unternehmen-und-Organisationen/Informationen-und-Empfehlungen/Freie-Software/Tools/OpenVAS/OpenVAS_node.html). Die Tests werden nicht nachgebaut, sondern angebunden.
+
+- [x] Greenbone Community Edition automatisch eingerichtet: eigene WSL-Umgebung mit Docker Engine, ohne Docker Desktop, schonende Scan-Konfiguration, läuft nur während eines Scans
+- [x] Geplante Prüfungen mit Benachrichtigung
+- [x] Linux-Pakete per SSH gegen OSV abgleichen (Debian, Ubuntu, Rocky, AlmaLinux)
+- [x] Support-Enden aus endoflife.date statt aus dem Code (Datenbanken, OpenSSL, Linux)
+- [x] Hinweis bei veraltetem nmap oder fehlenden nuclei-Vorlagen
+- [ ] Liste verwundbarer Windows-Programme und FRITZ!OS-Stände aus einer gepflegten Quelle
+- [ ] Mandanten, entfernte Sensoren, Industrieprotokolle: bewusst nicht geplant, dafür ist Greenbone selbst da
 
 ## Wunschliste vom 5. November 2026
 

@@ -7,7 +7,7 @@
 const dash = { status: 'OPEN,IN_PROGRESS', severity: '', targetId: '', q: '', newSinceBaseline: false, toxic: false };
 const gradeOf = (score) => (score >= 92 ? 'A' : score >= 78 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : score >= 20 ? 'E' : 'F');
 const RUN_LABEL = { QUEUED: 'wartet', RUNNING: 'läuft', COMPLETED: 'fertig', FAILED: 'fehlgeschlagen', PARTIAL_FAILURE: 'teilweise', THROTTLED_ABORTED: 'gedrosselt' };
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '–');
+const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString(uiLocale(), { dateStyle: 'short', timeStyle: 'short' }) : '–');
 
 // Seiten: Neue Pruefung | Ergebnis | Uebersicht | Verlauf | Einstellungen
 const VIEWS = { scan: 'scanView', results: 'resultsView', dash: 'dashView', history: 'historyView', settings: 'settingsView' };
@@ -46,6 +46,8 @@ async function loadDashboard() {
   $('dashSummary').textContent = !stats.targets.length ? 'Noch keine Prüfungen gespeichert. Starte unter „Neue Prüfung“ deinen ersten Lauf.'
     : total ? `${total} ${total === 1 ? 'Befund ist' : 'Befunde sind'} offen – über ${stats.targets.length} ${stats.targets.length === 1 ? 'Ziel' : 'Ziele'}. ${stats.byStatus.RESOLVED || 0} behoben, ${(stats.byStatus.FALSE_POSITIVE || 0) + (stats.byStatus.ACCEPTED_RISK || 0)} als Fehlalarm oder akzeptiert.`
       : 'Keine offenen Befunde – alles im grünen Bereich.';
+  // Noch nichts geprueft: eine klare Einladung statt einer Wand aus Nullen
+  $('dashView').classList.toggle('dash-empty', !stats.targets.length);
   // Sicherheitswert
   const sc = $('dashScore');
   const tone = stats.posture >= 78 ? 'var(--low)' : stats.posture >= 50 ? 'var(--med)' : 'var(--crit)';

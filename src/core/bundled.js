@@ -86,9 +86,13 @@ function bundledFindings(libs, label, { now = Date.now() } = {}) {
   const out = [];
   const where = String(label || '').replace(/\\/g, '/');
   for (const l of libs) {
-    for (const k of KNOWN[l.lib] || []) {
+    for (let k of KNOWN[l.lib] || []) {
       if (!inRange(l.version, k.from, k.below)) continue;
-      if (k.eol && Date.parse(k.eol) > now) continue;
+      if (k.eol) {
+        const life = require('./eol').status(l.lib, l.version, { now });
+        if (life ? !life.isEol : Date.parse(k.eol) > now) continue;
+        if (life && life.eolFrom) k = { ...k, eol: life.eolFrom };
+      }
       const name = LABEL[l.lib] || l.lib;
       out.push(normalizeFinding({
         ruleId: k.cve ? `bundled-${l.lib}-${k.cve}` : `bundled-${l.lib}-eol`, severity: k.sev, category: 'Dependencies', confidence: 'medium',

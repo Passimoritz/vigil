@@ -84,7 +84,7 @@ function renderWatch() {
 // Einstellungs-Bereiche: welche Karten gehoeren wohin (Reihenfolge = Anzeige)
 const SET_GROUPS = {
   general: ['presets', 'set-app', 'set-report'],
-  checks: ['set-analyse', 'set-privacy', 'set-malware', 'set-feeds', 'set-tools', 'set-systems'],
+  checks: ['set-analyse', 'set-privacy', 'set-malware', 'set-feeds', 'set-schedules', 'set-tools', 'set-greenbone', 'set-systems'],
   web: ['set-scope', 'set-deep', 'set-login', 'set-matrix'],
   advanced: ['set-rules', 'set-network', 'set-providers', 'set-rest', 'set-data'],
 };

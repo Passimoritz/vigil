@@ -563,4 +563,59 @@ async function updateNucleiTemplates() {
   return { ok: true };
 }
 
-module.exports = { runTool, runNmap, runNuclei, runGitleaks, parseGitleaks, runTrivyFs, runTrivyImage, parseTrivy, runSemgrep, runCheckov, runRetire, runHadolint, runOsvScanner, parseOsv, runGrype, parseGrype, runTrufflehog, parseTrufflehog, runBandit, parseBandit, NMAP, NUCLEI, GITLEAKS, TRIVY, SEMGREP, CHECKOV, RETIRE_JS, HADOLINT, OSV, GRYPE, TRUFFLEHOG, BANDIT, toolAvailable, updateNucleiTemplates };
+// Sind die aktiven Werkzeuge brauchbar? Nur lesend: Version abfragen, Vorlagen zaehlen.
+const NMAP_MIN = '7.90'; // deutlich aeltere Fassungen erkennen viele aktuelle Dienste nicht mehr
+const NUCLEI_MIN_TEMPLATES = 500;
+const TEMPLATES_MAX_AGE_DAYS = 30;
+function verLess(a, b) {
+  const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0; }
+  return false;
+}
+function nucleiTemplateInfo({ configDir } = {}) {
+  const dirs = [configDir, process.env.APPDATA && path.join(process.env.APPDATA, 'nuclei'), path.join(os.homedir(), '.config', 'nuclei')].filter(Boolean);
+  let dir = null, updatedAt = null;
+  for (const d of dirs) {
+    const f = path.join(d, '.templates-config.json');
+    try { dir = JSON.parse(fs.readFileSync(f, 'utf8'))['nuclei-templates-directory'] || null; updatedAt = fs.statSync(f).mtimeMs; if (dir) break; } catch { /* naechster Ort */ }
+  }
+  dir = dir || path.join(os.homedir(), 'nuclei-templates');
+  // Zaehlen genuegt bis zur Schwelle: Der Ordner hat Zehntausende Dateien
+  let count = 0;
+  const walk = (p, depth) => {
+    if (count >= NUCLEI_MIN_TEMPLATES || depth > 8) return;
+    let items = [];
+    try { items = fs.readdirSync(p, { withFileTypes: true }); } catch { return; }
+    for (const it of items) {
+      if (count >= NUCLEI_MIN_TEMPLATES) return;
+      if (it.isDirectory()) { if (!it.name.startsWith('.')) walk(path.join(p, it.name), depth + 1); } else if (/\.ya?ml$/i.test(it.name)) count++;
+    }
+  };
+  walk(dir, 0);
+  return { dir, enough: count >= NUCLEI_MIN_TEMPLATES, count, updatedAt };
+}
+// [{ tool, state: 'ok'|'old'|'empty'|'missing', detail, fix }]
+async function toolHealth({ run = runTool, templates = nucleiTemplateInfo, now = Date.now() } = {}) {
+  const out = [];
+  const nm = await run(NMAP, ['--version'], { timeoutMs: 20000 });
+  const nv = nm.ok ? (String(nm.stdout).match(/Nmap version (\d+(?:\.\d+)+)/i) || [])[1] : null;
+  if (!nv) out.push({ tool: 'nmap', state: 'missing', detail: 'nicht gefunden', fix: 'nmap von https://nmap.org/download installieren.' });
+  else if (verLess(nv, NMAP_MIN)) out.push({ tool: 'nmap', state: 'old', detail: `Version ${nv} ist veraltet`, fix: 'Wird automatisch aktualisiert, sobald du die Windows-Abfrage bestätigst. Ältere Versionen erkennen viele Dienste nicht mehr.' });
+  else out.push({ tool: 'nmap', state: 'ok', detail: `Version ${nv}` });
+  const nu = await run(NUCLEI, ['-version'], { timeoutMs: 20000 });
+  const uv = (String(`${nu.stdout || ''}${nu.stderr || ''}`).match(/Engine Version:\s*v?([\d.]+)/i) || [])[1];
+  if (!nu.ok && !uv) out.push({ tool: 'nuclei', state: 'missing', detail: 'nicht gefunden', fix: 'nuclei von https://github.com/projectdiscovery/nuclei/releases installieren.' });
+  else {
+    const t = templates();
+    const age = t.updatedAt ? Math.floor((now - t.updatedAt) / 86400000) : null;
+    if (!t.enough) out.push({ tool: 'nuclei', state: 'empty', detail: `nur ${t.count} Vorlagen in ${t.dir}`, fix: 'In den Einstellungen die Daten aktualisieren oder „nuclei -update-templates“ ausführen. Ohne Vorlagen prüft nuclei nichts.' });
+    else if (age != null && age > TEMPLATES_MAX_AGE_DAYS) out.push({ tool: 'nuclei', state: 'old', detail: `Vorlagen seit ${age} Tagen nicht aktualisiert`, fix: 'In den Einstellungen die Daten aktualisieren oder „nuclei -update-templates“ ausführen.' });
+    else out.push({ tool: 'nuclei', state: 'ok', detail: `${uv ? `Version ${uv}, ` : ''}Vorlagen vorhanden${age != null ? ` (vor ${age} Tagen aktualisiert)` : ''}` });
+  }
+  return out;
+}
+
+// Pfade der Werkzeuge fuer toolupdate.js
+const toolPaths = () => ({ nmap: NMAP, nuclei: NUCLEI, gitleaks: GITLEAKS, trufflehog: TRUFFLEHOG, trivy: TRIVY, grype: GRYPE, 'osv-scanner': OSV, hadolint: HADOLINT });
+
+module.exports = { toolPaths, toolHealth, nucleiTemplateInfo, verLess, runTool, runNmap, runNuclei, runGitleaks, parseGitleaks, runTrivyFs, runTrivyImage, parseTrivy, runSemgrep, runCheckov, runRetire, runHadolint, runOsvScanner, parseOsv, runGrype, parseGrype, runTrufflehog, parseTrufflehog, runBandit, parseBandit, NMAP, NUCLEI, GITLEAKS, TRIVY, SEMGREP, CHECKOV, RETIRE_JS, HADOLINT, OSV, GRYPE, TRUFFLEHOG, BANDIT, toolAvailable, updateNucleiTemplates };

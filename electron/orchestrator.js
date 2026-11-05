@@ -102,6 +102,7 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
     pause() { if (!current || paused) return false; let resolve; const promise = new Promise((r) => { resolve = r; }); paused = { promise, resolve }; return true; },
     resume() { if (!paused) return false; paused.resolve(); paused = null; return true; },
     isPaused: () => !!paused,
+    isBusy: () => !!current || queue.length > 0,
     isRunning: () => !!current,
     setNote(id, note) { const r = store.setNote(db, id, note); if (r.ok) persist(); return r; },
     softDeleteFindings(ids) { const r = store.softDeleteFindings(db, ids); if (r.deleted) { persist(); schedulePurge(); } return r; },

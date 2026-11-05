@@ -585,7 +585,7 @@ const SOURCE_EXTRA = {
   malwarebazaar: 'MalwareBazaar', 'mcp-config-audit': 'MCP-Konfiguration', 'mobile-audit': 'Handy-Apps', 'model-file-audit': 'KI-Modelldateien', 'ocr-image-audit': 'Texterkennung in Bildern',
   'package-health': 'Paket-Pflege', 'pe-hardening': 'Programm-Schutzfunktionen', 'privacy-audit': 'Personenbezogene Daten', 'retire-feed': 'JS-Bibliotheken (Feed)',
   'script-audit': 'Verschleierte Skripte', signature: 'Digitale Signatur', 'sql-audit': 'SQL-Rechte', 'taint-flow': 'Datenfluss-Analyse', 'tls-deep': 'TLS im Detail',
-  'typo-domains': 'Tippfehler-Domains', 'web-a11y': 'Barrierefreiheit', 'web-change-watch': 'Änderungs-Wächter', 'web-crawl': 'Unterseiten-Durchgang', 'web-csp-suggest': 'CSP-Vorschlag',
+  greenbone: 'Greenbone OpenVAS', 'typo-domains': 'Tippfehler-Domains', 'web-a11y': 'Barrierefreiheit', 'web-change-watch': 'Änderungs-Wächter', 'web-crawl': 'Unterseiten-Durchgang', 'web-csp-suggest': 'CSP-Vorschlag',
   'web-legal': 'Impressum & Datenschutz', 'web-links': 'Defekte Links', 'web-login': 'Login-Prüfung', 'web-observatory': 'Observatory-Note', 'web-privacy': 'Datenschutz der Webseite',
   'web-probe': 'Testwerte in Parametern', 'web-sectxt': 'security.txt', 'web-seo': 'SEO', 'web-speed': 'Ladezeit', 'web-sri': 'SRI-Prüfsummen', 'web-subdomains': 'Subdomains',
   'webserver-config-audit': 'Webserver-Konfiguration', yara: 'YARA', defender: 'Microsoft Defender',

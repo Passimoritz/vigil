@@ -15,7 +15,7 @@ const { createOrchestrator } = require('./orchestrator');
 const { createApi } = require('./api');
 const { safeStorage } = require('electron');
 const { domAudit } = require('./domaudit');
-const { loadIntel, syncIntel, needsSync } = require('../src/core/intel');
+const { loadIntel, readIntelMeta, syncIntel, needsSync } = require('../src/core/intel');
 const { isAllowedLink } = require('../src/core/remedies');
 const { runApiMatrix } = require('../src/core/modules/apimatrix');
 const { verifyOwnership, hostOf: scopeHost } = require('../src/core/scope');
@@ -24,7 +24,15 @@ const { verifyOwnership, hostOf: scopeHost } = require('../src/core/scope');
 // Version ohne Installation: Die portable EXE (bzw. eine Datei "portable" neben Vigil.exe)
 // speichert alle Daten im Ordner "VigilData" daneben statt im Benutzerprofil.
 const PORTABLE_DIR = process.env.PORTABLE_EXECUTABLE_DIR || (fs.existsSync(path.join(path.dirname(process.execPath), 'portable')) ? path.dirname(process.execPath) : '');
+// Die Oberflaeche ist schlicht: Ohne Grafikbeschleunigung belegt Vigil rund 100 MB weniger Arbeitsspeicher
+app.disableHardwareAcceleration();
 // Visuelle Regression: feste Skalierung und auch verdeckt weiterzeichnen (sonst veraltete Aufnahmen)
+// Automatische Tests: auch im verdeckten Fenster und unter Last nicht drosseln
+if (process.env.VIGIL_E2E_SCRIPT) {
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+  app.commandLine.appendSwitch('disable-background-timer-throttling');
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+}
 if (process.env.VIGIL_VISUAL_DIR) {
   app.commandLine.appendSwitch('force-device-scale-factor', '1');
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
@@ -56,7 +64,7 @@ app.on('render-process-gone', (_e, _wc, d) => writeCrash('renderer', new Error(`
 app.on('child-process-gone', (_e, d) => { if (d.reason !== 'clean-exit') writeCrash('child', new Error(`${d.type}: ${d.reason} (Code ${d.exitCode})`)); });
 
 const INTEL_PATH = () => path.join(app.getPath('userData'), 'threat-intel.json');
-let intel = null;
+let intel = null; // Nur Stand und Anzahl; die vollen Listen laedt jeder Lauf selbst (rund 45 MB)
 let intelSyncing = null;
 // Tagesaktuelle Erkennungsdaten (gitleaks-Regeln, retire.js) – geladen beim Start, alle 6 Std. geprueft
 const feeds = require('../src/core/feeds');
@@ -145,6 +153,243 @@ function runWatch() {
   return watchRunning;
 }
 
+// --- Im Hintergrund weiterlaufen (Infobereich), damit geplante Pruefungen auch ohne offenes Fenster laufen ---
+let tray = null;
+let appQuitting = false;
+app.on('before-quit', () => { appQuitting = true; });
+function ensureTray() {
+  if (tray) return;
+  try {
+    const { Tray, Menu } = require('electron');
+    const de = loadConfig().lang === 'de';
+    tray = new Tray(iconPath());
+    tray.setToolTip('Vigil');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: de ? 'Vigil öffnen' : 'Open Vigil', click: () => focusWindow() },
+      { label: de ? 'Beenden' : 'Quit', click: () => { appQuitting = true; app.quit(); } },
+    ]));
+    tray.on('click', () => focusWindow());
+  } catch { /* ohne Symbol weiter */ }
+}
+function applyBackground(cfg) {
+  // Nur die installierte App traegt sich in den Autostart ein, nie eine Entwickler-Fassung
+  if (app.isPackaged) { try { app.setLoginItemSettings({ openAtLogin: !!cfg.startAtLogin, args: ['--background'] }); } catch { /* egal */ } }
+  if (cfg.runInBackground) ensureTray();
+  else if (tray && !cfg.runInBackground) { try { tray.destroy(); } catch { /* egal */ } tray = null; }
+}
+
+// --- Geplante Pruefungen ---
+const schedule = require('../src/core/schedule');
+const schedRunning = new Set();
+function schedPublic(s) {
+  const from = Date.parse(s.lastRun || s.createdAt);
+  return { id: s.id, name: s.name, targets: s.targets, freq: s.freq, time: s.time, weekday: s.weekday, minSeverity: s.minSeverity, enabled: s.enabled, lastRun: s.lastRun, lastStatus: s.lastStatus, hasWebhook: !!s.webhookEnc, next: s.enabled && !Number.isNaN(from) ? new Date(schedule.nextRun(s, from)).toISOString() : null };
+}
+function patchSchedule(id, patch) {
+  const c = loadConfig();
+  const list = Array.isArray(c.schedules) ? c.schedules : [];
+  const s = list.find((x) => x.id === id);
+  if (!s) return null;
+  Object.assign(s, patch);
+  c.schedules = list;
+  saveConfig(c);
+  if (win && !win.isDestroyed()) win.webContents.send('schedules:update');
+  return s;
+}
+async function runSchedule(id) {
+  if (schedRunning.has(id)) return { ok: false, error: 'Diese Prüfung läuft bereits.' };
+  const c = loadConfig();
+  const s = (c.schedules || []).find((x) => x.id === id);
+  if (!s) return { ok: false, error: 'Nicht gefunden.' };
+  const de = c.lang === 'de';
+  schedRunning.add(id);
+  // Sofort vermerken: Absturz oder Neustart darf den Lauf nicht in einer Schleife wiederholen
+  patchSchedule(id, { lastRun: new Date().toISOString() });
+  const hook = dec(s.webhookEnc || '');
+  const fail = async (error) => {
+    patchSchedule(id, { lastStatus: { ok: false, at: new Date().toISOString(), error: String(error).slice(0, 300) } });
+    notify(de ? `Vigil: „${s.name}“ nicht gelaufen` : `Vigil: "${s.name}" did not run`, String(error), focusWindow);
+    if (hook) await schedule.sendWebhook(hook, schedule.webhookPayload(hook, { name: s.name, alerts: [], error: String(error).slice(0, 300) }));
+    return { ok: false, error };
+  };
+  try {
+    // Unbeaufsichtigt: nur bereits freigegebene Ziele (wie bei der REST-API), ohne Rueckfrage
+    const scope = enforceScope(s.targets.map((t) => ({ ...t, authorized: false })), c.allowlist, { interactive: false });
+    if (!scope.ok) return await fail(scope.errors.join(' '));
+    const over = s.targets.some((t) => t.type === 'path') ? budgetBlocked(c, effectiveConfig(c, c.selected)) : null;
+    if (over) return await fail(budgetMsg(over));
+    const out = await orchestrator.enqueue({ targets: scope.targets, providerId: c.selected, origin: 'schedule' }).done;
+    if (!out.ok) return await fail(out.error || 'Fehler');
+    const keep = lastHistoryId; // Ein Lauf im Hintergrund darf den angezeigten Bericht nicht wechseln
+    recordHistory(out.result, scope.targets);
+    lastHistoryId = keep;
+    const meta = out.result.meta || {};
+    recordSpend({ kind: 'run', usd: ((meta.usage && meta.usage.usd) || 0) + ((meta.runSummary && meta.runSummary.usd) || 0), provider: meta.provider, model: meta.model, inputTokens: meta.usage && meta.usage.inputTokens, outputTokens: meta.usage && meta.usage.outputTokens, runId: out.runId });
+    updateOverlay();
+    const alerts = schedule.alertsOf(out.result, s.minSeverity);
+    const status = { ok: true, at: new Date().toISOString(), total: (out.result.findings || []).length, alerts: alerts.length };
+    if (alerts.length) {
+      const tr = (t) => (de ? t : require('../src/core/findings-i18n').translate(t));
+      notify(de ? `Vigil: ${alerts.length} neue(r) Befund(e) – ${s.name}` : `Vigil: ${alerts.length} new finding(s) – ${s.name}`, tr(alerts[0].title), focusWindow);
+      if (hook) { const w = await schedule.sendWebhook(hook, schedule.webhookPayload(hook, { name: s.name, alerts })); if (!w.ok) status.webhookError = w.error; }
+    }
+    patchSchedule(id, { lastStatus: status });
+    return { ok: true };
+  } catch (e) { return await fail(e.message); } finally { schedRunning.delete(id); }
+}
+function scheduleTick() {
+  if (!orchestrator) return;
+  for (const s of loadConfig().schedules || []) if (schedule.isDue(s) && !schedRunning.has(s.id)) runSchedule(s.id).catch(() => {});
+}
+ipcMain.handle('schedules:list', () => { const c = loadConfig(); return { items: (c.schedules || []).map(schedPublic), runInBackground: !!c.runInBackground, startAtLogin: !!c.startAtLogin }; });
+ipcMain.handle('schedules:save', (_e, raw) => {
+  const c = loadConfig();
+  const list = Array.isArray(c.schedules) ? c.schedules : [];
+  const prev = raw && raw.id ? list.find((x) => x.id === raw.id) : null;
+  const v = check(ScanRequestSchema, { targets: (raw && raw.targets) || [] });
+  if (!v.ok) return { ok: false, error: 'Bitte mindestens ein gültiges Ziel angeben (Webadresse, Ordner oder Host).' };
+  const webhook = String((raw && raw.webhook) || '').trim();
+  if (webhook && !schedule.validWebhook(webhook)) return { ok: false, error: 'Webhook: nur https-Adressen sind erlaubt.' };
+  // Vorab pruefen, damit der Plan nicht erst nachts an der Freigabe scheitert
+  const scope = enforceScope(v.data.targets.map((t) => ({ ...t, authorized: false })), c.allowlist, { interactive: false });
+  if (!scope.ok) return { ok: false, error: scope.errors.join(' ') };
+  if (!prev && list.length >= 20) return { ok: false, error: 'Höchstens 20 geplante Prüfungen.' };
+  const s = schedule.normalize({ ...raw, targets: v.data.targets }, prev);
+  if (webhook) s.webhookEnc = enc(webhook);
+  if (webhook && !s.webhookEnc) return { ok: false, error: 'Verschlüsselung nicht verfügbar – Webhook nicht gespeichert.' };
+  c.schedules = prev ? list.map((x) => (x.id === s.id ? s : x)) : [...list, s];
+  return { ok: saveConfig(c), id: s.id };
+});
+ipcMain.handle('schedules:delete', (_e, id) => { const c = loadConfig(); c.schedules = (c.schedules || []).filter((x) => x.id !== id); return { ok: saveConfig(c) }; });
+ipcMain.handle('schedules:run', (_e, id) => runSchedule(String(id)));
+ipcMain.handle('schedules:background', (_e, p) => { const c = loadConfig(); c.runInBackground = !!(p && p.runInBackground); c.startAtLogin = !!(p && p.startAtLogin); const ok = saveConfig(c); applyBackground(c); return { ok }; });
+
+// --- Greenbone (OpenVAS) und Zustand der aktiven Werkzeuge ---
+function greenboneFor(c) {
+  const g = c.greenbone || {};
+  return g.enabled && (g.setup || {}).state === 'ready' ? { enabled: true, user: 'admin', password: dec(g.passEnc || '') } : null;
+}
+// Automatische Einrichtung: laeuft im Hintergrund, Stand wird gespeichert und laesst sich fortsetzen
+const gbSetup = require('../src/core/greenbone-setup');
+let gbSetupRun = null;
+let gbSetupCtl = null;
+let gbStep = null;
+const gbChanged = () => { if (win && !win.isDestroyed()) win.webContents.send('greenbone:setup'); };
+function setGbSetup(patch) {
+  const c = loadConfig();
+  c.greenbone = { ...(c.greenbone || {}), setup: { ...((c.greenbone || {}).setup || {}), ...patch } };
+  saveConfig(c);
+  gbChanged();
+}
+function startGbSetup({ auto = false } = {}) {
+  if (gbSetupRun) return gbSetupRun;
+  const gb = require('../src/core/greenbone');
+  const c = loadConfig();
+  const de = c.lang === 'de';
+  gbSetupCtl = new AbortController();
+  setGbSetup({ state: 'running', error: null, at: new Date().toISOString() });
+  gbSetupRun = gbSetup.runSetup({
+    password: dec((c.greenbone || {}).passEnc || ''), auto, signal: gbSetupCtl.signal,
+    onStep: (s) => { gbStep = s; gbChanged(); },
+    onPassword: (pw) => { const n = loadConfig(); n.greenbone = { ...(n.greenbone || {}), user: 'admin', passEnc: enc(pw) }; saveConfig(n); },
+    deps: { checkReady: (pw) => gb.status(gb.createClient({ user: 'admin', password: pw, signal: gbSetupCtl.signal })) },
+  }).then((r) => {
+    if (gbSetupCtl.signal.aborted) return r; // Abbruch hat seinen Stand schon gesetzt
+    if (r.ok) {
+      const cur = loadConfig();
+      cur.greenbone = { ...(cur.greenbone || {}), enabled: true, setup: { state: 'ready', error: null, at: new Date().toISOString() } };
+      saveConfig(cur);
+      notify(de ? 'Greenbone ist bereit' : 'Greenbone is ready', de ? 'Es läuft ab jetzt bei Prüfungen freigegebener Server mit und belegt dazwischen keinen Arbeitsspeicher.' : 'From now on it runs during checks of approved servers and uses no memory in between.', focusWindow);
+    } else {
+      setGbSetup({ state: r.state, error: r.error, at: new Date().toISOString() });
+      if (!auto || r.state !== 'needs_wsl') notify(de ? 'Greenbone: Einrichtung nicht abgeschlossen' : 'Greenbone: setup not finished', r.error || '', focusWindow);
+    }
+    return r;
+  }).catch((e) => { setGbSetup({ state: 'error', error: e.message }); return { ok: false, error: e.message }; })
+    .finally(() => { gbSetupRun = null; gbSetupCtl = null; gbStep = null; gbChanged(); });
+  return gbSetupRun;
+}
+// Beim Start nur fortsetzen, was der Nutzer begonnen hat. Gefragt wird im Fenster (greenbone:get -> needsAnswer).
+function resumeGbSetup() {
+  if (process.platform !== 'win32' || process.env.VIGIL_E2E_DATA) return;
+  if (((loadConfig().greenbone || {}).setup || {}).state === 'running') startGbSetup();
+}
+ipcMain.handle('greenbone:get', () => {
+  const g = loadConfig().greenbone || {};
+  const s = g.setup || {};
+  const state = gbSetupRun ? 'running' : s.state || null;
+  // Noch nie gefragt: einmal im Fenster fragen, wenn der Rechner die Mindestwerte erfuellt
+  const needsAnswer = !g.asked && !process.env.VIGIL_E2E_DATA && process.platform === 'win32' && state !== 'running' && state !== 'ready' && gbSetup.prerequisites().ok;
+  return { enabled: !!g.enabled, needsAnswer, steps: gbSetup.STEPS, setup: { state, error: s.error || null, startedAt: s.at || null, progress: gbSetupRun ? gbStep : null } };
+});
+ipcMain.handle('greenbone:answer', (_e, yes) => {
+  const c = loadConfig();
+  c.greenbone = { ...(c.greenbone || {}), asked: true };
+  saveConfig(c);
+  if (yes) startGbSetup(); else setGbSetup({ state: 'declined', error: null, at: new Date().toISOString() });
+  return { ok: true };
+});
+ipcMain.handle('greenbone:setEnabled', (_e, on) => {
+  const c = loadConfig();
+  if (on && ((c.greenbone || {}).setup || {}).state !== 'ready') return { ok: false, error: 'Greenbone ist noch nicht eingerichtet.' };
+  c.greenbone = { ...(c.greenbone || {}), enabled: !!on };
+  return { ok: saveConfig(c) };
+});
+ipcMain.handle('greenbone:setupRun', () => { const c = loadConfig(); c.greenbone = { ...(c.greenbone || {}), asked: true }; saveConfig(c); startGbSetup(); return { ok: true }; });
+ipcMain.handle('greenbone:setupCancel', () => { if (gbSetupCtl) gbSetupCtl.abort(); setGbSetup({ state: 'declined', error: null, at: new Date().toISOString() }); return { ok: true }; });
+ipcMain.handle('greenbone:remove', async () => {
+  if (gbSetupCtl) gbSetupCtl.abort();
+  if (gbSetupRun) await gbSetupRun.catch(() => {});
+  const r = await gbSetup.removeSetup();
+  if (!r.ok) return r;
+  const c = loadConfig();
+  c.greenbone = { enabled: false, asked: true, setup: { state: 'declined', error: null, at: new Date().toISOString() } };
+  saveConfig(c);
+  gbChanged();
+  return { ok: true };
+});
+ipcMain.handle('greenbone:test', async () => {
+  const g = loadConfig().greenbone || {};
+  if ((g.setup || {}).state !== 'ready') return { ok: false, error: 'Greenbone ist noch nicht eingerichtet.' };
+  const gb = require('../src/core/greenbone');
+  const session = await gbSetup.startSession();
+  if (!session.ok) return { ok: false, error: session.error };
+  try {
+    const call = gb.createClient({ user: 'admin', password: dec(g.passEnc || '') });
+    // Direkt nach dem Start ist gvmd noch nicht bereit: ein paar Minuten Zeit geben
+    for (let i = 0; ; i++) {
+      try { return await gb.status(call); } catch (e) { if (i >= 20) throw e; await new Promise((r) => setTimeout(r, 15000)); }
+    }
+  } catch (e) { return { ok: false, error: e.message }; } finally { await session.stop().catch(() => {}); }
+});
+// Werkzeuge automatisch aktualisieren (hoechstens einmal am Tag, nie waehrend einer Pruefung)
+const TOOL_STATE = () => path.join(app.getPath('userData'), 'tools-update.json');
+let toolUpdating = null;
+function runToolUpdates(force = false) {
+  if (toolUpdating) return toolUpdating;
+  const c = loadConfig();
+  if (!force && c.toolAutoUpdate === false) return Promise.resolve({ skipped: true });
+  if (orchestrator && orchestrator.isBusy()) return Promise.resolve({ skipped: true, busy: true });
+  const up = require('../src/core/toolupdate');
+  const de = c.lang === 'de';
+  toolUpdating = up.runAll({
+    stateFile: TOOL_STATE(), paths: require('../src/core/tools').toolPaths(), appDir: app.isPackaged ? null : app.getAppPath(), run: gbSetup.runCmd, force,
+    onNmapPrompt: (v) => notify(de ? 'nmap wird aktualisiert' : 'Updating nmap', de ? `Windows fragt gleich einmal nach Administratorrechten, um Version ${v} zu installieren.` : `Windows will ask for administrator rights once to install version ${v}.`, focusWindow),
+    onDone: (st) => {
+      const list = st.results || [];
+      const bad = list.filter((r) => r.status === 'rolled-back' || r.status === 'failed');
+      if (bad.length) notify(de ? 'Vigil: Werkzeug nicht aktualisiert' : 'Vigil: tool not updated', bad.map((r) => r.id).join(', '), focusWindow);
+      if (list.some((r) => r.restart)) notify(de ? 'Neue Vigil-Version geladen' : 'New Vigil version downloaded', de ? 'Sie ist beim nächsten Start aktiv.' : 'It becomes active at the next start.', focusWindow);
+    },
+  }).catch((e) => ({ error: e.message })).finally(() => { toolUpdating = null; if (win && !win.isDestroyed()) win.webContents.send('tools:updated'); });
+  if (win && !win.isDestroyed()) win.webContents.send('tools:updated');
+  return toolUpdating;
+}
+ipcMain.handle('tools:updateInfo', () => { const st = require('../src/core/toolupdate').readState(TOOL_STATE()); return { enabled: loadConfig().toolAutoUpdate !== false, running: !!toolUpdating, lastCheck: st.lastCheck || null, results: st.results || [] }; });
+ipcMain.handle('tools:updateSet', (_e, on) => { const c = loadConfig(); c.toolAutoUpdate = !!on; return { ok: saveConfig(c) }; });
+ipcMain.handle('tools:updateNow', () => { runToolUpdates(true); return { ok: true }; });
+ipcMain.handle('tools:health', async () => { try { return await require('../src/core/tools').toolHealth(); } catch { return []; } });
+
 // --- Wechseldatentraeger: auf Wunsch nach dem Einstecken pruefen (Standard AUS) ---
 let usbWatcher = null;
 function applyUsbWatch(cfg) {
@@ -164,7 +409,7 @@ function applyUsbWatch(cfg) {
 function syncIntelInBackground(force = false) {
   if (intelSyncing) return intelSyncing;
   if (!force && intel && !needsSync(intel)) return Promise.resolve({ ok: true, skipped: true });
-  intelSyncing = syncIntel(INTEL_PATH()).then((r) => { intel = loadIntel(INTEL_PATH()); return r; })
+  intelSyncing = syncIntel(INTEL_PATH()).then((r) => { intel = readIntelMeta(INTEL_PATH()); return r; })
     .catch((e) => ({ ok: false, error: e.message })).finally(() => { intelSyncing = null; });
   return intelSyncing;
 }
@@ -495,6 +740,7 @@ function hardenSessions() {
 
 function createWindow() {
   win = new BrowserWindow({
+    show: !process.argv.includes('--background'),
     width: 1180,
     height: 820,
     minWidth: 900,
@@ -515,6 +761,13 @@ function createWindow() {
     },
   });
   win.setMenuBarVisibility(false);
+  // Geplante Pruefungen: Schliessen versteckt nur, wenn der Nutzer das eingestellt hat
+  win.on('close', (e) => {
+    if (appQuitting || process.env.VIGIL_E2E_SCRIPT || !loadConfig().runInBackground) return;
+    e.preventDefault();
+    win.hide();
+    ensureTray();
+  });
   // Das App-Fenster navigiert nie weg und oeffnet keine Fenster – Links laufen ueber link:open.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
@@ -567,6 +820,7 @@ if (!gotLock) app.quit();
 app.on('second-instance', () => {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
+  win.show();
   win.focus();
 });
 
@@ -582,20 +836,23 @@ app.whenReady().then(() => {
     runAudit,
     buildConfig: (providerId) => {
       const c = loadConfig(); applyProxySafe(c);
-      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel, domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), webCrawl: c.webCrawl !== false, allowlist: c.allowlist || [], malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4, secretLiveCheck: c.secretLiveCheck === true, yara: { rulesDir: YARA_DIR() }, osvOffline: c.osvOffline ? osvOffline.createOfflineQuery(OSV_DIR()) : null, systemSettings: systemSettingsFor(c) };
+      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel: loadIntel(INTEL_PATH()), domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), greenbone: greenboneFor(c), webCrawl: c.webCrawl !== false, allowlist: c.allowlist || [], malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4, secretLiveCheck: c.secretLiveCheck === true, yara: { rulesDir: YARA_DIR() }, osvOffline: c.osvOffline ? osvOffline.createOfflineQuery(OSV_DIR()) : null, systemSettings: systemSettingsFor(c) };
     },
   });
   // Browser-Erweiterung: Adresse nur vormerken – das Fenster fragt nach, bevor sie in die Pruefliste kommt
   api = createApi({ orchestrator, getConfig: loadConfig, enforceScope, onInbox: (url) => { try { if (win && !win.isDestroyed()) { win.webContents.send('inbox:url', url); if (win.isMinimized()) win.restore(); win.focus(); } } catch { /* Fenster weg */ } } });
   applyApi(cfg);
-  intel = loadIntel(INTEL_PATH());
+  intel = readIntelMeta(INTEL_PATH());
   // Nach der Feed-Aktualisierung: neue CVEs fuer gespeicherte SBOMs, BSI-Hinweise, CT-Logs, OSV-Vorrat
-  const background = () => { syncIntelInBackground(); syncFeedsInBackground().then(() => (process.env.VIGIL_E2E_DATA ? null : syncOsvOffline().then(runWatch))).catch(() => {}); };
+  const background = () => { syncIntelInBackground(); syncFeedsInBackground().then(() => (process.env.VIGIL_E2E_DATA ? null : syncOsvOffline().then(runWatch))).then(() => (process.env.VIGIL_E2E_DATA ? null : runToolUpdates())).catch(() => {}); };
   setTimeout(background, 5000); // nach dem Start, ohne ihn zu bremsen
   setInterval(background, 6 * 60 * 60 * 1000);
   applyUsbWatch(cfg);
+  applyBackground(cfg);
+  if (!process.env.VIGIL_E2E_DATA) { setTimeout(scheduleTick, 30000); setInterval(scheduleTick, 60000); }
   createWindow();
   win.webContents.once('did-finish-load', updateOverlay);
+  win.webContents.once('did-finish-load', () => setTimeout(resumeGbSetup, 3000));
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
@@ -608,14 +865,14 @@ ipcMain.handle('meta:providers', () => {
 });
 
 // Der Passwort-Hash der App-Sperre verlaesst den Main-Prozess nie
-ipcMain.handle('config:get', () => { const c = loadConfig(); if (c.appLock) c.appLock = { enabled: !!c.appLock.enabled, idleMinutes: c.appLock.idleMinutes }; return c; });
+ipcMain.handle('config:get', () => { const c = loadConfig(); delete c.schedules; delete c.greenbone; if (c.appLock) c.appLock = { enabled: !!c.appLock.enabled, idleMinutes: c.appLock.idleMinutes }; return c; });
 ipcMain.handle('config:save', async (_e, cfg) => {
   const prev = loadConfig();
   // Geheimnisse setzt nur der Main-Prozess ueber eigene Handler (Testkonto, API-Rechtematrix,
   // MalwareBazaar-Schluessel, API-Token). Die Kopie im Fenster kann veraltet sein – immer die
   // gespeicherte Fassung behalten, sonst wuerde "Speichern" frisch eingetragene Zugaenge loeschen.
   cfg.allowlist = normalizeAllowlist(cfg.allowlist);
-  for (const k of ['apiToken', 'webLogins', 'apiMatrix', 'malwareBazaarKeyEnc', 'appLock', 'systemsCfg', 'signingKeyEnc', 'signingPub']) { if (prev[k] !== undefined) cfg[k] = prev[k]; else delete cfg[k]; }
+  for (const k of ['apiToken', 'webLogins', 'apiMatrix', 'malwareBazaarKeyEnc', 'appLock', 'systemsCfg', 'signingKeyEnc', 'signingPub', 'schedules', 'greenbone', 'runInBackground', 'startAtLogin', 'toolAutoUpdate']) { if (prev[k] !== undefined) cfg[k] = prev[k]; else delete cfg[k]; }
   const ok = saveConfig(cfg);
   applyProxySafe(cfg);
   if (prev.apiEnabled !== !!cfg.apiEnabled || prev.apiPort !== cfg.apiPort) await applyApi(loadConfig());

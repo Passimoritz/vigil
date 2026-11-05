@@ -522,6 +522,299 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('remedy: Wissensbasis deckt alle Modul-Regeln ab', unknown.length === 0);
   }
 
+  console.log('Support-Enden, Linux-Pakete, Werkzeuge, Pläne, Greenbone:');
+  {
+    const eol = require('../src/core/eol');
+    const feeds = require('../src/core/feeds');
+    const R = require('../src/core/systems/remote');
+    const bundled = require('../src/core/bundled');
+    const sample = { postgresql: [{ cycle: '12', eolFrom: '2024-11-14' }, { cycle: '17', eolFrom: '2029-11-08' }], mariadb: [{ cycle: '10', eolFrom: '2020-01-01' }, { cycle: '10.11', eolFrom: '2028-02-16' }], ubuntu: [{ cycle: '18.04', eolFrom: '2023-05-31' }, { cycle: '24.04', eolFrom: '2029-05-31' }], openssl: [{ cycle: '3.0', eolFrom: '2030-01-01' }] };
+    const full = { result: eol.PRODUCTS.slice(0, 9).map((name) => ({ name, releases: [{ name: '1', eolFrom: '2020-01-01', isEol: true, latest: { name: '1.2' } }] })).concat({ name: 'unwichtig', releases: [{ name: '1' }] }) };
+    const parsed = eol.parseFull(JSON.stringify(full));
+    check('eol: nur benötigte Produkte, Form geprüft', Object.keys(parsed).length === 9 && !parsed.unwichtig && parsed.postgresql[0].latest === '1.2');
+    let bad = false; try { eol.parseFull('{"result":[]}'); } catch { bad = true; }
+    check('eol: unbrauchbare Antwort wird abgelehnt', bad);
+    check('eol: längste Versionsreihe, Datum entscheidet, unbekannt = null', eol.status('mariadb', '10.11.6', { data: sample }).cycle === '10.11' && !eol.status('mariadb', '10.11.6', { data: sample }).isEol && eol.status('postgresql', '12.3', { data: sample }).isEol && eol.status('postgresql', '99.1', { data: sample }) === null && eol.status('postgresql', '12.3', { data: null }) === null);
+    check('eol: Feed aus erlaubter Quelle', feeds.FEEDS.some((f) => f.id === 'endoflife' && f.urls.every((u) => feeds.ALLOWED.some((a) => u.startsWith(a)))));
+    const dbC = { kind: 'postgres', label: 'db', host: 'localhost' };
+    const hasEol = (v) => R.assessDb(dbC, { version: v }).some((f) => f.ruleId === 'db-version-eol');
+    eol.use(null);
+    check('db: ohne Feed gilt die eingebaute Tabelle', hasEol('12.3') && !hasEol('17.1'));
+    eol.use(sample);
+    check('db: Feed entscheidet und nennt die Quelle', hasEol('12.3') && !hasEol('17.1') && /endoflife\.date/.test(R.assessDb(dbC, { version: '12.3' }).find((f) => f.ruleId === 'db-version-eol').description));
+    check('bundled: Feed überstimmt die Tabelle', !bundled.bundledFindings([{ lib: 'openssl', version: '3.0.15' }], 'x', { now: Date.parse('2026-11-05') }).length);
+    eol.use({});
+    check('bundled: ohne passende Reihe gilt die Tabelle', bundled.bundledFindings([{ lib: 'openssl', version: '3.0.15' }], 'x', { now: Date.parse('2026-11-05') }).length === 1);
+    eol.use(sample);
+    const sshPk = ['@@os', 'PRETTY_NAME="Ubuntu 18.04 LTS"', 'ID=ubuntu', 'VERSION_ID="18.04"', '@@pkgs', 'openssl\t1.1.1-1ubuntu2', 'kaputt; rm -rf\t1', 'bash\t4.4', '@@end'].join('\n');
+    check('linux: Betriebssystem ohne Support wird gemeldet', R.parseLinux(sshPk, 'h').some((f) => f.ruleId === 'linux-os-eol' && f.severity === 'high'));
+    eol.use(null);
+    const pk = R.packagesOf(sshPk);
+    check('linux: Pakete gelesen, unsaubere Zeilen verworfen, Bestand richtig', pk.ecosystem === 'Ubuntu:18.04:LTS' && pk.pkgs.length === 2 && pk.pkgs[0].name === 'openssl');
+    check('linux: OSV-Bestände', R.osvEcosystem({ id: 'debian', version: '12' }) === 'Debian:12' && R.osvEcosystem({ id: 'ubuntu', version: '23.10' }) === 'Ubuntu:23.10' && R.osvEcosystem({ id: 'rocky', version: '9.3' }) === 'Rocky Linux:9' && R.osvEcosystem({ id: 'arch', version: '1' }) === null);
+    check('ssh: Paket-Abfrage ist Teil des festen Skripts', /dpkg-query -W/.test(R.SSH_SCRIPT) && /rpm -qa/.test(R.SSH_SCRIPT));
+    const osvCalls = [];
+    const pa = await R.auditPackages('h', pk, { say: () => {}, osvQuery: async (p) => { osvCalls.push(...p); return new Map([['Ubuntu:18.04:LTS|openssl|1.1.1-1ubuntu2', [{ id: 'A' }, { id: 'B' }]], ['Ubuntu:18.04:LTS|bash|4.4', [{ id: 'C' }]]]); }, osvDetails: async (id) => ({ A: { affected: [{ package: { name: 'openssl', ecosystem: 'Ubuntu:18.04:LTS' }, database_specific: { severity: 'high' }, ranges: [{ events: [{ introduced: '0' }, { fixed: '2' }] }] }] }, B: { affected: [{ package: { name: 'openssl', ecosystem: 'Ubuntu:18.04:LTS' }, ranges: [{ events: [{ introduced: '0' }] }] }] }, C: { affected: [{ package: { name: 'bash', ecosystem: 'Ubuntu:18.04:LTS' }, ranges: [{ events: [{ introduced: '0' }] }] }] } }[id]) });
+    const paF = pa.findings.find((f) => f.ruleId === 'linux-pkg-cve-openssl');
+    check('linux: eigener Befund nur mit verfügbarem Update, Schwere aus OSV', paF && paF.severity === 'high' && /\bA\b/.test(paF.description) && !/\bB\b/.test(paF.evidence) && !pa.findings.some((f) => f.ruleId === 'linux-pkg-cve-bash'));
+    check('linux: Zusammenfassung zählt alles, nur Name und Version gehen raus', /2 von 2 Paketen/.test(pa.findings.find((f) => f.ruleId === 'linux-pkg-cves-summary').title) && Object.keys(osvCalls[0]).sort().join() === 'ecosystem,name,version');
+    const multi = { severity: [{ type: 'CVSS_V3', score: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L' }, { type: 'Ubuntu', score: 'low' }], affected: [{ package: { name: 'openssl', ecosystem: 'Ubuntu:Pro:16.04:LTS' }, ranges: [{ events: [{ introduced: '0' }, { fixed: '1' }] }] }, { package: { name: 'openssl', ecosystem: 'Ubuntu:22.04:LTS' }, ranges: [{ events: [{ introduced: '0' }] }] }] };
+    check('linux: Update einer anderen Distribution zählt nicht, Bewertung der Distribution zuerst', !R.judgeVuln(multi, 'openssl', 'Ubuntu:22.04:LTS').fixed && R.judgeVuln(multi, 'openssl', 'Ubuntu:Pro:16.04:LTS').fixed && R.judgeVuln(multi, 'openssl', 'Ubuntu:22.04:LTS').sev === 'low');
+    const debianV = { severity: [{ type: 'CVSS_V3', score: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H' }], affected: [{ package: { name: 'openssl', ecosystem: 'Debian:12' }, ecosystem_specific: { urgency: 'not yet assigned' }, ranges: [{ events: [{ introduced: '0' }, { fixed: '2' }] }] }] };
+    check('linux: ohne Bewertung entscheidet der CVSS-Wert', R.judgeVuln(debianV, 'openssl', 'Debian:12').sev === 'critical');
+    const noDetail = await R.auditPackages('h', pk, { say: () => {}, osvQuery: async () => new Map(), osvDetails: async () => null });
+    check('linux: keine Treffer -> kein Befund', !noDetail.findings.length);
+
+    // Werkzeuge
+    const { toolHealth, verLess } = require('../src/core/tools');
+    const toolRun = (nm, nu) => async (cmd, args) => (args[0] === '--version' ? nm : nu);
+    const ok1 = { ok: true, stdout: 'Nmap version 7.95 ( https://nmap.org )', stderr: '' };
+    const nuOk = { ok: true, stdout: '', stderr: 'Nuclei Engine Version: v3.11.1' };
+    const now = Date.parse('2026-11-05');
+    const good = await toolHealth({ run: toolRun(ok1, nuOk), templates: () => ({ enough: true, count: 500, dir: 'x', updatedAt: now - 86400000 }), now });
+    check('werkzeuge: aktuell -> ok', good.every((h) => h.state === 'ok') && verLess('7.80', '7.90') && !verLess('7.100', '7.90'));
+    const worn = await toolHealth({ run: toolRun({ ok: true, stdout: 'Nmap version 7.80 ( https://nmap.org )' }, nuOk), templates: () => ({ enough: false, count: 2, dir: 'x', updatedAt: now }), now });
+    check('werkzeuge: altes nmap und zu wenige Vorlagen werden benannt', worn[0].state === 'old' && worn[1].state === 'empty' && /Vorlagen/.test(worn[1].detail));
+    const stale = await toolHealth({ run: toolRun(ok1, nuOk), templates: () => ({ enough: true, count: 500, dir: 'x', updatedAt: now - 40 * 86400000 }), now });
+    const gone = await toolHealth({ run: async () => ({ ok: false, stdout: '', stderr: '' }), templates: () => ({ enough: false, count: 0 }), now });
+    check('werkzeuge: alte Vorlagen und fehlende Programme', stale[1].state === 'old' && gone.every((h) => h.state === 'missing'));
+
+    // Pläne
+    const sch = require('../src/core/schedule');
+    const at = (s) => new Date(s).getTime();
+    const daily = sch.normalize({ time: '03:00', freq: 'daily', targets: [{ type: 'url', value: 'https://a' }] });
+    check('plan: unsaubere Werte werden ersetzt', sch.normalize({ time: 'x', freq: 'y', minSeverity: 'z', weekday: 9 }).time === '03:00' && sch.normalize({ freq: 'y' }).freq === 'daily' && sch.normalize({ minSeverity: 'z' }).minSeverity === 'high' && sch.normalize({ weekday: 9 }).weekday === 1);
+    check('plan: täglich vor und nach der Uhrzeit', sch.nextRun(daily, at('2026-11-05T01:00:00')) === at('2026-11-05T03:00:00') && sch.nextRun(daily, at('2026-11-05T03:00:00')) === at('2026-11-06T03:00:00'));
+    const weekly = { ...daily, freq: 'weekly', weekday: 1 };
+    check('plan: wöchentlich auf den richtigen Tag', new Date(sch.nextRun(weekly, at('2026-11-05T12:00:00'))).getDay() === 1 && sch.nextRun(weekly, at('2026-11-09T03:00:00')) === at('2026-11-16T03:00:00'));
+    const pending = { ...daily, createdAt: '2026-11-01T10:00:00', lastRun: '2026-11-02T03:00:00' };
+    check('plan: verpasster Lauf wird nachgeholt, dann erst wieder geplant', sch.isDue(pending, at('2026-11-05T09:00:00')) && !sch.isDue({ ...pending, lastRun: '2026-11-05T09:00:00' }, at('2026-11-05T10:00:00')));
+    check('plan: pausiert oder ohne Ziele nie fällig', !sch.isDue({ ...pending, enabled: false }, at('2026-11-05T09:00:00')) && !sch.isDue({ ...pending, targets: [] }, at('2026-11-05T09:00:00')));
+    const alertsIn = { findings: [{ isNew: true, severity: 'critical', title: 'A' }, { isNew: true, severity: 'low', title: 'B' }, { isNew: false, severity: 'critical', title: 'C' }, { isNew: true, severity: 'high', suppressed: true, title: 'D' }, { isNew: true, severity: 'info', title: 'E' }] };
+    check('plan: gemeldet wird nur Neues und Offenes ab der Schwelle', sch.alertsOf(alertsIn, 'high').map((f) => f.title).join() === 'A' && sch.alertsOf(alertsIn, 'low').map((f) => f.title).join() === 'A,B');
+    check('plan: Webhook nur https, ohne Zugangsdaten in der Adresse', sch.validWebhook('https://hooks.slack.com/x') && !sch.validWebhook('http://a/x') && !sch.validWebhook('https://u:p@a/x') && !sch.validWebhook('nix'));
+    const al = [{ severity: 'high', title: 'T', location: 'L', evidence: 'GEHEIM', description: 'GEHEIM' }];
+    const slack = sch.webhookPayload('https://hooks.slack.com/x', { name: 'N', alerts: al }), disc = sch.webhookPayload('https://discord.com/api/webhooks/x', { name: 'N', alerts: al }), gen = sch.webhookPayload('https://example.com/x', { name: 'N', alerts: al });
+    check('plan: Format je Empfänger, keine Belege im Webhook', typeof slack.text === 'string' && typeof disc.content === 'string' && gen.findings[0].title === 'T' && ![slack, disc, gen].some((p) => /GEHEIM/.test(JSON.stringify(p))));
+    let sent = null;
+    const hookOk = await sch.sendWebhook('https://example.com/x', { a: 1 }, { fetchImpl: async (u, o) => { sent = o; return { ok: true, status: 200 }; } });
+    const hook500 = await sch.sendWebhook('https://example.com/x', {}, { fetchImpl: async () => ({ ok: false, status: 500 }) });
+    const hookHttp = await sch.sendWebhook('http://example.com/x', {}, { fetchImpl: async () => { throw new Error('darf nicht'); } });
+    check('plan: Webhook folgt keiner Weiterleitung, Fehler werden gemeldet', hookOk.ok && sent.redirect === 'error' && !hook500.ok && /500/.test(hook500.error) && !hookHttp.ok);
+
+    // Greenbone: simulierter Server hinter dem Docker-Aufruf
+    const gb = require('../src/core/greenbone');
+    const makeServer = (opts = {}) => {
+      const log = [], argv = [];
+      let polls = 0, cfgFamilies = opts.cleanFromStart ? '' : '<family><name>Brute force attacks</name><nvt_count>5</nvt_count></family><family><name>Default Accounts</name><nvt_count>5</nvt_count></family>';
+      const fam = () => `<get_configs_response status="200"><config id="cfg1"><name>Vigil schonend</name><families>${cfgFamilies}<family><name>Web Servers</name><nvt_count>9</nvt_count></family></families></config></get_configs_response>`;
+      const exec = async (args, { input }) => {
+        argv.push(args);
+        const nl = input.indexOf('\n');
+        const xml = input.slice(nl + 1).trim();
+        log.push(xml);
+        const reply = (x) => ({ ok: true, code: 0, stdout: x, stderr: '' });
+        if (/^<get_version/.test(xml)) return reply('<get_version_response status="200"><version>22.7</version></get_version_response>');
+        if (/^<get_feeds/.test(xml)) return reply(`<get_feeds_response status="200"><feed><type>NVT</type><version>2026</version>${opts.syncing ? '<currently_syncing/>' : ''}</feed></get_feeds_response>`);
+        if (/^<get_nvt_families/.test(xml)) return reply('<r status="200"><families><family><name>a</name><max_nvt_count>120000</max_nvt_count></family></families></r>');
+        if (/^<get_configs filter/.test(xml)) return reply('<get_configs_response status="200"></get_configs_response>');
+        if (/^<create_config/.test(xml)) return reply('<create_config_response status="201" id="cfg1"/>');
+        if (/^<get_configs config_id/.test(xml)) return reply(fam());
+        if (/^<modify_config.*family_selection/.test(xml)) { if (!opts.refuseModify) cfgFamilies = ''; return reply('<modify_config_response status="200"/>'); }
+        if (/^<modify_config/.test(xml)) return reply('<modify_config_response status="200"/>');
+        if (/^<get_targets/.test(xml)) return reply('<get_targets_response status="200"></get_targets_response>');
+        if (/^<create_target/.test(xml)) return reply('<create_target_response status="201" id="t1"/>');
+        if (/^<get_tasks filter/.test(xml)) return reply('<get_tasks_response status="200"></get_tasks_response>');
+        if (/^<create_task/.test(xml)) return reply('<create_task_response status="201" id="task1"/>');
+        if (/^<start_task/.test(xml)) return reply('<start_task_response status="202"><report_id>rep1</report_id></start_task_response>');
+        if (/^<stop_task/.test(xml)) return reply('<stop_task_response status="202"/>');
+        if (/^<get_tasks task_id/.test(xml)) { polls++; return reply(`<get_tasks_response status="200"><task id="task1"><status>${polls < 2 ? 'Running' : 'Done'}</status><progress>${polls < 2 ? 40 : 100}</progress></task></get_tasks_response>`); }
+        if (/^<get_reports/.test(xml)) return reply(`<get_reports_response status="200"><report id="rep1"><report><results>
+          <result id="r1"><name>OpenSSH &lt; 9.8 RCE</name><port>22/tcp</port><severity>8.1</severity><qod><value>80</value></qod><description>installed 9.0</description><detection><result id="x"><details/></result></detection>
+            <nvt oid="1.3.6.1.1"><name>OpenSSH</name><tags>summary=OpenSSH is outdated|impact=Remote code execution|solution=Update OpenSSH</tags><refs><ref type="cve" id="CVE-2024-6387"/><ref type="url" id="https://x"/></refs></nvt></result>
+          <result id="r2"><name>Nur ein Protokolleintrag</name><port>general/tcp</port><severity>0.0</severity><qod><value>80</value></qod><nvt oid="1.3.6.1.2"><name>Log</name><tags/></nvt></result>
+        </results></report></report></get_reports_response>`);
+        return { ok: false, code: 1, stdout: '', stderr: 'unbekannt: ' + xml };
+      };
+      return { exec, log, argv, call: gb.createClient({ composeFile: 'C:/g/compose.yaml', user: 'admin', password: 'GEHEIMES-PW', exec }) };
+    };
+    const srv = makeServer();
+    const prog = [];
+    const gr = await gb.scanHost('scan.example', srv.call, { pollMs: 1, onProgress: (p) => prog.push(p) });
+    const gf = gr.findings[0];
+    check('greenbone: Scan läuft durch und liefert Befunde', gr.ran && gr.findings.length === 1 && gf.severity === 'high' && gf.source === 'greenbone' && /CVE-2024-6387/.test(gf.title) && gf.location === 'scan.example:22' && gf.remediation === 'Update OpenSSH');
+    check('greenbone: Protokolleinträge sind keine Befunde, Fortschritt wird gemeldet', !gr.findings.some((f) => /Protokoll/.test(f.title)) && prog.some((p) => p.done === 40));
+    check('greenbone: Passwort nie in der Befehlszeile, nur die eigene WSL-Umgebung', !srv.argv.flat().some((a) => /GEHEIMES-PW/.test(a)) && srv.argv[0].includes('vigil-gvm') && srv.argv[0].includes('/opt/vigil/gmp.sh'));
+    const selection = srv.log.find((x) => /family_selection/.test(x));
+    check('greenbone: Rateversuche, Standard-Zugänge und DoS ausgeschlossen', selection && !gb.BANNED_FAMILIES.some((f) => selection.includes(f)) && selection.includes('Web Servers'));
+    check('greenbone: Aufgabe nutzt die schonende Konfiguration', /<create_task>.*<config id="cfg1"\/>/.test(srv.log.find((x) => /^<create_task/.test(x)) || ''));
+    const refuse = makeServer({ refuseModify: true });
+    let refused = '';
+    try { await gb.scanHost('scan.example', refuse.call, { pollMs: 1 }); } catch (e) { refused = e.message; }
+    check('greenbone: lässt sich die Konfiguration nicht säubern, startet KEIN Scan', /nicht gestartet/.test(refused) && !refuse.log.some((x) => /^<start_task/.test(x)));
+    const busy = makeServer({ syncing: true });
+    const br = await gb.scanHost('scan.example', busy.call, { pollMs: 1 });
+    check('greenbone: während des Feed-Abgleichs kein Scan', !br.ran && !busy.log.some((x) => /^<start_task/.test(x)));
+    const ac = new AbortController();
+    const stopSrv = makeServer();
+    const stopCall = async (x, o) => { if (/^<start_task/.test(x)) ac.abort(); return stopSrv.call(x, o); };
+    const sr = await gb.scanHost('scan.example', stopCall, { pollMs: 1, signal: ac.signal });
+    check('greenbone: Abbruch stoppt die Aufgabe im Scanner', !sr.ran && stopSrv.log.some((x) => /^<stop_task/.test(x)));
+    const inj = await gb.scanHost('a"><x', makeServer().call, { pollMs: 1 });
+    check('greenbone: ungültiger Host wird nicht verwendet', !inj.ran && /ungültig/.test(inj.notes[0]));
+    let throwsUser = false; try { gb.createClient({ user: 'a b' }); } catch { throwsUser = true; }
+    let throwsPw = false; try { gb.createClient({ password: 'a\nb' }); } catch { throwsPw = true; }
+    check('greenbone: unsaubere Zugangsdaten abgelehnt', throwsUser && throwsPw);
+    const noDocker = gb.createClient({ exec: async () => ({ ok: false, code: -1, stdout: '', stderr: 'WSL ist nicht verfügbar.' }) });
+    let dockerErr = ''; try { await noDocker('<get_version/>'); } catch (e) { dockerErr = e.message; }
+    check('greenbone: fehlendes WSL wird verständlich gemeldet', /WSL ist nicht verfügbar/.test(dockerErr));
+    const denied = gb.createClient({ exec: async () => ({ ok: true, code: 0, stdout: '<r status="400" status_text="Bogus"/>', stderr: '' }) });
+    let deniedErr = ''; try { await denied('<x/>'); } catch (e) { deniedErr = e.message; }
+    const xmlTree = gb.parseXml('<!DOCTYPE a [<!ENTITY e "BOOM">]><a x="1 &amp; 2"><b>&e; &lt;ok&gt; &#65;</b><c/></a>');
+    check('greenbone: Fehlerantwort und sicherer XML-Leser', /Bogus/.test(deniedErr) && !JSON.stringify(xmlTree).includes('BOOM'));
+    const st = await gb.status(makeServer().call);
+    check('greenbone: Verbindungstest nennt Version und Anzahl der Tests', st.ok && st.version === '22.7' && st.nvts === 120000 && !st.syncing);
+
+    // Automatische Einrichtung ohne Docker Desktop
+    const setup = require('../src/core/greenbone-setup');
+    const compose = 'name: greenbone-community-edition\nservices:\n  gvmd:\n    image: x\n  gvm-tools:\n    image: y\n';
+    const fakeSetup = (o = {}) => {
+      const log = []; let exists = !!o.distro; let released = 0;
+      const deps = {
+        prereq: () => ({ ok: true }), keepAlive: () => () => { released++; }, sleep: async () => {}, waitMs: 5, pollMs: 1, syncWaitMs: o.syncWaitMs == null ? 50 : o.syncWaitMs,
+        fetchImpl: async () => ({ ok: true, status: 200, text: async () => (o.badCompose ? 'name: etwas-anderes' : compose) }),
+        run: async (cmd, args, opt = {}) => {
+          log.push({ cmd, args, input: opt.input });
+          const ok = (stdout = '') => ({ ok: true, code: 0, stdout, stderr: '' });
+          if (args[0] === '--status') return o.noWsl ? { ok: false, code: 1, stdout: '', stderr: 'x' } : ok();
+          if (args[0] === '-l') return ok(exists ? 'drei-d\nvigil-gvm\n' : 'drei-d\n');
+          if (args[0] === '--install') { exists = true; return ok(); }
+          if (/ pull -q/.test(opt.input || '') && o.pullFails) return { ok: false, code: 1, stdout: '', stderr: 'kein Netz' };
+          return ok();
+        },
+      };
+      return { log, deps, released: () => released };
+    };
+    const ready = (o = {}) => async () => ({ ok: true, syncing: !!o.syncing, nvts: o.nvts == null ? 120000 : o.nvts });
+    const fs1 = fakeSetup();
+    let savedPw = null;
+    const sr1 = await setup.runSetup({ onPassword: (p) => { savedPw = p; }, deps: { ...fs1.deps, checkReady: ready() } });
+    const wslArgs = fs1.log.map((x) => x.args.join(' '));
+    const inputs = fs1.log.map((x) => x.input || '').join('\n');
+    check('einrichtung: eigene Umgebung, Docker Engine, Greenbone, Passwort', sr1.ok && sr1.state === 'ready' && wslArgs.some((a) => a.startsWith('--install Ubuntu-24.04 --name vigil-gvm')) && /docker\.io docker-compose-v2/.test(inputs) && / pull -q/.test(inputs) && /up -d/.test(inputs) && savedPw.length >= 24);
+    check('einrichtung: nie Docker Desktop, nie andere WSL-Umgebungen', !wslArgs.some((a) => /winget|Docker Desktop|drei-d/.test(a)) && fs1.log.filter((x) => x.args.includes('--exec')).every((x) => x.args.includes('vigil-gvm')));
+    check('einrichtung: Passwort nur über stdin, nie in der Befehlszeile', !wslArgs.some((a) => a.includes(savedPw)) && fs1.log.some((x) => (x.input || '').trim() === savedPw));
+    check('einrichtung: beendet die Umgebung und gibt den Speicher frei', fs1.released() === 1 && wslArgs[wslArgs.length - 1] === '--terminate vigil-gvm');
+    const fs2 = fakeSetup({ distro: true });
+    let pw2 = null;
+    const sr2 = await setup.runSetup({ password: 'vorhanden', onPassword: (p) => { pw2 = p; }, deps: { ...fs2.deps, checkReady: ready() } });
+    check('einrichtung: vorhandene Umgebung und Passwort bleiben', sr2.ok && pw2 === null && !fs2.log.some((x) => x.args[0] === '--install'));
+    const sr3 = await setup.runSetup({ deps: fakeSetup({ noWsl: true }).deps });
+    check('einrichtung: fehlendes WSL wird nicht selbst installiert, sondern erklärt', !sr3.ok && sr3.state === 'needs_wsl' && /wsl --install/.test(sr3.error));
+    const fs4 = fakeSetup({ badCompose: true });
+    const sr4 = await setup.runSetup({ deps: fs4.deps });
+    check('einrichtung: fremde compose.yaml wird nicht benutzt', !sr4.ok && /nicht wie erwartet/.test(sr4.error) && !fs4.log.some((x) => / pull -q/.test(x.input || '')));
+    const sr5 = await setup.runSetup({ deps: fakeSetup({ pullFails: true }).deps });
+    check('einrichtung: Fehler werden verständlich gemeldet', !sr5.ok && /kein Netz/.test(sr5.error));
+    const fs6 = fakeSetup({ syncWaitMs: 0 });
+    const sr6 = await setup.runSetup({ onPassword: () => {}, deps: { ...fs6.deps, checkReady: ready({ syncing: true }) } });
+    check('einrichtung: noch nicht fertig geladene Tests zählen nicht als bereit, Speicher wird trotzdem frei', !sr6.ok && fs6.released() === 1);
+    check('einrichtung: Mindestwerte, automatisch nur mit Reserven', !setup.prerequisites({ platform: 'win32', totalMem: 2 * 2 ** 30, freeDisk: 100 * 2 ** 30 }).ok && !setup.prerequisites({ platform: 'win32', totalMem: 16 * 2 ** 30, freeDisk: 5 * 2 ** 30 }).ok && !setup.prerequisites({ platform: 'linux' }).ok && setup.prerequisites({ platform: 'win32', totalMem: 6 * 2 ** 30, freeDisk: 100 * 2 ** 30 }).ok && !setup.prerequisites({ platform: 'win32', totalMem: 6 * 2 ** 30, freeDisk: 100 * 2 ** 30, auto: true }).ok);
+    check('einrichtung: Paketzahl und Fortschritt', setup.countImages(compose) === 2 && setup.parseImageCount('12\nImages 8.424GB').done === 12 && setup.parseImageCount('12\nImages 8.424GB').size === '8,4 GB' && setup.parseImageCount('').done === null);
+    const fs9 = fakeSetup({ distro: true });
+    const steps9 = [];
+    await setup.runSetup({ password: 'x', onStep: (s) => steps9.push(s), deps: { ...fs9.deps, progressMs: 100000, checkReady: ready() } });
+    check('einrichtung: meldet jeden Schritt in der angezeigten Reihenfolge, Download mit Paketzahl', steps9.some((s) => s.step === 'pull' && s.total === 2 && s.done === 0) && steps9.map((s) => setup.STEPS.findIndex((x) => x.id === s.step)).every((n, i, a) => n >= 0 && (i === 0 || n >= a[i - 1])));
+    const fs7 = fakeSetup({ distro: true });
+    const sess = await setup.startSession({ deps: fs7.deps });
+    await sess.stop();
+    check('sitzung: startet Greenbone und beendet die Umgebung danach', sess.ok && /up -d/.test(fs7.log[0].input) && /-mmin -1440/.test(fs7.log[0].input) && fs7.released() === 1 && fs7.log[fs7.log.length - 1].args.join(' ') === '--terminate vigil-gvm');
+    const fs8 = fakeSetup({ distro: true });
+    check('entfernen: betrifft nur die eigene Umgebung', (await setup.removeSetup({ deps: fs8.deps })).ok && fs8.log[fs8.log.length - 1].args.join(' ') === '--unregister vigil-gvm');
+    let tries = 0;
+    const lateCall = async (x) => { if (/^<get_version/.test(x) && tries++ < 2) throw new Error('noch nicht bereit'); return makeServer().call(x); };
+    const late = await gb.status(await (async () => { for (;;) { try { await lateCall('<get_version/>'); return makeServer().call; } catch { /* nochmal */ } } })());
+    check('sitzung: spät erreichbarer Scanner wird abgewartet', late.ok && tries === 3);
+
+    // Automatische Updates der Werkzeuge
+    {
+      const up = require('../src/core/toolupdate');
+      const crypto = require('crypto'); const nfs = require('fs'); const npath = require('path');
+      check('updates: Versionen vergleichen', up.isNewer('3.11.2', '3.11.1') && !up.isNewer('3.11.1', '3.11.1') && up.isNewer('7.993', '7.80') && up.versionIn('[INF] Nuclei Engine Version: v3.11.1') === '3.11.1');
+      const h = 'a'.repeat(64);
+      check('updates: Prüfsumme in beiden Formaten, nur für genau diese Datei', up.checksumFor(`${h}  tool.zip\n${'b'.repeat(64)}  other.zip`, 'tool.zip') === h && up.checksumFor(`${h} *dist/tool.exe`, 'tool.exe') === h && up.checksumFor(`tool.exe ${h}`, 'tool.exe') === h && up.checksumFor(`${h}  andere.zip`, 'tool.zip') === null);
+      check('updates: Digest-Format von nmap', up.nmapDigest('x:\nSHA256 = 22E5928D 1738A1B9 4FFD3643 014F52CB 87D467DB EC4CFF9E 5F721FE0 B3782F1B\nx:\nSHA384 = E2863D7C') === '22e5928d1738a1b94ffd3643014f52cb87d467dbec4cff9e5f721fe0b3782f1b' && up.nmapDigest('nichts') === null);
+      const dir = nfs.mkdtempSync(npath.join(require('os').tmpdir(), 'vigil-up-test-'));
+      const exe = npath.join(dir, 'tool.exe');
+      const tool = { id: 'tool', repo: 'x/tool', asset: /^tool\.exe$/, sums: /sums$/, versionArgs: ['--version'] };
+      const body = Buffer.from('NEUE-DATEI');
+      const sum = crypto.createHash('sha256').update(body).digest('hex');
+      const ok = (o) => ({ ok: true, status: 200, json: async () => o, text: async () => o, arrayBuffer: async () => body });
+      const fetchFake = (o = {}) => async (url) => {
+        if (/releases\/latest/.test(url)) return ok({ tag_name: o.tag || 'v2.0.0', assets: [{ name: 'tool.exe', browser_download_url: 'https://x/tool.exe' }, { name: 'sums', browser_download_url: 'https://x/sums' }] });
+        if (/sums$/.test(url)) return ok(`${o.badSum ? 'c'.repeat(64) : sum}  tool.exe`);
+        return ok('');
+      };
+      // Version aus dem Dateiinhalt: alte Datei meldet 1.0.0, neue 2.0.0 oder laeuft gar nicht
+      const runFake = (o = {}) => async (cmd) => { const now = nfs.readFileSync(cmd, 'utf8'); if (now === 'NEUE-DATEI' && o.blocked) return { ok: false, code: 1, stdout: '', stderr: 'blockiert' }; return { ok: true, code: 0, stdout: now === 'NEUE-DATEI' ? 'tool 2.0.0' : 'tool 1.0.0', stderr: '' }; };
+      nfs.writeFileSync(exe, 'ALTE-DATEI');
+      const cur = await up.updateGithubTool(tool, exe, { run: runFake(), fetchImpl: fetchFake({ tag: 'v1.0.0' }) });
+      check('updates: aktuelle Version bleibt unangetastet', cur.status === 'current' && nfs.readFileSync(exe, 'utf8') === 'ALTE-DATEI');
+      const badSum = await up.updateGithubTool(tool, exe, { run: runFake(), fetchImpl: fetchFake({ badSum: true }) });
+      check('updates: falsche Prüfsumme tauscht nichts aus', badSum.status === 'failed' && /Prüfsumme/.test(badSum.error) && nfs.readFileSync(exe, 'utf8') === 'ALTE-DATEI');
+      const blocked = await up.updateGithubTool(tool, exe, { run: runFake({ blocked: true }), fetchImpl: fetchFake() });
+      check('updates: läuft die neue Datei nicht, kommt die alte zurück', blocked.status === 'rolled-back' && nfs.readFileSync(exe, 'utf8') === 'ALTE-DATEI' && !nfs.existsSync(exe + '.bak'));
+      const good = await up.updateGithubTool(tool, exe, { run: runFake(), fetchImpl: fetchFake() });
+      check('updates: neue Version wird eingesetzt und geprüft', good.status === 'updated' && good.from === '1.0.0' && good.to === '2.0.0' && nfs.readFileSync(exe, 'utf8') === 'NEUE-DATEI' && !nfs.existsSync(exe + '.bak'));
+      check('updates: fehlendes Werkzeug wird nicht installiert', (await up.updateGithubTool(tool, npath.join(dir, 'gibt-es-nicht.exe'), { run: runFake(), fetchImpl: fetchFake() })).status === 'missing');
+      // nmap: Windows-Abfrage abgelehnt -> eine Woche Ruhe; ungueltige Signatur -> kein Start
+      const nmapBody = Buffer.from('SETUP'); const nsum = crypto.createHash('sha256').update(nmapBody).digest('hex').toUpperCase().match(/.{8}/g).join(' ');
+      const nf = async (url) => (/download\.html/.test(url) ? { ok: true, text: async () => 'nmap-7.993-setup.exe' } : /digest/.test(url) ? { ok: true, text: async () => `SHA256 = ${nsum}` } : { ok: true, arrayBuffer: async () => nmapBody });
+      const ncalls = [];
+      const nrun = (sigOk, installOk) => async (cmd, args) => { ncalls.push(args.join(' ')); if (cmd === 'powershell' && /Get-Authenticode/.test(args.join(' '))) return { ok: true, stdout: sigOk ? 'Valid\nCN=Insecure.Com LLC' : 'NotSigned\n' }; if (cmd === 'powershell') return { ok: installOk, stdout: '' }; return { ok: true, stdout: 'Nmap version 7.80 ( https://nmap.org )' }; };
+      const nSig = await up.updateNmap('nmap', { run: nrun(false, true), fetchImpl: nf });
+      check('updates: nmap ohne gültige Signatur startet nicht', nSig.status === 'failed' && /Signatur/.test(nSig.error) && !ncalls.some((c) => /RunAs/.test(c)));
+      const nRefused = await up.updateNmap('nmap', { run: nrun(true, false), fetchImpl: nf });
+      check('updates: abgelehnte Windows-Abfrage wird gemerkt', nRefused.status === 'failed' && nRefused.attempted === true && ncalls.some((c) => /RunAs/.test(c)));
+      const nWait = await up.updateNmap('nmap', { run: nrun(true, true), fetchImpl: nf, lastAttempt: Date.now() - 1000 });
+      check('updates: danach eine Woche keine neue Abfrage', nWait.status === 'waiting');
+      // Vigil selbst: nur vorspulen, nie ueber eigene Aenderungen
+      const gitRun = (o) => async (cmd, args) => { const a = args.slice(2).join(' '); if (/rev-parse --abbrev/.test(a)) return { ok: true, stdout: o.branch || 'main' }; if (/status/.test(a)) return { ok: true, stdout: o.dirty ? ' M x' : '' }; if (/rev-parse HEAD/.test(a)) { o.n = (o.n || 0) + 1; return { ok: true, stdout: o.n > 1 && o.moved ? 'bbbbbbbbb' : 'aaaaaaaaa' }; } if (/merge/.test(a)) return { ok: !o.ahead, stdout: '' }; return { ok: true, stdout: '' }; };
+      nfs.mkdirSync(npath.join(dir, '.git'));
+      check('updates: Vigil nur ohne eigene Änderungen und nur auf main', (await up.updateSelf(dir, { run: gitRun({ dirty: true }) })).status === 'skipped' && (await up.updateSelf(dir, { run: gitRun({ branch: 'dev' }) })).status === 'skipped' && (await up.updateSelf(dir, { run: gitRun({ ahead: true }) })).status === 'skipped');
+      const selfUp = await up.updateSelf(dir, { run: gitRun({ moved: true }) });
+      check('updates: neue Vigil-Version wird beim nächsten Start aktiv', selfUp.status === 'updated' && selfUp.restart === true);
+      check('updates: installierte Fassung ohne Git bleibt unberührt', (await up.updateSelf(npath.join(dir, 'tool.exe.x'), { run: gitRun({}) })).status === 'skipped');
+      let locked = 0;
+      const lockErr = () => Object.assign(new Error('gesperrt'), { code: 'EBUSY' });
+      check('updates: kurze Dateisperre wird abgewartet', (await up.withRetry(() => { if (++locked < 3) throw lockErr(); return 'ok'; }, { delayMs: 1 })) === 'ok' && locked === 3);
+      let otherThrown = false;
+      try { await up.withRetry(() => { throw new Error('anders'); }, { delayMs: 1 }); } catch { otherThrown = true; }
+      check('updates: andere Fehler werden nicht wiederholt', otherThrown);
+      nfs.rmSync(exe, { force: true }); nfs.writeFileSync(exe + '.bak', 'ALTE-DATEI');
+      const rec = await up.updateGithubTool(tool, exe, { run: runFake(), fetchImpl: fetchFake({ tag: 'v1.0.0' }) });
+      check('updates: abgebrochener Austausch wird beim nächsten Lauf repariert', rec.status === 'current' && nfs.readFileSync(exe, 'utf8') === 'ALTE-DATEI');
+      const rp = npath.join(dir, 'retire.json');
+      nfs.writeFileSync(rp, '{"version":"5.0.0"}');
+      const rl = await up.updatePackaged({ retirePkg: rp, run: async (cmd) => { if (/retire@latest/.test(cmd)) { nfs.writeFileSync(rp, '{"version":"5.1.0"}'); return { ok: true }; } return { ok: false }; } });
+      check('updates: installiertes retire.js wird aktualisiert', rl[0].id === 'retire.js' && rl[0].status === 'updated' && rl[0].to === '5.1.0');
+      let npmCalled = false;
+      await up.updatePackaged({ retirePkg: npath.join(dir, 'fehlt.json'), run: async (cmd) => { if (/retire/.test(cmd)) npmCalled = true; return { ok: false }; } });
+      check('updates: fehlendes retire.js wird nicht installiert', !npmCalled);
+      const stF = npath.join(dir, 'st.json');
+      const first = await up.runAll({ stateFile: stF, paths: {}, run: async () => ({ ok: false }), fetchImpl: fetchFake(), now: 1e12 });
+      const again = await up.runAll({ stateFile: stF, paths: {}, run: async () => ({ ok: false }), fetchImpl: fetchFake(), now: 1e12 + 1000 });
+      check('updates: höchstens einmal am Tag', !first.skipped && again.skipped === true);
+      nfs.rmSync(dir, { recursive: true, force: true });
+      const gs = require('../src/core/greenbone-setup');
+      check('greenbone: Tests täglich, System und Greenbone wöchentlich, Fehler stoppen den Scan nicht', /-mmin -10080/.test(gs.START_SH) && /apt-get upgrade/.test(gs.START_SH) && /-mmin -1440/.test(gs.START_SH) && /\|\| true/.test(gs.START_SH));
+    }
+
+    // Englisch
+    const T = require('../src/core/findings-i18n');
+    check('englisch: neue Befundtexte übersetzt', /^openssl 1\.1: 2 known vulnerability/.test(T.translate('openssl 1.1: 2 bekannte Lücke(n) mit verfügbarem Update (h)')) && /^Greenbone: 3 finding/.test(T.translate('Greenbone: 3 Befund(e) auf a.b.')) && /^Operating system without/.test(T.translate('Betriebssystem ohne Sicherheitsupdates: Ubuntu 18 (h)')));
+  }
+
   console.log('Threat-Intel, Risiko, Angriffspfade:');
   {
     const { applyIntel, contextualRisk, correlate } = require('../src/core/intel');
@@ -529,6 +822,15 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const intel = { kev: new Set(['CVE-2021-44228']), epss: new Map([['CVE-2021-44228', [0.97, 0.999]], ['CVE-2020-8203', [0.02, 0.8]]]) };
     const [log4j, lodash] = applyIntel([nf({ title: 'log4j (CVE-2021-44228)', severity: 'critical', cvss: 10, category: 'Dependencies' }, 'osv'), nf({ title: 'lodash (CVE-2020-8203)', severity: 'high', cvss: 7.4, category: 'Dependencies' }, 'osv')], intel);
     check('intel: KEV + EPSS übernommen', log4j.inCisaKev && log4j.epssScore === 0.97 && !lodash.inCisaKev);
+    {
+      const f = require('path').join(require('os').tmpdir(), `vigil-intel-${process.pid}.json`);
+      require('fs').writeFileSync(f, JSON.stringify({ updatedAt: '2026-11-05T00:00:00.000Z', counts: { kev: 2, epss: 3 }, kev: ['a', 'b'], epss: { x: [0, 0] } }));
+      const meta = require('../src/core/intel').readIntelMeta(f);
+      require('fs').writeFileSync(f, JSON.stringify({ updatedAt: '2026-11-05T00:00:00.000Z', kev: [], epss: {} }));
+      const oldMeta = require('../src/core/intel').readIntelMeta(f);
+      require('fs').unlinkSync(f);
+      check('intel: Stand und Anzahl ohne die vollen Listen, alte Datei gilt als veraltet', meta.updatedAt === '2026-11-05T00:00:00.000Z' && meta.kev.size === 2 && meta.epss.size === 3 && oldMeta.updatedAt === null && require('../src/core/intel').readIntelMeta('gibt-es-nicht').updatedAt === null);
+    }
     check('risk: KEV mind. 95', contextualRisk(log4j) === 100 && contextualRisk({ ...lodash, cvss: 3, inCisaKev: true }) === 95);
     check('risk: intern x0.75, Testcode x0.4', contextualRisk(lodash, { internetExposed: false }) === 55.5 && contextualRisk({ ...lodash, devOnly: true }) === 29.6);
     const T = (ruleId, extra = {}) => nf({ ruleId, title: ruleId, severity: 'high', category: 'Config', location: 'x:' + ruleId.length, ...extra }, 'container-host-audit');

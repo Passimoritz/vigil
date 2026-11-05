@@ -66,6 +66,14 @@ Vigil kombiniert **feste Regeln und tagesaktuelle Schwachstellen-Datenbanken** (
 | Dateien & Programme | Schadsoftware (Defender, MalwareBazaar, YARA), Signaturen, Schutzfunktionen von Programmen, eingebaute verwundbare Bibliotheken, Office-Makros, PDF-JavaScript, Archive (zip, tar, ISO, 7z, RAR, MSI, DMG …), E-Mails (.eml, .msg), Phishing-Links, verschleierte Skripte, Verknüpfungen und Disk-Images, Android-/iOS-Apps |
 | Systeme & Konten (nur lesend) | Dieser Windows-PC, installierte Programme, Browser-Erweiterungen, Datensicherung, Router und Heimnetz, Linux-Server per SSH, macOS, Datenbanken, Kubernetes, Docker, AWS/Azure/Google Cloud inkl. Rechte, GitHub/GitLab/Azure DevOps, Microsoft 365 / Google Workspace, Cloudflare, Hetzner, DigitalOcean, Vercel, Netlify, Have I Been Pwned |
 
+## Dauerhaft aktuell
+
+- **Geplante Prüfungen:** täglich oder wöchentlich, gemeldet werden nur neue Befunde (Windows-Benachrichtigung, Webhook für Slack, Teams, Discord). Verpasste Läufe werden nachgeholt. Unbeaufsichtigt prüft Vigil nur freigegebene Ziele.
+- **Greenbone OpenVAS:** Ab 8 GB Arbeitsspeicher und mit vorhandenem WSL bietet Vigil beim ersten Start an, die kostenlose Greenbone Community Edition einzurichten: in einer eigenen WSL-Umgebung mit Docker Engine, ohne Docker Desktop. Das lädt mehrere GB und belegt mindestens 40 GB. Arbeitsspeicher braucht Greenbone nur während eines Scans. Prüfungen freigegebener Server dauern damit deutlich länger; unter *Einstellungen → Prüfungen* lässt es sich abbrechen, abschalten oder entfernen.
+- **Linux-Pakete:** Bei der SSH-Prüfung gleicht Vigil installierte Pakete mit OSV ab (Debian, Ubuntu, Rocky, AlmaLinux). Es gehen nur Paketnamen und Versionen an osv.dev.
+- **Support-Enden:** kommen täglich von endoflife.date; die eingebauten Werte sind nur noch die Reserve.
+- **Werkzeuge:** Vigil aktualisiert installierte Werkzeuge täglich von den offiziellen Quellen, mit Prüfsumme und automatischer Rückkehr zur alten Datei, falls die neue nicht läuft. Für nmap fragt Windows einmal nach Administratorrechten. Eine unveränderte Git-Kopie von Vigil spult sich selbst vor. Abschaltbar in den Einstellungen.
+
 ## Sicher von Grund auf
 
 Vigil ist für Systeme gedacht, **die dir gehören oder die du ausdrücklich prüfen darfst**.
@@ -91,7 +99,7 @@ Taucht ein behobener Befund wieder auf, steht er erneut auf „Offen“ und ist 
 
 ## Loslegen
 
-**Voraussetzungen:** Windows 10/11 und [Node.js](https://nodejs.org) 20 oder neuer. Optional: [Ollama](https://ollama.com) für kostenlose, private KI auf dem eigenen Rechner, oder ein API-Schlüssel für Claude, OpenAI oder Gemini.
+**Voraussetzungen:** Windows 10/11, [Git](https://git-scm.com) und [Node.js](https://nodejs.org) 20 oder neuer. Einen Installer gibt es nicht: Vigil läuft aus dem Quellcode. Optional: [Ollama](https://ollama.com) für kostenlose, private KI auf dem eigenen Rechner, oder ein API-Schlüssel für Claude, OpenAI oder Gemini.
 
 ```bash
 git clone https://github.com/Passimoritz/vigil.git
@@ -106,7 +114,7 @@ Die Sprache stellst du unter *Einstellungen → Allgemein* auf Deutsch um (Stand
 
 API-Schlüssel kannst du in der App eintragen (verschlüsselt gespeichert) oder in eine `.env`-Datei schreiben – siehe [`.env.example`](.env.example).
 
-> **Windows Smart App Control:** Unsignierte Builds werden unter Umständen blockiert. Starte Vigil dann wie oben aus dem Quellcode oder lies [SIGNING.md](SIGNING.md) zu signierten Builds.
+> **Warum kein Installer?** Vigil hat keine Code-Signatur, und Windows Smart App Control blockiert unsignierte Installer. Beim Start aus dem Quellcode läuft deine eigene Kopie des Codes in Electron. Smart App Control bleibt an, prüft den Code von Vigil in diesem Fall aber nicht, und ob es Electron zulässt, entscheidet Windows. Zum Aktualisieren `git pull` und `npm install` ausführen. Die Option „Mit Windows starten“ wirkt in dieser Betriebsart nicht. Zum Stand der Signatur siehe [SIGNING.md](SIGNING.md).
 
 ### Kommandozeile
 

@@ -1,5 +1,7 @@
 # Vigil signieren
 
+> **Stand November 2026:** Vigil wird nicht signiert und nicht als Installer verteilt, sondern aus dem Quellcode gestartet (siehe README). Kostenlos und ohne Klarnamen käme nur [OSSign](https://ossign.org) infrage: Dort ist die Antragstellung derzeit ausgesetzt, und es verlangt mindestens 6 Monate Projektaktivität, also frühestens Mai 2027. Die Anleitungen unten gelten nur, falls das später kommt. **Weg C (SignPath) scheidet aus:** Die [Bedingungen](https://signpath.org/terms) schließen Software aus, die Schwachstellen aufspürt, etwa offene Ports oder fehlenden Passwortschutz.
+
 Windows blockiert unsignierte Programme: **Smart App Control** verhindert den Start ganz, **SmartScreen** zeigt eine Warnung. Damit Vigil per Doppelklick installiert werden kann, müssen Installer und App mit einem Zertifikat signiert sein, dem Windows vertraut.
 
 Ein selbst erstelltes Zertifikat hilft dabei **nicht**: Windows kennt es nicht, und es auf dem eigenen PC als vertrauenswürdig einzutragen, würde nur dort helfen und den Rechnerschutz schwächen.
@@ -39,7 +41,7 @@ Ein OV- oder EV-Zertifikat von einer Zertifizierungsstelle wie Certum, Sectigo o
 - **Reputation:** Bei OV-Zertifikaten zeigt SmartScreen anfangs trotzdem eine Warnung, bis genug Nutzer die Datei geladen haben.
 - **Umgebungsvariablen:** `CSC_LINK` (Pfad zur .pfx-Datei) und `CSC_KEY_PASSWORD`.
 
-### Weg C – Kostenlos über die SignPath Foundation (für Vigil gewählt)
+### Weg C – SignPath Foundation (für Vigil nicht möglich, siehe oben)
 
 Die SignPath Foundation signiert Open-Source-Projekte kostenlos. Das Zertifikat läuft auf die Foundation, die Signatur entsteht nur in einem öffentlichen GitHub-Build. Dadurch kann jeder nachprüfen, dass die Datei aus genau diesem Quellcode stammt.
 

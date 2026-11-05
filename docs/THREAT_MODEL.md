@@ -56,6 +56,27 @@ like Vigil can) and physical attacks on an unlocked, logged-in machine beyond th
 | I | External links leak data | `link:open` only for allow-listed HTTPS documentation hosts (`isAllowedLink`) |
 | E | Permission prompts (camera, geolocation …) | Default session denies every permission except sanitized clipboard writes |
 
+### Automatic tool updates
+
+| Threat | Risk | Mitigation |
+| --- | --- | --- |
+| T | A manipulated release is installed | Fixed sources, publisher SHA-256 checked before anything is replaced; nmap also needs a valid signature. Checksums come from the same release, so a fully compromised project account is not detected |
+| D | A new file does not run or is blocked by Smart App Control | The old file is kept until the new one runs, and is restored otherwise; Vigil never bypasses the block |
+| E | Unattended code from GitHub runs as the user | Vigil only fast-forwards `main` on an unmodified copy, and only at the next start; can be switched off |
+
+### Scheduled checks and Greenbone
+
+| Threat | Risk | Mitigation |
+| --- | --- | --- |
+| I | A webhook receives more than intended | Only severity, title and location are sent, never evidence or code; https only, no redirects; address stored encrypted and never returned to the UI |
+| E | An unattended run scans a target nobody approved | Same non-interactive scope check as the REST API, on saving and on every run; unapproved targets fail with a notice |
+| D | A run repeats forever after a crash | The last-run time is stored before the run starts |
+| T | An intrusive scanner test harms a target | Greenbone only runs against approved targets, with its own config without the brute force, default account and DoS families; if that cannot be set up and verified, no scan starts |
+| I | The Greenbone password leaks | Random per installation, stored encrypted, passed over stdin, never on a command line |
+| T | The downloaded compose.yaml is manipulated | Fixed HTTPS source without redirects and a shape check; the images come from Greenbone's registry. There is no pinned hash, so this trusts Greenbone's hosting |
+| E | The setup affects other WSL environments | It only uses its own distro `vigil-gvm` and addresses it by name; removal only unregisters that distro |
+| T | Scanner output attacks the app | Own XML reader without DTD or entity expansion; values are escaped when displayed |
+
 ### 3. Detection feeds and threat intel
 
 | | Threat | Controls |

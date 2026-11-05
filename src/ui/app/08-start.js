@@ -59,7 +59,7 @@ async function init() {
   setMode(sel === 'ollama' || localOther ? 'local' : 'cloud');
   // Ollama nachtraeglich erkennen (z. B. von Hand gestartet oder installiert).
   // Nur nachsehen (nie starten), ob Ollama inzwischen laeuft – alle 6 s, solange "Lokal · Ollama" gewaehlt ist.
-  setInterval(() => { if (ai.mode === 'local' && localSourceId() === 'ollama' && !ai.busy && !ai.pulling && !(ai.ollama && ai.ollama.running)) refreshOllama(); }, 6000);
+  setInterval(() => { if (!document.hidden && ai.mode === 'local' && localSourceId() === 'ollama' && !ai.busy && !ai.pulling && !(ai.ollama && ai.ollama.running)) refreshOllama(); }, 6000);
   $('localScan').onclick = () => scanLocal(true);
   $('localOtherModel').onchange = () => { pcfg('compat').model = $('localOtherModel').value; saveCfg(); updateRunState(); };
 

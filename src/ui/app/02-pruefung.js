@@ -5,7 +5,7 @@
 
 // --- Kosten-/Token-Vorschau vor dem Start -----------------------------------
 const fmtDur = (s) => (s < 90 ? `≈ ${Math.max(1, Math.round(s / 10) * 10)} Sek.` : s < 3600 ? `≈ ${Math.round(s / 60)} Min.` : `≈ ${(s / 3600).toFixed(1).replace('.', ',')} Std.`);
-const fmtK = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2).replace('.', ',') + ' Mio.' : n >= 1000 ? Math.round(n / 1000).toLocaleString('de-DE') + ' Tsd.' : String(n));
+const fmtK = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2).replace('.', ',') + ' Mio.' : n >= 1000 ? Math.round(n / 1000).toLocaleString(uiLocale()) + ' Tsd.' : String(n));
 let estTimer = null;
 let estSeq = 0;
 function scheduleEstimate(show) {
@@ -36,7 +36,7 @@ function updateReady(ready) {
   const n = state.targets.length;
   const set = (id, ok, text) => { const li = $(id); li.classList.toggle('ok', ok); li.querySelector('.ready-text').textContent = text; };
   set('readyTarget', n > 0, n ? `${n} ${n === 1 ? 'Ziel' : 'Ziele'} in der Prüfliste` : 'Ziel hinzufügen');
-  set('readyAi', ready.ok, !needsAi() && n ? 'Keine KI nötig für diese Ziele' : ready.ok ? `KI bereit: ${ready.label}` : (ready.why || 'KI wählen'));
+  set('readyAi', ready.ok, !needsAi() ? (n ? 'Keine KI nötig für diese Ziele' : 'KI wird nur für Code gebraucht') : ready.ok ? `KI bereit: ${ready.label}` : (ready.why || 'KI wählen'));
   const s = expectedSeconds();
   const est = state.estimate;
   const costText = !n ? 'Kosten und Dauer prüfen'
@@ -228,7 +228,7 @@ function fmtUsd(u) {
   if (u > 0) return '< $0,005';
   return '$0,00';
 }
-function fmtTok(n) { return Number(n || 0).toLocaleString('de-DE'); }
+function fmtTok(n) { return Number(n || 0).toLocaleString(uiLocale()); }
 function updateCost(cost, done) {
   const el = $('costPanel');
   if (!cost || cost.local) { el.hidden = true; return; } // lokal = kostenlos, nichts anzeigen
@@ -263,16 +263,13 @@ function renderVerdict() {
   const total = SEV_ORDER.reduce((n, s) => n + c[s], 0);
   let kind = 'ok', head = 'Keine Probleme gefunden.', sub = 'Vigil hat nichts Auffälliges entdeckt – gute Arbeit.';
   if (total > 0) {
-    sub = 'Klick auf eine Stufe, um die Liste zu filtern, oder auf einen Befund für Details und Lösung.';
+    sub = 'Eine Stufe anklicken filtert die Liste.';
     if (c.critical) { kind = 'crit'; head = `${c.critical} kritische${c.high ? ` und ${c.high} hohe` : ''} ${plural(c.critical + c.high, 'Lücke', 'Lücken')} – bitte zuerst beheben.`; }
     else if (c.high) { kind = 'high'; head = `${c.high} ${plural(c.high, 'Problem', 'Probleme')} mit hohem Risiko gefunden.`; }
     else if (c.medium) { kind = 'med'; head = `${c.medium} ${plural(c.medium, 'Problem', 'Probleme')} mittleren Risikos gefunden.`; }
     else { kind = 'low'; head = `Nur ${total} ${plural(total, 'kleiner Hinweis', 'kleinere Hinweise')} – insgesamt solide.`; }
   }
   const { score, grade } = riskScore(c);
-  const bar = total
-    ? SEV_ORDER.filter((s) => c[s]).map((s) => `<span style="flex-grow:${c[s]};background:var(--${SEV_CLS[s]})" title="${SEV_LABEL[s]}: ${c[s]}"></span>`).join('')
-    : '<span style="flex-grow:1;background:var(--low)"></span>';
   const stats = SEV_ORDER.map((s) => `<button type="button" class="stat c-${SEV_CLS[s]}${state.filter === s ? ' active' : ''}" data-f="${s}" title="${esc(SEV_HELP[s])}"${c[s] ? '' : ' disabled'}>
       <span class="stat-n">${c[s]}</span><span class="stat-l">${SEV_LABEL[s]}</span></button>`).join('');
   const merged = state.lastFindings.reduce((n, f) => n + Math.max(0, (f.mergedCount || 1) - 1), 0);
@@ -295,7 +292,6 @@ function renderVerdict() {
     <div class="v-main">
       <div class="v-head">${esc(head)}</div>
       <div class="v-sub">${esc(sub)}</div>
-      <div class="sev-bar" aria-hidden="true">${bar}</div>
       <div class="stats">${stats}</div>
       ${mergeNote}
     </div>`;
@@ -350,5 +346,5 @@ function renderRunSummary() {
   const s = state.lastResult && state.lastResult.meta && state.lastResult.meta.runSummary;
   el.hidden = !(s && s.text);
   if (!s || !s.text) return;
-  el.innerHTML = `<h3>Zusammenfassung</h3><p>${esc(s.text)}</p><span class="muted small">${s.source === 'ai' ? `von der KI geschrieben${s.model ? ' (' + esc(s.model) + ')' : ''}` : 'regelbasiert erstellt'}</span>`;
+  el.innerHTML = `<details><summary><span class="rs-label">Zusammenfassung</span><span class="rs-text">${esc(s.text)}</span></summary><p>${esc(s.text)}</p><span class="muted small">${s.source === 'ai' ? `von der KI geschrieben${s.model ? ' (' + esc(s.model) + ')' : ''}` : 'regelbasiert erstellt'}</span></details>`;
 }

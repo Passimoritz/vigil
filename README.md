@@ -66,6 +66,14 @@ It combines **fixed rules and live vulnerability databases** (which find known p
 | Files & programs | Malware scan (Defender, MalwareBazaar, YARA), digital signatures, PE hardening, bundled vulnerable libraries, Office macros, PDF JavaScript, archives (zip, tar, ISO, 7z, RAR, MSI, DMG …), e-mails (.eml, .msg), phishing links, obfuscated scripts, shortcuts and disk images, Android/iOS apps |
 | Systems & accounts (read-only) | This Windows PC, installed programs, browser extensions, backup, router and home network, Linux servers via SSH, macOS, databases, Kubernetes, Docker, AWS/Azure/Google Cloud incl. IAM, GitHub/GitLab/Azure DevOps, Microsoft 365 / Google Workspace, Cloudflare, Hetzner, DigitalOcean, Vercel, Netlify, Have I Been Pwned |
 
+## Staying current
+
+- **Scheduled checks:** daily or weekly, reporting only new findings (Windows notification, webhook for Slack, Teams, Discord). Missed runs are caught up. Unattended, Vigil only checks approved targets.
+- **Greenbone OpenVAS:** with at least 8 GB of memory and WSL present, Vigil offers on first start to set up the free Greenbone Community Edition: in a separate WSL environment with Docker Engine, without Docker Desktop. This downloads several GB and takes at least 40 GB of disk. Greenbone only needs memory during a scan. Checks of approved servers take much longer with it; under *Settings → Checks* you can cancel, switch off or remove it.
+- **Linux packages:** the SSH check compares installed packages with OSV (Debian, Ubuntu, Rocky, AlmaLinux). Only package names and versions go to osv.dev.
+- **End of support:** dates come daily from endoflife.date; the built-in values are only a fallback.
+- **Tools:** Vigil updates installed tools daily from the official sources, with checksums and an automatic return to the old file if the new one does not run. For nmap, Windows asks for administrator rights once. An unmodified Git copy of Vigil fast-forwards itself. Can be switched off in the settings.
+
 ## Safe by design
 
 Vigil is meant for systems **you own or are explicitly allowed to test**.
@@ -77,7 +85,7 @@ Vigil is meant for systems **you own or are explicitly allowed to test**.
 
 ## Getting started
 
-**Requirements:** Windows 10/11 and [Node.js](https://nodejs.org) 20 or newer. Optional: [Ollama](https://ollama.com) for free, private local AI, or an API key for Claude, OpenAI or Gemini.
+**Requirements:** Windows 10/11, [Git](https://git-scm.com) and [Node.js](https://nodejs.org) 20 or newer. There is no installer: Vigil runs from source. Optional: [Ollama](https://ollama.com) for free, private local AI, or an API key for Claude, OpenAI or Gemini.
 
 ```bash
 git clone https://github.com/Passimoritz/vigil.git
@@ -90,7 +98,7 @@ On first start a short introduction appears. **View a sample run** checks the bu
 
 API keys can be entered in the app (stored encrypted) or put into a `.env` file – see [`.env.example`](.env.example).
 
-> **Windows Smart App Control:** unsigned builds may be blocked. Run Vigil from source as shown above, or see [SIGNING.md](SIGNING.md) for signed builds.
+> **Why no installer?** Vigil has no code signature, and Windows Smart App Control blocks unsigned installers. Started from source, your own copy of the code runs in Electron. Smart App Control stays on, but it does not check Vigil's code in this case, and whether it allows Electron is decided by Windows. To update, run `git pull` and `npm install`. The "Start with Windows" option has no effect in this mode. See [SIGNING.md](SIGNING.md) for the signing status.
 
 ### Command line
 

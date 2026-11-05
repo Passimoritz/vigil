@@ -57,6 +57,18 @@ function runApp(script, label) {
   } catch (e) { all.push({ name: 'Sicherheit: Dateien prüfen', ok: false, info: e.message }); }
   sec.cleanup();
 
+  // Uebersetzungen: keine Texte der jeweils anderen Sprache in irgendeiner Ansicht
+  try {
+    const a = await require('./i18n-audit').run();
+    if (!a || !a.german) all.push({ name: 'Sprache: Prüflauf', ok: false, info: 'kein Ergebnis' });
+    else {
+      const fmt = (l) => l.slice(0, 8).map((x) => (typeof x === 'string' ? x : x.text).slice(0, 70)).join(' | ');
+      all.push({ name: 'Sprache: nichts Deutsches in der englischen Ansicht', ok: !a.german.length, info: fmt(a.german) });
+      all.push({ name: 'Sprache: nichts Englisches in der deutschen Ansicht', ok: !a.english.length, info: fmt(a.english) });
+      all.push({ name: 'Sprache: seltene Meldungen übersetzt', ok: !a.stat.length, info: fmt(a.stat) });
+    }
+  } catch (e) { all.push({ name: 'Sprache: Prüflauf', ok: false, info: e.message }); }
+
   // Visuelle Regression (nur Hinweis, ausser VIGIL_VISUAL_STRICT=1)
   if (process.env.VIGIL_E2E_NO_VISUAL !== '1') {
     try { all.push(...await require('./visual').runVisual({ strict: process.env.VIGIL_VISUAL_STRICT === '1' })); }

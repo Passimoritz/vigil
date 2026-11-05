@@ -124,6 +124,14 @@ const FEEDS = [
     parse: (text) => { const items = parseRss(text); if (items.length < 3) throw new Error(`nur ${items.length} Meldungen – Format unerwartet`); return items; },
     count: (d) => d.length,
   },
+  // Support-Enden von Datenbanken, Betriebssystemen und Bibliotheken (endoflife.date)
+  {
+    id: 'endoflife', label: 'Support-Enden (endoflife.date)', unit: 'Produkte',
+    urls: [require('./eol').FEED_URL],
+    maxBytes: 16 * 1024 * 1024,
+    parse: (text) => require('./eol').parseFull(text),
+    count: (d) => Object.keys(d).length,
+  },
   // Nur wenn das jeweilige Werkzeug installiert ist
   {
     id: 'yara-rules', label: 'YARA-Regeln (signature-base)', unit: 'Regeln', when: (ctx) => !!(ctx.tools && ctx.tools.yara), sidecar: 'yar',
@@ -172,7 +180,7 @@ function loadFeed(dir, id) {
   if (d && d.dataSha256 && dataHash(d.data) !== d.dataSha256) return null;
   return d;
 }
-const ALLOWED = ['https://raw.githubusercontent.com/', 'https://www.cisa.gov/', 'https://epss.cyentia.com/', 'https://openphish.com/', 'https://urlhaus.abuse.ch/', 'https://wid.cert-bund.de/', 'https://semgrep.dev/', 'https://crt.sh/', 'https://api.osv.dev/', 'https://osv-vulnerabilities.storage.googleapis.com/'];
+const ALLOWED = ['https://endoflife.date/', 'https://raw.githubusercontent.com/', 'https://www.cisa.gov/', 'https://epss.cyentia.com/', 'https://openphish.com/', 'https://urlhaus.abuse.ch/', 'https://wid.cert-bund.de/', 'https://semgrep.dev/', 'https://crt.sh/', 'https://api.osv.dev/', 'https://osv-vulnerabilities.storage.googleapis.com/'];
 // Ist eine Quelle aktiv? (z. B. YARA-Regeln nur, wenn yara installiert ist)
 const isActive = (f, ctx) => !f.when || !!f.when(ctx || {});
 
@@ -253,11 +261,13 @@ function loadCompiled(dir) {
   const r = loadFeed(dir, 'retirejs');
   const lists = ['openphish', 'urlhaus'].map((id) => { const d = loadFeed(dir, id); return d && Array.isArray(d.data) ? { source: id === 'openphish' ? 'OpenPhish' : 'URLhaus', urls: d.data } : null; }).filter(Boolean);
   const cb = loadFeed(dir, 'certbund');
+  const eol = loadFeed(dir, 'endoflife');
   const side = (id, ext) => { const p = path.join(dir, `${id}.${ext}`); return fs.existsSync(p) ? p : null; };
   return {
     secretRules: g ? compileSecretRules(g.data) : [], retire: r ? compileRetire(r.data) : [],
     phishLists: lists, phish: require('./linkcheck').buildPhishIndex(lists),
     advisories: cb && Array.isArray(cb.data) ? cb.data : [],
+    eol: eol && eol.data && typeof eol.data === 'object' ? eol.data : null,
     yaraFile: side('yara-rules', 'yar'), semgrepFile: side('semgrep-rules', 'yml'),
     at: { gitleaks: g && g.fetchedAt, retire: r && r.fetchedAt },
   };

@@ -10,12 +10,15 @@ const fs = require('fs');
 const net = require('net');
 const tls = require('tls');
 const { run, json, mk, cmpVer, isLocalHost, list, RISKY } = require('./common');
+const eol = require('../eol');
+const { cvssFromVector } = require('../cve');
+const { cvssToSeverity } = require('../schema');
 
 // --- Linux per SSH ---------------------------------------------------------------------
 // Erlaubt-Liste: jede Zeile ist ein fester, nur lesender Befehl. Es wird nie etwas anderes geschickt.
 const SSH_ALLOWED = [
   'export LANG=C LC_ALL=C',
-  "echo '@@os'; grep -E '^(PRETTY_NAME|ID)=' /etc/os-release 2>/dev/null",
+  "echo '@@os'; grep -E '^(PRETTY_NAME|ID|VERSION_ID)=' /etc/os-release 2>/dev/null",
   "echo '@@updates'; if command -v apt-get >/dev/null 2>&1; then apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep '^Inst' | awk '{n++; if (tolower($0) ~ /security/) s++} END {print n+0; print s+0}'; elif command -v dnf >/dev/null 2>&1; then dnf -q check-update 2>/dev/null | grep -c '[.]'; dnf -q updateinfo list --security 2>/dev/null | wc -l; elif command -v yum >/dev/null 2>&1; then yum -q check-update 2>/dev/null | grep -c '[.]'; echo 0; fi",
   "echo '@@reboot'; test -f /var/run/reboot-required && echo yes",
   "echo '@@sshd'; (sshd -T 2>/dev/null || cat /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null) | grep -iE '^[[:space:]]*(permitrootlogin|passwordauthentication|permitemptypasswords|x11forwarding|maxauthtries)[[:space:]]'",
@@ -24,6 +27,8 @@ const SSH_ALLOWED = [
   "echo '@@sudoers'; cat /etc/sudoers /etc/sudoers.d/* 2>/dev/null | grep -v '^[[:space:]]*#' | grep NOPASSWD",
   "echo '@@firewall'; if command -v ufw >/dev/null 2>&1; then ufw status 2>/dev/null | head -n 1; fi; if command -v firewall-cmd >/dev/null 2>&1; then echo \"firewalld: $(firewall-cmd --state 2>&1)\"; fi; if command -v nft >/dev/null 2>&1; then echo \"nft-input: $(nft list ruleset 2>/dev/null | grep -c 'hook input')\"; fi; iptables -S INPUT 2>/dev/null | head -n 3",
   "echo '@@listen'; (ss -tulnH 2>/dev/null || netstat -tuln 2>/dev/null)",
+  // Installierte Pakete fuer den Abgleich mit OSV (Quellpaket und Version, wie OSV sie fuehrt)
+  "echo '@@pkgs'; if command -v dpkg-query >/dev/null 2>&1; then dpkg-query -W -f='${db:Status-Abbrev}\\t${source:Package}\\t${source:Version}\\n' 2>/dev/null | awk -F'\\t' '$1 ~ /^ii/ {print $2 \"\\t\" $3}' | sort -u | head -n 6000; elif command -v rpm >/dev/null 2>&1; then rpm -qa --qf '%{NAME}\\t%|EPOCH?{%{EPOCH}:}:{}|%{VERSION}-%{RELEASE}\\n' 2>/dev/null | sort -u | head -n 6000; fi",
   "echo '@@end'",
 ];
 const SSH_SCRIPT = SSH_ALLOWED.join('\n') + '\n';
@@ -39,10 +44,102 @@ function splitSections(text) {
   return out;
 }
 
+// ID und Version aus /etc/os-release
+function osOf(s) {
+  const get = (k) => { const l = (s.os || []).find((x) => x.startsWith(`${k}=`)); return l ? l.slice(k.length + 1).replace(/^"|"$/g, '').trim() : ''; };
+  return { id: get('ID').toLowerCase(), version: get('VERSION_ID'), pretty: get('PRETTY_NAME') };
+}
+// Name des Paketbestands bei OSV; null = OSV fuehrt diese Distribution nicht
+function osvEcosystem({ id, version }) {
+  if (!version) return null;
+  const major = version.split('.')[0];
+  if (id === 'debian') return `Debian:${major}`;
+  if (id === 'ubuntu') return /^\d*[02468]\.04$/.test(version) ? `Ubuntu:${version}:LTS` : `Ubuntu:${version}`;
+  if (id === 'rocky') return `Rocky Linux:${major}`;
+  if (id === 'almalinux') return `AlmaLinux:${major}`;
+  return null;
+}
+function packagesOf(text) {
+  const s = splitSections(text);
+  const os = osOf(s);
+  const ecosystem = osvEcosystem(os);
+  const pkgs = [];
+  for (const l of s.pkgs || []) {
+    const [name, version] = l.split('\t');
+    if (name && version && /^[\w.+-]{1,120}$/.test(name) && /^[\w.+:~-]{1,120}$/.test(version)) pkgs.push({ ecosystem, name, version });
+  }
+  return { os, ecosystem, pkgs };
+}
+const OSV_SEV = { critical: 'critical', high: 'high', important: 'high', moderate: 'medium', medium: 'medium', low: 'low', negligible: 'low', unimportant: 'low', 'not yet assigned': 'medium' };
+const SEV_ORDER = ['low', 'medium', 'high', 'critical'];
+// Gibt es fuer dieses Paket im Bestand eine Korrektur, und wie schwer ist die Luecke?
+function judgeVuln(v, name, ecosystem) {
+  let fixed = false, label = null;
+  for (const a of (v && v.affected) || []) {
+    if (a.package && a.package.name && a.package.name !== name) continue;
+    // Ein Eintrag gilt oft fuer viele Versionen der Distribution: nur der eigene Bestand zaehlt
+    if (ecosystem && a.package && a.package.ecosystem !== ecosystem) continue;
+    for (const r of a.ranges || []) if ((r.events || []).some((e) => e.fixed)) fixed = true;
+    const lbl = String((a.ecosystem_specific && a.ecosystem_specific.urgency) || (a.database_specific && a.database_specific.severity) || (a.ecosystem_specific && a.ecosystem_specific.severity) || '').toLowerCase();
+    if (OSV_SEV[lbl] && lbl !== 'not yet assigned') label = OSV_SEV[lbl];
+  }
+  // Bewertung der Distribution (z. B. Ubuntu "low") vor dem allgemeinen CVSS-Wert
+  const sevs = (v && v.severity) || [];
+  const own = sevs.find((x) => x && !/^CVSS/i.test(x.type || '') && OSV_SEV[String(x.score).toLowerCase()]);
+  if (own) return { fixed, sev: OSV_SEV[String(own.score).toLowerCase()] };
+  if (label) return { fixed, sev: label };
+  const top = String((v && v.database_specific && v.database_specific.severity) || '').toLowerCase();
+  if (OSV_SEV[top] && top !== 'not yet assigned') return { fixed, sev: OSV_SEV[top] };
+  const vec = sevs.find((x) => x && /^CVSS_V3/i.test(x.type || ''));
+  const score = vec ? cvssFromVector(vec.score) : null;
+  return { fixed, sev: score != null ? cvssToSeverity(score) : null };
+}
+const MAX_DETAILS = 120;
+// Abgleich installierter Pakete gegen OSV. Es gehen nur Paketnamen und Versionen an osv.dev.
+async function auditPackages(host, { ecosystem, pkgs }, { signal, say, osvQuery, osvDetails }) {
+  say(`Linux-Server ${host}: ${pkgs.length} Pakete gegen bekannte Lücken abgleichen …`);
+  const hits = await osvQuery(pkgs, { signal });
+  const affected = pkgs.map((p) => ({ ...p, ids: (hits.get(`${p.ecosystem}|${p.name}|${p.version}`) || []).map((x) => x.id) })).filter((p) => p.ids.length).sort((a, b) => b.ids.length - a.ids.length);
+  const out = [];
+  const add = (o) => out.push(mk('linuxssh', { location: `ssh://${host}`, category: 'Dependencies', confidence: 'medium', ...o }));
+  const total = affected.reduce((a, p) => a + p.ids.length, 0);
+  if (!affected.length) return { findings: out, notes: [`Linux-Server ${host}: ${pkgs.length} Pakete abgeglichen (${ecosystem}), keine bekannten Lücken bei OSV.`] };
+  // Details nur begrenzt laden: die Pakete mit den meisten Treffern zuerst
+  const queue = [];
+  for (const p of affected) for (const id of p.ids) if (queue.length < MAX_DETAILS) queue.push({ p, id });
+  const judged = new Map();
+  let i = 0;
+  await Promise.all(Array.from({ length: 6 }, async () => {
+    while (i < queue.length && !(signal && signal.aborted)) {
+      const q = queue[i++];
+      const d = await Promise.resolve(osvDetails(q.id)).catch(() => null);
+      if (!d) continue;
+      const seen = judged.get(q.p.name) || [];
+      seen.push({ id: q.id, ...judgeVuln(d, q.p.name, ecosystem) });
+      judged.set(q.p.name, seen);
+    }
+  }));
+  const fixable = [];
+  for (const p of affected) {
+    const fx = (judged.get(p.name) || []).filter((x) => x.fixed);
+    if (fx.length) fixable.push({ p, fx, sev: fx.reduce((a, x) => (SEV_ORDER.indexOf(x.sev) > SEV_ORDER.indexOf(a) ? x.sev : a), 'medium') });
+  }
+  fixable.sort((a, b) => SEV_ORDER.indexOf(b.sev) - SEV_ORDER.indexOf(a.sev) || b.fx.length - a.fx.length);
+  for (const { p, fx, sev } of fixable.slice(0, 15)) {
+    add({ ruleId: `linux-pkg-cve-${p.name}`, severity: sev, title: `${p.name} ${p.version}: ${fx.length} bekannte Lücke(n) mit verfügbarem Update (${host})`, description: `Für das Paket ${p.name} gibt es in ${ecosystem} Korrekturen, die auf dem Server noch fehlen: ${fx.slice(0, 8).map((x) => x.id).join(', ')}.`, evidence: fx.slice(0, 20).map((x) => x.id).join(', '), impact: 'Öffentlich bekannte Lücken werden gezielt und automatisiert gesucht.', remediation: 'Paket-Updates einspielen (z. B. „sudo apt upgrade“ bzw. „sudo dnf upgrade“) und den betroffenen Dienst neu starten.', links: [{ label: `OSV: ${fx[0].id}`, url: `https://osv.dev/vulnerability/${encodeURIComponent(fx[0].id)}` }] });
+  }
+  add({ ruleId: 'linux-pkg-cves-summary', severity: 'info', title: `${affected.length} von ${pkgs.length} Paketen haben bei OSV bekannte Lücken (${host})`, description: `Insgesamt ${total} Einträge in ${ecosystem}. Viele davon haben noch keine Korrektur oder gelten für diese Installation nicht; deshalb erscheinen als eigene Befunde nur Pakete mit verfügbarem Update (geprüft: ${queue.length} Einträge).`, evidence: affected.slice(0, 25).map((p) => `${p.name} (${p.ids.length})`).join(', '), remediation: 'Updates regelmäßig einspielen; einzelne Einträge bei Bedarf im Sicherheits-Tracker der Distribution nachlesen.' });
+  return { findings: out, notes: [`Linux-Server ${host}: ${pkgs.length} Pakete abgeglichen (${ecosystem}); nur Paketnamen und Versionen gingen an osv.dev.`] };
+}
+
 function parseLinux(text, host) {
   const s = splitSections(text);
   const out = [];
   const add = (o) => out.push(mk('linuxssh', { location: `ssh://${host}`, ...o }));
+  const os = osOf(s);
+  const lifeProduct = { debian: 'debian', ubuntu: 'ubuntu', rocky: 'rocky-linux', almalinux: 'almalinux' }[os.id];
+  const life = lifeProduct && os.version ? eol.status(lifeProduct, os.version) : null;
+  if (life && life.isEol) add({ ruleId: 'linux-os-eol', severity: 'high', category: 'Dependencies', title: `Betriebssystem ohne Sicherheitsupdates: ${os.pretty || os.id + ' ' + os.version} (${host})`, description: `Für diese Version gibt es seit ${life.eolFrom || 'einiger Zeit'} keine regulären Sicherheitsupdates mehr (Quelle: endoflife.date).`, impact: 'Neu bekannte Lücken bleiben dauerhaft offen.', remediation: 'Auf eine unterstützte Version des Betriebssystems aktualisieren.' });
   const [n, sec] = (s.updates || []).map((x) => parseInt(x, 10) || 0);
   if (sec > 0) add({ ruleId: 'linux-security-updates', severity: 'high', category: 'Dependencies', title: `${sec} Sicherheitsupdates ausstehend (${host})`, description: 'Für installierte Pakete gibt es Sicherheitskorrekturen, die noch nicht eingespielt sind. Bekannte Lücken werden automatisiert ausgenutzt.', remediation: 'Updates einspielen (z. B. „sudo apt upgrade“ bzw. „sudo dnf upgrade“) und unattended-upgrades bzw. dnf-automatic einrichten.' });
   else if (n > 0) add({ ruleId: 'linux-updates-pending', severity: n > 20 ? 'medium' : 'low', category: 'Dependencies', title: `${n} Paket-Updates ausstehend (${host})`, description: 'Der Server ist nicht auf dem aktuellen Stand.', remediation: 'Updates regelmäßig und automatisch einspielen.' });
@@ -78,7 +175,7 @@ function parseLinux(text, host) {
 }
 
 const SSH_TARGET = /^([a-z_][\w.-]{0,31})@([a-z0-9][\w.-]{0,252})(?::(\d{1,5}))?$/i;
-async function auditLinuxSsh({ signal, say, run: r = run, settings = {} }) {
+async function auditLinuxSsh({ signal, say, run: r = run, settings = {}, osvQuery = (p, o) => require('../watch').osvQueryOnline(p, o), osvDetails = (id) => require('../watch').osvDetails(id, fetch) }) {
   const m = String(settings.sshTarget || '').trim().match(SSH_TARGET);
   if (!m) return { findings: [], notes: ['Linux-Prüfung übersprungen: kein SSH-Ziel (benutzer@server) in den Einstellungen.'] };
   const key = String(settings.sshKeyPath || '').trim();
@@ -88,7 +185,16 @@ async function auditLinuxSsh({ signal, say, run: r = run, settings = {} }) {
   const args = ['-i', key, '-p', String(port || 22), '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no', '-T', '--', `${user}@${host}`, 'sh -s'];
   const res = await r('ssh', args, { signal, timeoutMs: 180000, input: SSH_SCRIPT });
   if (!/@@end/.test(res.stdout || '')) return { findings: [], notes: [`Linux-Prüfung nicht ausgeführt (${res.error || 'keine Antwort'}). Ist der Server-Schlüssel bekannt (einmal von Hand verbinden) und der SSH-Schlüssel freigegeben?`] };
-  return { findings: parseLinux(res.stdout, host), notes: [`Linux-Server ${host} geprüft.`], ok: true };
+  const findings = parseLinux(res.stdout, host);
+  const notes = [`Linux-Server ${host} geprüft.`];
+  if (settings.osvLookup !== false) {
+    const pk = packagesOf(res.stdout);
+    if (pk.ecosystem && pk.pkgs.length) {
+      try { const a = await auditPackages(host, pk, { signal, say, osvQuery, osvDetails }); findings.push(...a.findings); notes.push(...a.notes); }
+      catch (e) { notes.push(`Paket-Abgleich mit OSV nicht möglich (${e.message}).`); }
+    } else if (pk.pkgs.length) notes.push(`Paket-Abgleich: OSV führt ${pk.os.pretty || pk.os.id || 'diese Distribution'} nicht; nur die Update-Anzeige des Systems wurde ausgewertet.`);
+  }
+  return { findings, notes, ok: true };
 }
 
 // --- Datenbanken ------------------------------------------------------------------------
@@ -100,6 +206,7 @@ const DB_FIXES = {
 };
 // Aelter als diese Versionen = ohne Sicherheitsupdates des Herstellers (Stand Ende 2026)
 const DB_MIN_SUPPORTED = { postgres: '14', mysql: '8.4', mariadb: '10.11', mongodb: '7.0', redis: '7.2' };
+const DB_EOL_PRODUCT = { postgres: 'postgresql', mysql: 'mysql', mariadb: 'mariadb', mongodb: 'mongodb', redis: 'redis' };
 const DB_LABEL = { postgres: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB', mongodb: 'MongoDB', redis: 'Redis' };
 
 function tcpExchange(host, port, { send, until, timeoutMs = 6000, useTls = false } = {}) {
@@ -193,8 +300,11 @@ function assessDb(c, f) {
   const remote = !isLocalHost(c.host);
   if (f.version) {
     const flavor = f.flavor || c.kind;
+    // Gepflegte Quelle zuerst; die Tabelle gilt nur, wenn der Feed fehlt oder die Reihe unbekannt ist
+    const life = eol.status(DB_EOL_PRODUCT[flavor], f.version);
     const min = DB_MIN_SUPPORTED[flavor];
-    if (min && cmpVer(f.version, min) < 0) add({ ruleId: 'db-version-eol', severity: 'medium', category: 'Dependencies', title: `${name} ${f.version} bekommt keine Sicherheitsupdates mehr`, description: `Versionen vor ${min} werden vom Hersteller nicht mehr gepflegt. Neue Lücken bleiben offen.`, remediation: `Auf eine unterstützte Version (${min} oder neuer) aktualisieren.` });
+    if (life) { if (life.isEol) add({ ruleId: 'db-version-eol', severity: 'medium', category: 'Dependencies', title: `${name} ${f.version} bekommt keine Sicherheitsupdates mehr`, description: `Die Versionsreihe ${life.cycle} wird vom Hersteller seit ${life.eolFrom || 'einiger Zeit'} nicht mehr gepflegt (Quelle: endoflife.date). Neue Lücken bleiben offen.`, remediation: 'Auf eine unterstützte Version aktualisieren.' }); }
+    else if (min && cmpVer(f.version, min) < 0) add({ ruleId: 'db-version-eol', severity: 'medium', category: 'Dependencies', title: `${name} ${f.version} bekommt keine Sicherheitsupdates mehr`, description: `Versionen vor ${min} werden vom Hersteller nicht mehr gepflegt. Neue Lücken bleiben offen.`, remediation: `Auf eine unterstützte Version (${min} oder neuer) aktualisieren.` });
     const fx = DB_FIXES[flavor];
     const fixed = fx && fx.fixed[fx.branch(f.version)];
     if (fixed && cmpVer(f.version, fixed) < 0) add({ ruleId: 'db-version-vuln', severity: 'high', category: 'Dependencies', confidence: 'medium', title: `${name} ${f.version} hat eine bekannte Sicherheitslücke (${fx.cve})`, description: `Die Lücke ist ab Version ${fixed} behoben.`, remediation: `Mindestens auf ${fixed} aktualisieren.` });
@@ -338,4 +448,4 @@ async function auditK8s({ signal, say, run: r = run }) {
   return { findings: parseK8s({ pods, crbs: crbs || [], netpols: netpols || [], namespaces: namespaces || [] }, name), notes: [`Kubernetes-Kontext ${name} geprüft (${pods.length} Pods).`], ok: !!(crbs && netpols && namespaces) };
 }
 
-module.exports = { SSH_ALLOWED, SSH_SCRIPT, splitSections, parseLinux, auditLinuxSsh, parseDbUrl, assessDb, probeDb, auditDb, bsonEncode, bsonDecode, mongoMsg, mongoReply, parseMysqlGreeting, pgSslRequest, parseK8s, auditK8s };
+module.exports = { packagesOf, osvEcosystem, auditPackages, judgeVuln, SSH_ALLOWED, SSH_SCRIPT, splitSections, parseLinux, auditLinuxSsh, parseDbUrl, assessDb, probeDb, auditDb, bsonEncode, bsonDecode, mongoMsg, mongoReply, parseMysqlGreeting, pgSslRequest, parseK8s, auditK8s };
