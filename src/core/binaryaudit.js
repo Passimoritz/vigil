@@ -89,6 +89,9 @@ function analyzeBinary(buf, label) {
     }, 'binary'));
   }
 
+  // Windows-Programme: fehlende Schutzfunktionen (ASLR, DEP, CFG …)
+  if (type.startsWith('PE')) out.push(...require('./pehard').analyzePeHardening(buf, where));
+
   return out;
 }
 

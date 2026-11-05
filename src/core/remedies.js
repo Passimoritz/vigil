@@ -271,7 +271,7 @@ function enrichRemedy(f) {
 }
 
 // Erlaubte Ziele fuer "Link oeffnen" (Main-Prozess prueft dagegen).
-const LINK_HOSTS = ['heise.de', 'youtube.com', 'owasp.org', 'developer.mozilla.org', 'nvd.nist.gov', 'osv.dev', 'github.com', 'docs.github.com', 'cisa.gov', 'first.org', 'docs.docker.com', 'letsencrypt.org', 'ssllabs.com', 'ssl-config.mozilla.org', 'hstspreload.org', 'csp-evaluator.withgoogle.com', 'portswigger.net', 'mxtoolbox.com', 'dmarc.org', 'srihash.org', 'docs.npmjs.com', 'docs.renovatebot.com', 'help.ubuntu.com', 'wiki.debian.org', 'infosec.mozilla.org', 'attack.mitre.org', 'genai.owasp.org', 'cheatsheetseries.owasp.org', 'trivy.dev', 'ollama.com'];
+const LINK_HOSTS = ['heise.de', 'youtube.com', 'owasp.org', 'developer.mozilla.org', 'nvd.nist.gov', 'osv.dev', 'github.com', 'docs.github.com', 'cisa.gov', 'first.org', 'docs.docker.com', 'letsencrypt.org', 'ssllabs.com', 'ssl-config.mozilla.org', 'hstspreload.org', 'csp-evaluator.withgoogle.com', 'portswigger.net', 'mxtoolbox.com', 'dmarc.org', 'srihash.org', 'docs.npmjs.com', 'docs.renovatebot.com', 'help.ubuntu.com', 'wiki.debian.org', 'infosec.mozilla.org', 'attack.mitre.org', 'genai.owasp.org', 'cheatsheetseries.owasp.org', 'trivy.dev', 'ollama.com', 'crt.sh', 'wid.cert-bund.de'];
 function isAllowedLink(url) {
   try {
     const u = new URL(url);

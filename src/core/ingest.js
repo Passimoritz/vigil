@@ -36,6 +36,15 @@ const BINARY_EXE_EXT = new Set(['.exe', '.dll', '.so', '.dylib', '.bin', '.msi',
 const ARCHIVE_EXT = new Set(['.zip', '.jar', '.war', '.ear', '.apk', '.aar', '.nupkg', '.ipa', '.xapk']);
 const { decodeAxml, decodeBplist } = require('./modules/mobile');
 const { analyzeDocument, DOC_EXT } = require('./docaudit');
+const archives = require('./archives');
+const bundled = require('./bundled');
+const { analyzeScript, SCRIPT_EXT } = require('./scriptobf');
+const { analyzeLnk } = require('./lnk');
+const { readMail, MAIL_EXT } = require('./mail');
+const { extractDocUrls } = require('./linkcheck');
+const MAX_DEPTH = 2; // Archiv im Archiv (bzw. Anhang in der Mail) – tiefer wird nicht entpackt
+// Diese Eintraege werden auch gross gelesen (bis zur Archiv-Grenze), weil sie eigene Pruefungen haben
+const BIG_OK = /\.(exe|dll|so|dylib|sys|ocx|scr|msi|bin|jar|war|ear|zip|7z|rar|tar|tgz|gz|iso|img|vhdx?|dmg|cab|eml|msg|pdf|docx?|docm|xlsx?|xlsm|pptx?|pptm|rtf)$/i;
 
 function extname(p) {
   const e = path.extname(p).toLowerCase();
@@ -93,7 +102,11 @@ class Collector {
     this.fileCount = 0;
     this.notes = [];
     this.findings = []; // z. B. aus der Binary-Analyse
+    this.links = [];        // Links aus Dokumenten und Mails (fuer den Phishing-Abgleich)
+    this.bundledDeps = [];  // in Programmen/JARs eingebaute Bibliotheken (fuer den CVE-Abgleich)
+    this.pending = [];      // asynchrone Arbeit (Entpacken ueber 7-Zip)
   }
+  addLinks(urls, label) { for (const url of urls || []) if (this.links.length < 5000) this.links.push({ url, label: String(label).replace(/\\/g, '/') }); }
   atCapacity() {
     return this.fileCount >= MAX_FILES || this.totalBytes >= MAX_TOTAL_BYTES;
   }
@@ -106,10 +119,16 @@ class Collector {
   }
 }
 
+// Programme: Packer/APIs, Schutzfunktionen (PE) und eingebaute Bibliotheken
+function binaryChecks(col, buf, label) {
+  for (const bf of analyzeBinary(buf, label)) col.findings.push(bf);
+  for (const f of bundled.bundledFindings(bundled.detectBundled(buf), label)) col.findings.push(f);
+}
+
 function addTextBuffer(col, label, kind, buf, srcPath) {
   const ext = extname(srcPath || label);
   if (looksBinary(buf)) {
-    if (BINARY_EXE_EXT.has(ext)) for (const bf of analyzeBinary(buf, srcPath || label)) col.findings.push(bf);
+    if (BINARY_EXE_EXT.has(ext)) binaryChecks(col, buf, label);
     const strings = extractStrings(buf);
     if (strings.length) {
       col.add({
@@ -121,6 +140,7 @@ function addTextBuffer(col, label, kind, buf, srcPath) {
     return;
   }
   let text = buf.toString('utf8');
+  if (SCRIPT_EXT.has(ext)) for (const f of analyzeScript(text, label, ext)) col.findings.push(f);
   if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_BYTES) {
     text = text.slice(0, MAX_TEXT_BYTES) + '\n\n/* ... [von Vigil gekuerzt] ... */';
   }
@@ -154,20 +174,33 @@ function ingestFile(col, full, root) {
   try { stat = fs.statSync(full); } catch { return; }
   // Lesbares Label: "ordnername/unterordner/datei.js" bzw. nur der Dateiname.
   const rel = root ? path.join(path.basename(root), path.relative(root, full)) : path.basename(full);
+  const label = rel.replace(/\\/g, '/');
 
   if (ARCHIVE_EXT.has(ext)) {
-    ingestArchive(col, full, rel);
+    ingestArchive(col, full, rel, 1);
+    return;
+  }
+  // tar/gz/ISO (reines JS) bzw. 7z/RAR/MSI/DMG/VHD (ueber 7-Zip, falls installiert)
+  const kind = archives.archiveKind(full);
+  if (kind) {
+    ingestArchiveAny(col, { file: full, name: full }, label, 1);
+    if (ext !== '.msi') return; // MSI zusaetzlich als Programmdatei pruefen
+  }
+  // E-Mails und Verknuepfungen
+  if (MAIL_EXT.has(ext) || ext === '.lnk') {
+    if (stat.size > archives.LIMITS.maxEntryBytes) { col.notes.push(`Uebersprungen (zu gross): ${rel}`); return; }
+    try { processEntry(col, label, full, fs.readFileSync(full), 0); } catch (e) { col.notes.push(`Datei nicht lesbar: ${rel}`); }
     return;
   }
   // Dokumente mit moeglichem aktivem Inhalt (Makros, PDF-JavaScript, eingebettete Objekte)
   if (DOC_EXT.has(ext) && stat.size < 60 * 1024 * 1024) {
-    try { for (const f of analyzeDocument(fs.readFileSync(full), rel.replace(/\\/g, '/'))) col.findings.push(f); } catch (e) { col.notes.push(`Dokument nicht lesbar: ${rel}`); }
+    try { const buf = fs.readFileSync(full); for (const f of analyzeDocument(buf, label)) col.findings.push(f); col.addLinks(extractDocUrls(buf, ext), label); } catch (e) { col.notes.push(`Dokument nicht lesbar: ${rel}`); }
     if (ext !== '.pdf' && ext !== '.rtf') return; // Office-Binaerformate liefern keinen sinnvollen Text
   }
   if (BINARY_EXE_EXT.has(ext)) {
     try {
       const buf = fs.readFileSync(full);
-      for (const bf of analyzeBinary(buf, rel)) col.findings.push(bf);
+      binaryChecks(col, buf, rel);
       const strings = extractStrings(buf);
       col.add({
         label: rel, kind: 'binary-strings', language: 'text', path: full,
@@ -188,31 +221,146 @@ function ingestFile(col, full, root) {
   } catch (e) { col.notes.push(`Datei nicht lesbar: ${full}`); }
 }
 
-function ingestArchive(col, archivePath, label) {
-  let zip;
-  try { zip = new AdmZip(archivePath); }
-  catch (e) { col.notes.push(`Archiv nicht lesbar: ${archivePath} (${e.message})`); return; }
-  const entries = zip.getEntries();
+// Ein Eintrag aus einem Archiv oder ein Mail-Anhang: dieselben Pruefungen wie fuer Dateien.
+function processEntry(col, label, name, buf, depth) {
+  const ext = extname(name);
+  if (ARCHIVE_EXT.has(ext) || (archives.archiveKind(name) && depth > 0)) {
+    if (depth >= MAX_DEPTH) { col.notes.push(`Verschachteltes Archiv nicht entpackt: ${name}`); return; }
+    ingestArchiveAny(col, { buf, name }, label, depth + 1);
+    return;
+  }
+  // Eingebaute Java-Bibliotheken (auch in umgepackten "fat jars")
+  if (/(^|\/)META-INF\/maven\/[^/]+\/[^/]+\/pom\.properties$/i.test(name)) {
+    const d = bundled.parsePomProperties(buf.toString('utf8'));
+    if (d && col.bundledDeps.length < 2000) col.bundledDeps.push({ ecosystem: 'Maven', name: d.maven, version: d.version, raw: `${d.maven}@${d.version} (eingebaut in ${String(label).split('!/')[0]})` });
+    return;
+  }
+  // Handy-Apps: binaeres Manifest bzw. binaere Info.plist lesbar machen
+  if (/(^|\/)AndroidManifest\.xml$/i.test(name) || /\.app\/Info\.plist$/i.test(name)) {
+    const xml = /plist$/i.test(name) ? decodeBplist(buf) : decodeAxml(buf);
+    if (xml) { col.add({ label, kind: 'archive-entry', language: 'xml', path: name, content: xml, meta: { note: 'aus dem Binärformat der App zurückgewandelt' } }); return; }
+  }
+  if (MAIL_EXT.has(ext)) { ingestMail(col, buf, label, depth); return; }
+  if (ext === '.lnk') { for (const f of analyzeLnk(buf, label)) col.findings.push(f); return; }
+  if (DOC_EXT.has(ext)) {
+    for (const f of analyzeDocument(buf, label)) col.findings.push(f);
+    col.addLinks(extractDocUrls(buf, ext), label);
+    if (ext !== '.pdf' && ext !== '.rtf') return;
+  }
+  if (depth >= 2 && ext === '.class') return; // Klassen in verschachtelten JARs: nur die Paketangaben zaehlen
+  addTextBuffer(col, label, 'archive-entry', buf, name);
+}
+
+function ingestMail(col, buf, label, depth) {
+  let r = null;
+  try { r = readMail(buf, label); } catch { r = null; }
+  if (!r) { col.notes.push(`E-Mail nicht lesbar: ${label}`); return; }
+  for (const f of r.findings) col.findings.push(f);
+  col.addLinks(r.urls, label);
+  for (const a of r.attachments) {
+    if (col.atCapacity()) break;
+    const name = path.posix.basename(String(a.name || 'anhang').replace(/\\/g, '/')).slice(0, 200) || 'anhang';
+    processEntry(col, `${label}!/${name}`, name, a.data, depth + 1);
+  }
+}
+
+// Eintraege eines entpackten Archivs pruefen (gemeinsam fuer tar, ISO und 7-Zip)
+function finishEntries(col, label, entries, unsafe, depth, kind, bomb = false) {
   col.notes.push(`Archiv geöffnet: ${label} (${entries.length} Einträge)`);
-  for (const ent of entries) {
+  for (const f of archives.archiveFindings({ label, unsafe, bomb, names: entries.map((e) => e.name), kind })) col.findings.push(f);
+  for (const e of entries) {
     if (col.atCapacity()) { col.notes.push('Limit erreicht - restliches Archiv übersprungen.'); break; }
-    if (ent.isDirectory) continue;
+    if (!e.data) continue;
+    if (e.data.length > MAX_TEXT_BYTES * 3 && !TEXT_EXT.has(extname(e.name)) && !BIG_OK.test(e.name)) continue;
+    processEntry(col, `${label}!/${e.name}`, e.name, e.data, depth);
+  }
+}
+
+// Alle Nicht-ZIP-Formate. src = { file } (Datei auf der Platte) oder { buf, name } (aus Archiv/Mail)
+function ingestArchiveAny(col, src, label, depth) {
+  const name = src.name || src.file;
+  if (ARCHIVE_EXT.has(extname(name))) { ingestArchive(col, src.buf || src.file, label, depth); return; }
+  const kind = archives.archiveKind(name);
+  let size = src.buf ? src.buf.length : 0;
+  if (src.file) { try { size = fs.statSync(src.file).size; } catch { return; } }
+  if (kind === 'tar' || kind === 'tgz' || kind === 'gz') {
+    if (size > archives.LIMITS.maxTotalBytes) { col.notes.push(`Archiv zu groß, übersprungen: ${label}`); return; }
+    let buf = src.buf || fs.readFileSync(src.file);
+    if (kind !== 'tar') {
+      const g = archives.gunzipLimited(buf);
+      if (g.error === 'bomb') { finishEntries(col, label, [], [], depth, kind, true); return; }
+      if (g.error) { col.notes.push(`Archiv nicht lesbar: ${label} (${g.error})`); return; }
+      buf = g.data;
+    }
+    if (kind === 'gz' && buf.subarray(257, 262).toString('latin1') !== 'ustar') {
+      const inner = path.posix.basename(String(name).replace(/\\/g, '/')).replace(/\.gz$/i, '');
+      processEntry(col, `${label}!/${inner}`, inner, buf, depth);
+      return;
+    }
+    const t = archives.parseTar(buf);
+    col.notes.push(...t.notes);
+    finishEntries(col, label, t.entries, t.unsafe, depth, kind);
+    return;
+  }
+  if (kind === 'iso') {
+    let r = null;
+    if (src.file) r = archives.isoFromFile(src.file);
+    else {
+      const b = src.buf;
+      const p = archives.parseIso((off, len) => b.subarray(off, Math.min(b.length, off + len)), b.length);
+      if (p) r = { ...p, entries: p.entries.map((e) => ({ name: e.name, size: e.size, data: e.read() })) };
+    }
+    if (r) { col.notes.push(...r.notes); finishEntries(col, label, r.entries, [], depth, 'iso'); return; }
+    // reines UDF-Abbild: 7-Zip versuchen
+  }
+  queue7z(col, src, label, depth);
+}
+
+// 7-Zip laeuft asynchron; ingestTargets wartet am Ende darauf
+function queue7z(col, src, label, depth) {
+  col.pending.push(async () => {
+    let file = src.file, tmp = null;
+    try {
+      if (!file) { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-arc-')); file = path.join(tmp, 'archiv' + extname(src.name || '.7z')); fs.writeFileSync(file, src.buf); }
+      const r = await archives.sevenZipEntries(file);
+      if (r.missing) { col.notes.push(`Inhalt von ${label} übersprungen: 7-Zip fehlt (optional).`); return; }
+      col.notes.push(...(r.notes || []));
+      // Nur gelistet (zu gross): Namen trotzdem fuer die Abbild-Pruefung nutzen
+      if (r.names) { for (const f of archives.archiveFindings({ label, unsafe: r.unsafe || [], names: r.names, kind: '7z' })) col.findings.push(f); return; }
+      finishEntries(col, label, r.entries || [], r.unsafe || [], depth, '7z', !!r.bomb);
+    } catch (e) { col.notes.push(`Archiv nicht lesbar: ${label} (${e.message})`); }
+    finally { if (tmp) try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* egal */ } }
+  });
+}
+
+// ZIP/JAR/APK … (adm-zip). source = Pfad oder Buffer.
+function ingestArchive(col, source, label, depth = 1) {
+  let zip;
+  try { zip = new AdmZip(source); }
+  catch (e) { col.notes.push(`Archiv nicht lesbar: ${label} (${e.message})`); return; }
+  const entries = zip.getEntries();
+  const files = entries.filter((e) => !e.isDirectory);
+  const unsafe = files.map((e) => e.entryName).filter((n) => archives.safeName(n).unsafe);
+  // Zip-Bombe: entpackte Groesse laut Verzeichnis gegen die gepackte Groesse
+  const unpacked = files.reduce((a, e) => a + (e.header.size || 0), 0);
+  const packed = files.reduce((a, e) => a + (e.header.compressedSize || 0), 0) || 1;
+  const bomb = unpacked > 100 * 1024 * 1024 && unpacked / packed > archives.LIMITS.maxRatio;
+  col.notes.push(`Archiv geöffnet: ${label} (${entries.length} Einträge)`);
+  for (const f of archives.archiveFindings({ label: String(label).replace(/\\/g, '/'), unsafe, bomb, names: [] })) col.findings.push(f);
+  if (bomb) return;
+  let total = 0;
+  for (const ent of files.slice(0, archives.LIMITS.maxEntries)) {
+    if (col.atCapacity()) { col.notes.push('Limit erreicht - restliches Archiv übersprungen.'); break; }
     const name = ent.entryName;
     const ext = extname(name);
-    if (ARCHIVE_EXT.has(ext)) {
-      col.notes.push(`Verschachteltes Archiv nicht entpackt: ${name}`);
-      continue;
-    }
+    const size = ent.header.size || 0;
+    // Groesse VOR dem Entpacken pruefen
+    if (size > MAX_TEXT_BYTES * 3 && !TEXT_EXT.has(ext) && !BIG_OK.test(name) && !/pom\.properties$/i.test(name)) continue;
+    if (size > archives.LIMITS.maxEntryBytes || total + size > archives.LIMITS.maxTotalBytes) continue;
     let buf;
     try { buf = ent.getData(); } catch { continue; }
-    if (buf.length > MAX_TEXT_BYTES * 3 && !TEXT_EXT.has(ext)) continue;
-    // Handy-Apps: binaeres Manifest bzw. binaere Info.plist lesbar machen
-    if (/(^|\/)AndroidManifest\.xml$/i.test(name) || /\.app\/Info\.plist$/i.test(name)) {
-      const xml = /plist$/i.test(name) ? decodeBplist(buf) : decodeAxml(buf);
-      if (xml) { col.add({ label: `${label}!/${name}`, kind: 'archive-entry', language: 'xml', path: name, content: xml, meta: { note: 'aus dem Binärformat der App zurückgewandelt' } }); continue; }
-    }
-    if (DOC_EXT.has(ext)) { for (const f of analyzeDocument(buf, `${label}!/${name}`)) col.findings.push(f); if (ext !== '.pdf' && ext !== '.rtf') continue; }
-    addTextBuffer(col, `${label}!/${name}`, 'archive-entry', buf, name);
+    total += buf.length;
+    processEntry(col, `${label}!/${name}`, name, buf, depth);
   }
 }
 
@@ -293,8 +441,13 @@ async function ingestTargets(targets, onProgress = () => {}) {
     } catch (e) {
       col.notes.push(`Fehler bei ${t.value}: ${e.message}`);
     }
+    // Entpacken ueber 7-Zip (asynchron; kann weitere Arbeit nachschieben)
+    for (let guard = 0; col.pending.length && guard < 500; guard++) {
+      onProgress({ phase: 'ingest', message: 'Entpacke Archive …' });
+      try { await col.pending.shift()(); } catch (e) { col.notes.push(`Archiv: ${e.message}`); }
+    }
   }
-  return { units: col.units, notes: col.notes, findings: col.findings, stats: { files: col.fileCount, bytes: col.totalBytes } };
+  return { units: col.units, notes: col.notes, findings: col.findings, links: col.links, bundledDeps: col.bundledDeps, stats: { files: col.fileCount, bytes: col.totalBytes } };
 }
 
 module.exports = { ingestTargets, extractStrings, TEXT_EXT, tmpDir: os.tmpdir() };

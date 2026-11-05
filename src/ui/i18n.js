@@ -4,6 +4,23 @@
 // Zurueckschalten ohne Neustart geht. Befundtexte aus der Pruefung bleiben vorerst Deutsch.
 (() => {
   const EN = {
+    // Dateien, Programme, Erkennungsdaten (Archive, Mails, YARA, Phishing-Listen, Ueberwachung, USB)
+    'Neue Lücken in geprüften Paketen melden': 'Report new vulnerabilities in checked packages',
+    'Alle 6 Stunden gleicht Vigil die Pakete aus gespeicherten Prüfungen mit neuen OSV-Meldungen (u. a. GitHub Advisory Database) und den Sicherheitshinweisen des BSI ab – ohne neuen Scan. Neues erscheint in der Übersicht und als Windows-Benachrichtigung.': 'Every 6 hours Vigil compares the packages from stored scans with new OSV advisories (including the GitHub Advisory Database) and the security advisories of the German BSI – without a new scan. New items appear in the overview and as a Windows notification.',
+    'Neue Zertifikate für eigene Domains melden': 'Report new certificates for your own domains',
+    'Prüft für nachgewiesene eigene Domains die öffentlichen Certificate-Transparency-Logs (crt.sh). Taucht ein bisher unbekanntes Zertifikat auf, meldet Vigil es.': 'Checks the public Certificate Transparency logs (crt.sh) for your verified domains. If a previously unknown certificate shows up, Vigil reports it.',
+    'OSV-Datenbank offline vorhalten': 'Keep the OSV database offline',
+    'Lädt die komplette OSV-Datenbank für die Paket-Arten aus deinen Prüfungen (z. B. npm, PyPI) und nutzt sie, wenn OSV.dev nicht erreichbar ist. Braucht je Paket-Art bis zu einige Hundert MB.': 'Downloads the complete OSV database for the package types in your scans (e.g. npm, PyPI) and uses it when OSV.dev is unreachable. Needs up to a few hundred MB per package type.',
+    'Eigene YARA-Regeln': 'Custom YARA rules', 'Ordner öffnen': 'Open folder',
+    'Ist YARA installiert, prüft Vigil Dateien zusätzlich mit allen .yar-Dateien aus diesem Ordner und den geladenen YARA-Regeln.': 'If YARA is installed, Vigil also checks files with all .yar files from this folder and the downloaded YARA rules.',
+    'USB-Laufwerke beim Einstecken prüfen': 'Check USB drives when plugged in',
+    'Erkennt Vigil einen neuen Wechseldatenträger, fragt es per Benachrichtigung nach. Erst nach deinem Klick kommt das Laufwerk in die Prüfliste – geprüft wird nur lesend.': 'When Vigil detects a new removable drive, it asks via a notification. Only after your click is the drive added to the scan list – it is checked read-only.',
+    'Phishing-Adressen (OpenPhish Community)': 'Phishing addresses (OpenPhish Community)', 'Schadsoftware-Adressen (URLhaus, abuse.ch)': 'Malware addresses (URLhaus, abuse.ch)',
+    'Sicherheitshinweise (BSI CERT-Bund)': 'Security advisories (BSI CERT-Bund)', 'YARA-Regeln (signature-base)': 'YARA rules (signature-base)', 'Semgrep-Regeln (Registry p/default)': 'Semgrep rules (registry p/default)',
+    'nuclei-Vorlagen (vom Werkzeug selbst aktualisiert)': 'nuclei templates (updated by the tool itself)', 'Werkzeug nicht installiert': 'tool not installed', 'nicht aktiv': 'not active', 'aktualisiert': 'updated',
+    'Neue Lücke': 'New vulnerability', 'BSI-Hinweis': 'BSI advisory', 'Zertifikat': 'Certificate', 'Details': 'Details', 'Alle ausblenden': 'Hide all', 'Hinweise aus der Überwachung': 'Notices from monitoring',
+    'Ohne neuen Scan erkannt: neue Schwachstellen in Paketen aus gespeicherten Prüfungen, passende BSI-Sicherheitshinweise und neue Zertifikate für deine Domains.': 'Detected without a new scan: new vulnerabilities in packages from stored scans, matching BSI security advisories and new certificates for your domains.',
+    'Wird beim nächsten Abgleich geladen.': 'Will be downloaded at the next sync.', 'YARA ist installiert.': 'YARA is installed.', 'YARA ist nicht installiert – die Regeln werden übersprungen.': 'YARA is not installed – the rules are skipped.',
     'Neue Prüfung': 'New scan', 'Ergebnis': 'Results', 'Übersicht': 'Overview', 'Verlauf': 'History', 'Aktive KI': 'Active AI', 'Einstellungen': 'Settings',
     'Was soll Vigil prüfen?': 'What should Vigil check?',
     'Ordner hineinziehen, Adresse eintippen oder unten eine Art wählen. Vigil prüft nur, was dir gehört – zerstörungsfrei.': 'Drop a folder, type an address or pick a type below. Vigil only checks what you own – non-destructively.',
@@ -198,6 +215,8 @@
   };
   // Teil-Uebersetzungen fuer zusammengesetzte Texte (Regex -> Ersatz)
   const PARTS = [
+    [/^Neu seit der letzten Prüfung \((\d+)\)$/, 'New since the last scan ($1)'], [/^(\d+) (Adressen|Meldungen|Vorlagen)$/, (m, n, u) => `${n} ${{ Adressen: 'addresses', Meldungen: 'advisories', Vorlagen: 'templates' }[u]}`],
+    [/^(YARA ist (?:nicht )?installiert[^.]*\.) (\d+) eigene Regeldatei\(en\)\.$/, (m, a, n) => `${a === 'YARA ist installiert.' ? 'YARA is installed.' : 'YARA is not installed – the rules are skipped.'} ${n} custom rule file(s).`], [/^Vorrat: /, 'Stored: '],
     [/^Erkannt: /, 'Detected: '], [/^Schritt (\d+) von (\d+)$/, 'Step $1 of $2'], [/^Befund (\d+) von (\d+)$/, 'Finding $1 of $2'], [/^zuletzt /, 'last '], [/ offen$/, ' open'],
     [/^Bereit – (\d+) Ziele? mit /, 'Ready – $1 target(s) with '], [/^(\d+) Ziele? in der Prüfliste$/, '$1 target(s) in the list'], [/^KI bereit: /, 'AI ready: '], [/^Kostenlos · /, 'Free · '],
     [/^Ollama läuft · Version /, 'Ollama running · version '], [/^(\d+) ausgewählt$/, '$1 selected'], [/^Detected: Datei\/Ordner$/, 'Detected: file/folder'],
