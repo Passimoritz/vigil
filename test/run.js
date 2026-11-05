@@ -381,6 +381,26 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
   check('validate: deterministische Befunde nicht gegengeprueft', !/Secret/.test(sent) && v.findings.some((f) => f.title === 'Secret'));
   check('validate: Code-Slice im Prompt', /SELECT/.test(sent));
 
+  // KI-Gegencheck fuer Regel-Befunde: Zweifel stuft herab (nie loeschen), Hinweise des Laufs gehen mit
+  {
+    const { reviewRuleFindings } = require('../src/core/harness');
+    const rf = [
+      F({ title: 'Ähnliche Domain kann Mails empfangen: a.com', severity: 'medium', source: 'typo-domains', sources: ['typo-domains'], evidence: 'a.com: MX vorhanden' }),
+      F({ title: 'Header fehlt', severity: 'medium', source: 'webscan', sources: ['webscan'] }),
+      F({ title: 'Nur Hinweis', severity: 'info', source: 'webscan', sources: ['webscan'] }),
+      F({ title: 'KI-Fund', severity: 'high' }),
+    ];
+    let prompt = '', calls = 0;
+    providers.callProvider = async (_cfg, { user }) => { calls++; prompt = user; return { text: JSON.stringify({ verdicts: [{ id: 0, verdict: 'doubtful', reason: 'Laut Hinweis leitet a.com auf die eigene Seite weiter.' }, { id: 1, verdict: 'plausible', reason: 'Header fehlt laut Beleg.' }] }), usage: { inputTokens: 5, outputTokens: 5 } }; };
+    const r = await reviewRuleFindings({ findings: rf, notes: ['Tippfehler-Domains, als deine erkannt: a.com (leitet auf www.a.de weiter)'], config: { provider: 'ollama', model: 'x', lang: 'de' } });
+    providers.callProvider = orig;
+    const d = r.findings.find((f) => /a\.com/.test(f.title));
+    check('ki-gegencheck: Zweifel stuft eine Stufe herab, Befund bleibt', d && d.severity === 'low' && d.severityOriginal === 'medium' && d.confidence === 'low' && d.validation.verdict === 'doubted' && r.findings.length === 4 && r.doubted === 1);
+    check('ki-gegencheck: plausibel bleibt unverändert, nur Regel-Befunde ab mittel', r.findings.find((f) => f.title === 'Header fehlt').severity === 'medium' && !/Nur Hinweis|KI-Fund/.test(prompt) && /leitet a\.com|leitet auf www\.a\.de/.test(prompt) && calls === 1);
+    const off = await reviewRuleFindings({ findings: rf, config: { provider: 'ollama', model: 'x', aiReview: false } });
+    check('ki-gegencheck: abschaltbar und ohne KI still', off.findings === rf && (await reviewRuleFindings({ findings: rf, config: {} })).reviewed === 0);
+  }
+
   const en = enrich(v.findings, hUnits);
   const byT = (t) => en.find((f) => f.title === t);
   check('evidence: KI bestaetigt -> ai-verified', byT('SQLi').assurance === 'ai-verified');
@@ -1440,11 +1460,17 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('internetdb: Ports, riskanter Port, bekannte CVEs', ['internetdb-ports', 'internetdb-risky-port-3306', 'internetdb-known-vulns'].every((x) => ids(idb.findings).includes(x)) && idb.ran);
     const v = netc.typoVariants('beispiel.de');
     check('tippfehler: Varianten ohne Original', v.length === 60 && !v.includes('beispiel.de') && v.includes('beispiel.com') && v.includes('beispil.de'));
-    const nsMap = { 'beispiel.de': ['ns1.mine.net'], 'beispiel.com': ['ns1.mine.net'], 'beispil.de': ['ns.other.net'] };
-    let contacted = false;
-    const typo = await netc.typoDomains('beispiel.de', { dns: { resolveNs: async (n) => { if (nsMap[n]) return nsMap[n]; throw nx(); }, resolveMx: async (n) => (n === 'beispil.de' ? [{ exchange: 'mx.other.net' }] : []), resolve4: async () => { contacted = true; return []; } } });
+    // beispiel.com: gleiche NS; beispiel.net: Strato, leitet aber auf die eigene Seite weiter (Schutz-Registrierung);
+    // beispiel.org: Mail ueber den eigenen Mail-Betreiber; beispil.de: fremd mit Mail
+    const nsMap = { 'beispiel.de': ['ns1.mine.net'], 'beispiel.com': ['ns1.mine.net'], 'beispiel.net': ['docks09.rzone.de'], 'beispiel.org': ['ns.other.net'], 'beispil.de': ['ns.other.net'] };
+    const mxMap = { 'beispiel.de': [{ exchange: 'mx1.mail.mine-mail.de' }], 'beispiel.net': [{ exchange: 'smtpin.rzone.de' }], 'beispiel.org': [{ exchange: 'mx2.mail.mine-mail.de' }], 'beispil.de': [{ exchange: 'mx.other.net' }] };
+    const probedHosts = [];
+    const typoCtx = { dns: { resolveNs: async (n) => { if (nsMap[n]) return nsMap[n]; throw nx(); }, resolveMx: async (n) => mxMap[n] || [], resolve4: async (n) => (n === 'beispiel.de' ? ['1.1.1.1'] : ['9.9.9.9']) },
+      fetch: async (url) => { const h = new URL(url).hostname; probedHosts.push(h); return { status: h === 'beispiel.net' ? 301 : 200, headers: new Headers(h === 'beispiel.net' ? { location: 'https://www.beispiel.de/' } : {}) }; } };
+    const typo = await netc.typoDomains('beispiel.de', typoCtx);
     all.push(...typo.findings); notesAll.push(...typo.notes);
-    check('tippfehler: fremde Variante mit Mail gemeldet, eigene ignoriert, nur DNS', typo.findings.some((f) => f.ruleId === 'typo-domains-registered' && /beispil\.de/.test(f.evidence) && !/beispiel\.com/.test(f.evidence)) && ids(typo.findings).includes('typo-domain-mail') && !contacted);
+    check('tippfehler: fremde Variante mit Mail gemeldet, eigene (NS, Weiterleitung, Mail-Betreiber) erkannt', typo.findings.some((f) => f.ruleId === 'typo-domains-registered' && /beispil\.de/.test(f.evidence) && !/beispiel\.(com|net|org)/.test(f.evidence)) && typo.findings.filter((f) => f.ruleId === 'typo-domain-mail').length === 1 && /beispiel\.net \(leitet auf www\.beispiel\.de weiter\)/.test(typo.notes.join(' ')) && /beispiel\.org/.test(typo.notes.join(' ')));
+    check('tippfehler: nur unklare Varianten aufgerufen, ohne Abruf nur DNS', !probedHosts.includes('beispiel.com') && probedHosts.includes('beispil.de') && (await netc.typoDomains('beispiel.de', { ...typoCtx, fetch: async () => { throw new Error('kein Netz erwartet'); } }, { probeRedirects: false })).findings.some((f) => /nur im DNS/.test(f.description)));
     let crtCalled = false;
     const soon = new Date(Date.now() + 5 * day).toUTCString();
     const subs = await netc.subdomains('example.com', { dns: { resolve4: async (n) => { if (n === 'api.example.com' || n === 'dev.example.com') return ['1.2.3.4']; throw nx(); }, resolve6: async () => { throw nx(); }, resolveCname: async () => { throw nx(); } } }, { host: 'www.example.com', deep: false, allowlist: ['api.example.com'], crtsh: async () => { crtCalled = true; return []; }, probe: async (h) => { check('subdomains: nur freigegebene Hosts kontaktiert', h === 'api.example.com'); return { ok: true, authorized: true, chain: [{ validTo: soon }] }; } });

@@ -85,7 +85,7 @@
     if (out == null && depth < 5) {
       let m = /^(\d+\.\s+)([\s\S]+)$/.exec(raw);
       if (m) { const b = translate(m[2], depth + 1); if (b !== m[2]) out = m[1] + b; }
-      if (out == null && (m = /^([\s\S]*\S) (\([^()]*\))$/.exec(raw))) { const b = translate(m[1], depth + 1); if (b !== m[1]) out = b + ' ' + translate(m[2], depth + 1); }
+      if (out == null && (m = /^([\s\S]*\S) \(([^()]*)\)$/.exec(raw))) { const b = translate(m[1], depth + 1), p = translate(m[2], depth + 1); if (b !== m[1] || p !== m[2]) out = `${b} (${p})`; }
       if (out == null && (m = /^([^:\n]{3,60}): (.+)$/.exec(raw))) { const b = translate(m[1], depth + 1); if (b !== m[1]) out = b + ': ' + translate(m[2], depth + 1); }
     }
     // Aufzaehlungen ("startet Programme, laedt Dateien"), Zeilen und Saetze einzeln

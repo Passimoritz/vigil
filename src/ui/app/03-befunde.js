@@ -135,7 +135,7 @@ function findingDetail(f) {
     danger && `<div class="f-sec${f.description ? '' : ' full'}"><h4>Was kann passieren?</h4><p>${glossify(esc(danger))}</p></div>`,
   ].filter(Boolean).join('');
   const check = f.validation && f.validation.reason
-    ? `<div class="f-sec check-sec"><h4>Gegenprüfung: ${f.validation.verdict === 'confirmed' ? 'bestätigt' : 'nicht eindeutig'}</h4><p>${esc(f.validation.reason)}</p></div>` : '';
+    ? `<div class="f-sec check-sec"><h4>${f.validation.by === 'ai-review' ? 'KI-Gegencheck' : 'Gegenprüfung'}: ${f.validation.verdict === 'confirmed' ? 'bestätigt' : f.validation.verdict === 'doubted' ? 'wahrscheinlich Fehlalarm' : 'nicht eindeutig'}</h4><p>${esc(f.validation.reason)}${f.severityOriginal ? ` <span class="muted">(Schwere von „${esc(SEV_LABEL[f.severityOriginal] || f.severityOriginal)}“ herabgestuft)</span>` : ''}</p></div>` : '';
   // Angriffsweg: die beteiligten Einzelbefunde zum Anklicken
   const linked = linkedOf(f);
   const linkedHtml = linked.length ? `<div class="f-sec linked-sec"><h4>Beteiligte Befunde</h4><div class="linked-list">${linked.map(({ x, k }) => `<button type="button" class="linked-row sev-${x.severity}" data-key="${esc(k)}"><span class="sev-tag">${SEV_LABEL[x.severity]}</span><span class="linked-title">${esc(cleanTitle(x.title))}</span><span class="linked-go" aria-hidden="true">›</span></button>`).join('')}</div></div>` : '';

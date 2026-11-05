@@ -183,6 +183,71 @@ async function validateFindings({ findings, units, config, onProgress = () => {}
   return { findings: kept, refuted, usage, errors };
 }
 
+// --- KI-Gegencheck fuer Regel-Befunde ------------------------------------
+// Regeln sind schnell, aber stur: Eine Weiterleitung, eine eigene Schutz-Registrierung oder ein Testordner
+// sieht fuer sie aus wie ein Problem. Die KI liest jeden Regel-Befund (ab "mittel") samt Beleg und den
+// Hinweisen des Laufs und sagt, ob er plausibel ist. Regel-Befunde werden NIE geloescht – ein Zweifel
+// senkt nur die Schwere um eine Stufe und die Verlaesslichkeit auf "niedrig", mit Begruendung.
+const REVIEW_PROMPT = `Du bist ein erfahrener, nuechterner Security-Reviewer. Ein regelbasierter Scanner hat Befunde gemeldet. Regeln liegen oft daneben, weil ihnen Zusammenhang fehlt (z. B. eine aehnliche Domain, die in Wahrheit dem Betreiber selbst gehoert und auf seine Seite weiterleitet; ein Test- oder Beispielordner; ein Wert, der nur so aussieht wie ein Geheimnis).
+
+Pruefe jeden Befund anhand von Titel, Beschreibung, Beleg, Ort und den Hinweisen des Laufs:
+- "plausible": der Beleg stuetzt den Befund, ein Mensch sollte ihn sich ansehen.
+- "doubtful": der Beleg oder die Hinweise sprechen klar dagegen, oder der Befund ist fuer den beschriebenen Fall offensichtlich harmlos.
+- "uncertain": aus den Angaben nicht zu entscheiden.
+Erfinde keine Fakten, die nicht in den Angaben stehen. Begruende in einem kurzen Satz in einfacher Sprache. Gib KEINE Angriffs-Payloads aus.
+
+Antworte AUSSCHLIESSLICH mit JSON: {"verdicts":[{"id": number, "verdict": "plausible"|"doubtful"|"uncertain", "reason": string}]}`;
+const SEV_DOWN = { critical: 'high', high: 'medium', medium: 'low', low: 'info', info: 'info' };
+const REVIEW_BATCH = 8;
+const MAX_REVIEW = 40;
+
+// Liefert { findings, usage, errors, reviewed, doubted }.
+async function reviewRuleFindings({ findings, notes = [], config, onProgress = () => {} }) {
+  const errors = [];
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  const none = { findings, usage, errors, reviewed: 0, doubted: 0 };
+  if (config.aiReview === false || config.aiValidation === false || !config.provider || !config.model) return none;
+  const candidates = findings.filter((f) => !isAiOnly(f) && !f.validation && ['critical', 'high', 'medium'].includes(f.severity)).slice(0, MAX_REVIEW);
+  if (!candidates.length) return none;
+  const redact = shouldRedact(config);
+  const lang = config.lang === 'de' ? 'Schreibe die Begruendung auf Deutsch.' : 'Write the reason in English.';
+  const context = notes.filter(Boolean).slice(0, 40).map((n) => `- ${String(n).slice(0, 400)}`).join('\n');
+  const verdictOf = new Map();
+  const batches = [];
+  for (let i = 0; i < candidates.length; i += REVIEW_BATCH) batches.push(candidates.slice(i, i + REVIEW_BATCH));
+  onProgress({ phase: 'validate', message: `KI-Gegencheck: ${candidates.length} Regel-Befund(e) werden auf Fehlalarme geprüft …`, total: batches.length, done: 0 });
+  for (let b = 0; b < batches.length; b++) {
+    if (config.signal && config.signal.aborted) break;
+    const items = batches[b].map((f, i) => `### Befund ${i}\nTitel: ${f.title}\nSchwere: ${f.severity}\nErkannt durch: ${f.source || '-'} (${f.ruleId || '-'})\nOrt: ${f.location || '-'}\nBeschreibung: ${f.description || '-'}\nBeleg: ${String(f.evidence || '-').slice(0, 600)}`);
+    let user = `Hinweise des Laufs (Zusammenhang):\n${context || '- keine'}\n\nPruefe die folgenden ${items.length} Befunde. Nutze als id die Nummer hinter "Befund". ${lang}\n\n${items.join('\n\n')}`;
+    if (redact) user = redactForCloud(user, config).text;
+    try {
+      const { text, usage: u } = await providers.callProvider({ ...config, temperature: 0 }, { system: REVIEW_PROMPT, user, kind: 'validate' });
+      if (u) { usage.inputTokens += u.inputTokens || 0; usage.outputTokens += u.outputTokens || 0; }
+      for (const v of parseVerdicts(text)) {
+        const f = batches[b][Number(v.id)];
+        if (f && ['plausible', 'doubtful', 'uncertain'].includes(v.verdict)) verdictOf.set(f, { verdict: v.verdict, reason: String(v.reason || '').trim().slice(0, 500) });
+      }
+    } catch (e) {
+      if ((config.signal && config.signal.aborted) || e.name === 'AbortError') break;
+      errors.push(`KI-Gegencheck: ${e.message}`);
+      break; // KI nicht erreichbar -> nicht fuer jeden Block erneut versuchen
+    }
+    onProgress({ phase: 'validate', message: `KI-Gegencheck ${b + 1}/${batches.length}`, total: batches.length, done: b + 1 });
+  }
+  let doubted = 0;
+  const out = findings.map((f) => {
+    const v = verdictOf.get(f);
+    if (!v) return f;
+    const review = { verdict: v.verdict === 'plausible' ? 'confirmed' : v.verdict === 'doubtful' ? 'doubted' : 'uncertain', reason: v.reason, by: 'ai-review' };
+    if (v.verdict !== 'doubtful') return { ...f, validation: review };
+    doubted++;
+    return { ...f, validation: review, severityOriginal: f.severity, severity: SEV_DOWN[f.severity] || f.severity, confidence: 'low' };
+  });
+  if (doubted) errors.push(`KI-Gegencheck: ${doubted} Regel-Befund(e) als wahrscheinlicher Fehlalarm herabgestuft (nicht gelöscht).`);
+  return { findings: out, usage, errors, reviewed: verdictOf.size, doubted };
+}
+
 // --- Belege & Kontext ----------------------------------------------------
 const EXPOSED_PATH = /(^|\/)(routes?|controllers?|api|handlers?|endpoints?|views?|server|resolvers?|webhooks?)(\/|\.|$)/i;
 const EXPOSED_CODE = /\b(?:app|router)\.(?:get|post|put|patch|delete|all)\s*\(|@(?:app|bp|router)\.(?:route|get|post)|@(?:Get|Post|Put|Delete|Request)Mapping|\[Http(?:Get|Post|Put|Delete)\]|createServer\s*\(|ipcMain\.handle/;
@@ -214,4 +279,4 @@ function enrich(findings, units = []) {
   return findings.map((f) => ({ ...f, assurance: assuranceOf(f), context: contextOf(f, units) }));
 }
 
-module.exports = { redactSecrets, redactPrivate, redactForCloud, shouldRedact, extractSlice, validateFindings, enrich, assuranceOf, parseVerdicts, VALIDATOR_PROMPT };
+module.exports = { redactSecrets, redactPrivate, redactForCloud, shouldRedact, extractSlice, validateFindings, reviewRuleFindings, enrich, assuranceOf, parseVerdicts, VALIDATOR_PROMPT, REVIEW_PROMPT };

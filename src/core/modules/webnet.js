@@ -275,12 +275,41 @@ function typoVariants(domain, max = 60) {
   return [...out].slice(0, max);
 }
 
-async function typoDomains(domain, ctx = {}, { signal, max = 60 } = {}) {
+// Gehoert ein Host zur Domain (oder ist er die Domain selbst)?
+const under = (h, dom) => { const x = String(h || '').toLowerCase().replace(/\.$/, ''); return x === dom || x.endsWith('.' + dom); };
+// Grobe registrierbare Domain eines Hostnamens (letzte zwei Labels) – reicht fuer den Vergleich von NS/MX-Betreibern.
+const baseOf = (h) => String(h || '').toLowerCase().replace(/\.$/, '').split('.').slice(-2).join('.');
+// Grosse Hoster/DNS-Anbieter: gleicher Anbieter heisst NICHT gleicher Besitzer.
+const SHARED_INFRA = /(?:^|\.)(?:cloudflare\.com|awsdns-\d+\.\w+|azure-dns\.\w+|googledomains\.com|google\.com|domaincontrol\.com|registrar-servers\.com|rzone\.de|strato-rz\.de|ui-dns\.\w+|ionos\.\w+|hetzner\.\w+|your-server\.de|inwx\.\w+|ovh\.net|anycast\.me|netcup\.net|checkdomain\.de|he\.net|nsone\.net|dnsmadeeasy\.com|outlook\.com|googlemail\.com|zoho\.\w+|kasserver\.com|all-inkl\.com|hosteurope\.de|df\.eu|sedoparking\.com|parkingcrew\.net|bodis\.com)$/i;
+
+// Ruft die Startseite der Variante EINMAL auf (ohne Weiterleitungen zu folgen) und liefert das Ziel einer Weiterleitung.
+async function redirectTarget(ctx, host, signal) {
+  const f = ctx.fetch || fetch;
+  for (const scheme of ['http', 'https']) {
+    const t = AbortSignal.timeout(6000);
+    try {
+      const r = await f(`${scheme}://${host}/`, { method: 'GET', redirect: 'manual', headers: { 'User-Agent': UA }, signal: signal ? AbortSignal.any([t, signal]) : t });
+      try { if (r.body && r.body.cancel) await r.body.cancel(); } catch { /* egal */ }
+      const loc = r.headers && r.headers.get ? r.headers.get('location') : null;
+      if (r.status >= 300 && r.status < 400 && loc) { try { return new URL(loc, `${scheme}://${host}/`).hostname.toLowerCase(); } catch { return null; } }
+      return null;
+    } catch (e) { if (signal && signal.aborted) return null; }
+  }
+  return null;
+}
+
+// opts.probeRedirects (Standard an): je existierender Variante einmal die Startseite abrufen, um eine
+// Weiterleitung auf die eigene Domain (= eigene Schutz-Registrierung) zu erkennen.
+async function typoDomains(domain, ctx = {}, { signal, max = 60, probeRedirects = true } = {}) {
   const M = 'typo-domains';
   const d = resolver(ctx);
   const own = await dnsTry(() => d.resolveNs(domain));
   if (!own.ok) return { ran: false, findings: [], notes: [`Tippfehler-Domains: DNS nicht erreichbar (${own.error}).`] };
   const ownNs = new Set(own.value.map((x) => String(x).toLowerCase()));
+  const val = async (fn) => { const r = await dnsTry(fn); return r.ok ? r.value : []; };
+  const ownMx = (await val(() => d.resolveMx(domain))).map((x) => String(x.exchange || '').toLowerCase()).filter(Boolean);
+  const ownA = new Set(d.resolve4 ? await val(() => d.resolve4(domain)) : []);
+  const ownBases = new Set([...ownNs, ...ownMx].map(baseOf).filter((b) => b && !SHARED_INFRA.test(b)));
   let errors = 0;
   const variants = typoVariants(domain, max);
   const found = (await pool(variants, 5, async (v) => {
@@ -288,16 +317,37 @@ async function typoDomains(domain, ctx = {}, { signal, max = 60 } = {}) {
     const ns = await dnsTry(() => d.resolveNs(v));
     if (!ns.ok) { errors++; return null; }
     if (!ns.value.length) return null;
-    const mine = ns.value.some((x) => ownNs.has(String(x).toLowerCase()));
-    const mx = await dnsTry(() => d.resolveMx(v));
-    return { v, mine, mx: mx.ok && mx.value.length > 0 };
+    const vNs = ns.value.map((x) => String(x).toLowerCase());
+    // "Null MX" (RFC 7505: Ziel ".") heisst ausdruecklich: hier gibt es keine Mail
+    const vMx = (await val(() => d.resolveMx(v))).map((x) => String(x.exchange || '').toLowerCase().replace(/\.$/, '')).filter(Boolean);
+    let why = null;
+    if (vNs.some((x) => ownNs.has(x))) why = 'gleiche Nameserver';
+    else if (vNs.some((x) => under(x, domain)) || vMx.some((x) => under(x, domain))) why = `Nameserver/Mailserver unter ${domain}`;
+    else if (vMx.some((x) => ownMx.includes(x))) why = 'gleiche Mailserver';
+    else if ([...vNs, ...vMx].some((x) => ownBases.has(baseOf(x)))) why = 'gleicher DNS-/Mail-Betreiber wie deine Domain';
+    if (!why && ownA.size && d.resolve4) { const a = await val(() => d.resolve4(v)); if (a.some((ip) => ownA.has(ip))) why = 'gleiche IP-Adresse wie deine Seite'; }
+    return { v, why, mx: vMx.length > 0 };
   })).filter(Boolean);
   if (errors > variants.length / 2) return { ran: false, findings: [], notes: ['Tippfehler-Domains: zu viele DNS-Fehler – Prüfung unvollständig.'] };
-  const foreign = found.filter((x) => !x.mine);
+  // Weiterleitung auf die eigene Domain = eigene Schutz-Registrierung (das typische Muster bei Banken und Marken)
+  let probed = 0;
+  if (probeRedirects) {
+    await pool(found.filter((x) => !x.why).slice(0, 15), 3, async (x) => {
+      if (signal && signal.aborted) return;
+      probed++;
+      const to = await redirectTarget(ctx, x.v, signal);
+      if (to && under(to, domain)) x.why = `leitet auf ${to} weiter`;
+    });
+  }
+  const mine = found.filter((x) => x.why);
+  const foreign = found.filter((x) => !x.why);
   const out = [];
-  if (foreign.length) out.push(W(M, { ruleId: 'typo-domains-registered', severity: 'info', category: 'Config', confidence: 'medium', title: `${foreign.length} ähnlich geschriebene Domains sind registriert`, location: `DNS ${domain}`, evidence: foreign.slice(0, 25).map((x) => x.v).join(', '), description: `Diese Schreibvarianten von ${domain} existieren und gehören nicht zu deinen Nameservern: ${foreign.slice(0, 25).map((x) => x.v).join(', ')}. Vigil hat nur im DNS nachgesehen und keinen dieser Server kontaktiert.`, impact: 'Betrüger nutzen solche Domains für Phishing-Mails und gefälschte Seiten, die wie deine aussehen.', remediation: 'Wichtige Schreibvarianten selbst registrieren und weiterleiten; verdächtige Domains beobachten und bei Missbrauch beim Registrar melden.' }));
-  for (const x of foreign.filter((y) => y.mx).slice(0, 5)) out.push(W(M, { ruleId: 'typo-domain-mail', severity: 'medium', category: 'Config', confidence: 'medium', title: `Ähnliche Domain kann Mails empfangen: ${x.v}`, location: `DNS ${x.v}`, evidence: `${x.v}: MX vorhanden`, description: `Die Domain ${x.v} sieht ${domain} zum Verwechseln ähnlich und hat einen Mailserver eingetragen.`, impact: 'Vertippt sich jemand beim Schreiben an dich, landet die Mail dort. Betrüger können damit außerdem täuschend echte Mails verschicken.', remediation: 'Prüfen, wem die Domain gehört; bei Missbrauch beim Registrar melden und die eigene Schreibvariante sichern.' }));
-  return { ran: true, findings: out, notes: [`Tippfehler-Domains: ${variants.length} Varianten im DNS nachgeschlagen, ${found.length} existieren (${found.length - foreign.length} davon bei deinen Nameservern).`] };
+  const how = probed ? `Vigil hat im DNS nachgesehen und bei ${probed} davon einmal die Startseite aufgerufen, um Weiterleitungen auf deine Domain zu erkennen.` : 'Vigil hat nur im DNS nachgesehen und keinen dieser Server kontaktiert.';
+  if (foreign.length) out.push(W(M, { ruleId: 'typo-domains-registered', severity: 'info', category: 'Config', confidence: 'medium', title: `${foreign.length} ähnlich geschriebene Domains sind registriert`, location: `DNS ${domain}`, evidence: foreign.slice(0, 25).map((x) => x.v).join(', '), description: `Diese Schreibvarianten von ${domain} existieren, und nichts deutet darauf hin, dass sie dir gehören: ${foreign.slice(0, 25).map((x) => x.v).join(', ')}. ${how}`, impact: 'Betrüger nutzen solche Domains für Phishing-Mails und gefälschte Seiten, die wie deine aussehen.', remediation: 'Wichtige Schreibvarianten selbst registrieren und weiterleiten; verdächtige Domains beobachten und bei Missbrauch beim Registrar melden.' }));
+  for (const x of foreign.filter((y) => y.mx).slice(0, 5)) out.push(W(M, { ruleId: 'typo-domain-mail', severity: 'medium', category: 'Config', confidence: 'medium', title: `Ähnliche Domain kann Mails empfangen: ${x.v}`, location: `DNS ${x.v}`, evidence: `${x.v}: MX vorhanden`, description: `Die Domain ${x.v} sieht ${domain} zum Verwechseln ähnlich und hat einen Mailserver eingetragen. Sie liegt bei einem anderen Anbieter als deine Domain und leitet nicht auf deine Seite weiter.`, impact: 'Vertippt sich jemand beim Schreiben an dich, landet die Mail dort. Betrüger können damit außerdem täuschend echte Mails verschicken.', remediation: 'Prüfen, wem die Domain gehört (Whois/Registrar). Gehört sie dir, eine Weiterleitung auf deine Seite einrichten, dann erkennt Vigil sie als deine. Sonst bei Missbrauch beim Registrar melden.' }));
+  const notes = [`Tippfehler-Domains: ${variants.length} Varianten im DNS nachgeschlagen, ${found.length} existieren (${mine.length} davon erkennbar deine).`];
+  if (mine.length) notes.push(`Tippfehler-Domains, als deine erkannt: ${mine.slice(0, 10).map((x) => `${x.v} (${x.why})`).join(', ')}${mine.length > 10 ? ' …' : ''}`);
+  return { ran: true, findings: out, notes };
 }
 
 module.exports = { OUTBOUND_HOSTS, extFetch, mailExtended, parseStsPolicy, dnssec, domainExpiry, tlsProbe, tlsDeepFindings, certExpiryFinding, subdomains, internetDb, typoVariants, typoDomains, expirySeverity };

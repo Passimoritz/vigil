@@ -277,13 +277,21 @@ async function runAudit(targets, config, onProgress = () => {}) {
   const staticFindings = [...pre.findings, ...gitFindings, ...mods.findings, ...cveFindings, ...webFindings, ...(ing.findings || [])];
   const extraMeta = { scannersRun, throttled, sbom, modulesRun: [...new Set(scannersRun.map((s) => s.source))], ...(Object.keys(webWatch).length ? { webWatch } : {}) };
 
+  // KI-Gegencheck: Regel-Befunde ab "mittel" liest die KI einmal mit Beleg und Lauf-Hinweisen gegen
+  const review = async (list) => {
+    if (aborted()) return { findings: list, errors: [], reviewed: 0, doubted: 0 };
+    try { return await require('./harness').reviewRuleFindings({ findings: list, notes: [...webNotes, ...moduleNotes], config, onProgress }); }
+    catch (e) { return { findings: list, errors: ['KI-Gegencheck: ' + e.message], reviewed: 0, doubted: 0 }; }
+  };
+
   if (!ing.units.length) {
-    const findings = finalize(enrich(dedupeFindings(staticFindings)), targets, config);
+    const rv = await review(dedupeFindings(staticFindings));
+    const findings = finalize(enrich(rv.findings), targets, config);
     const empty = {
       findings,
       summary: summarize(findings),
-      errors: [...(webTargets.length || targets.some((t) => t.type === 'image' || t.type === 'system') ? [] : ['Kein lesbares Pruefmaterial gefunden.']), ...webNotes, ...cveNotes, ...moduleNotes, ...ing.notes],
-      meta: { provider: config.provider, model: config.model, at: new Date().toISOString(), units: 0, batches: 0, ...extraMeta },
+      errors: [...(webTargets.length || targets.some((t) => t.type === 'image' || t.type === 'system') ? [] : ['Kein lesbares Pruefmaterial gefunden.']), ...webNotes, ...cveNotes, ...moduleNotes, ...ing.notes, ...rv.errors],
+      meta: { provider: config.provider, model: config.model, at: new Date().toISOString(), units: 0, batches: 0, ...extraMeta, aiReview: { reviewed: rv.reviewed, doubted: rv.doubted } },
     };
     empty.meta.runSummary = await runSummaryOf(empty, config);
     return { result: empty, ingest: ing, prescan: pre };
@@ -297,10 +305,11 @@ async function runAudit(targets, config, onProgress = () => {}) {
     config,
     onProgress,
   });
-  result.findings = finalize(result.findings, targets, config, ing.units);
+  const rv = await review(result.findings);
+  result.findings = finalize(rv.findings, targets, config, ing.units);
   result.summary = summarize(result.findings);
-  result.errors = [...result.errors, ...webNotes, ...cveNotes, ...moduleNotes, ...ing.notes];
-  Object.assign(result.meta, extraMeta);
+  result.errors = [...result.errors, ...webNotes, ...cveNotes, ...moduleNotes, ...ing.notes, ...rv.errors];
+  Object.assign(result.meta, extraMeta, { aiReview: { reviewed: rv.reviewed, doubted: rv.doubted } });
   result.meta.runSummary = await runSummaryOf(result, config);
   onProgress({ phase: 'done', message: `Fertig: ${result.summary.total} Befund(e).` });
   return { result, ingest: ing, prescan: pre };
