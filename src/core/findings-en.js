@@ -1308,6 +1308,16 @@
     ["Secret im Code","Secret in code"],
     ["in der MalwareBazaar-Datenbank als „{0}“.","in the MalwareBazaar database as “{0}”."],
     ["als „{0}“","as “{0}”"],
+    // KI & Behebung: Hinweise zum Lauf, Risikoakzeptanz, Bedrohungsmodell ohne KI
+    ["Budget: nur die {0} relevantesten von {1} Dateien gingen an die KI – {2} weniger relevante übersprungen (z. B. {3}).","Budget: only the {0} most relevant of {1} files went to the AI – {2} less relevant ones skipped (e.g. {3})."],
+    ["Relevanz: lokale Embeddings ({0}) nicht verfügbar – nur Heuristik genutzt.","Relevance: local embeddings ({0}) not available – heuristics only."],
+    ["Nachschlagen: {0} unterstützt keine Werkzeug-Aufrufe – normale Analyse ohne Nachschlagen.","Lookups: {0} does not support tool calls – normal analysis without lookups."],
+    ["Nachschlagen: {0} unterstützt keine Werkzeug-Aufrufe ({1}) – normale Analyse ohne Nachschlagen.","Lookups: {0} does not support tool calls ({1}) – normal analysis without lookups."],
+    ["Ordne {0} Dateien nach Relevanz (lokale Embeddings: {1}) …","Ranking {0} files by relevance (local embeddings: {1}) …"],
+    ["Risikoakzeptanz am {0} abgelaufen – wieder offen. Bitte neu bewerten.","Risk acceptance expired on {0} – open again. Please re-assess."],
+    ["KI nicht erreichbar ({0}) – aus den Befunden abgeleitet.","AI not reachable ({0}) – derived from the findings."],
+    ["KI-Antwort enthielt kein verwertbares Bedrohungsmodell.","The AI response contained no usable threat model."],
+    ["Ohne KI aus den Befunden dieses Laufs abgeleitet – jeder Befund ist seiner STRIDE-Bedrohungsklasse zugeordnet. Mit KI entsteht ein projektbezogenes Modell.","Derived from the findings of this run without AI – each finding is assigned to its STRIDE threat class. Configure an AI for a project-specific model."],
   ];
   if (typeof module === 'object' && module.exports) module.exports = PAIRS;
   else root.VIGIL_FINDINGS_EN = PAIRS;

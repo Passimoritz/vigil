@@ -98,6 +98,7 @@ const ollama = require('./ollama');
 
 let win;
 let lastResult = null;
+let lastHistoryId = null;
 let lastTargets = [];
 // Angaben fuer den Berichtskopf: gepruefte Ziele, Firma und Logo aus den Einstellungen
 // Englische Berichte: Befundtexte und Vorlage nachtraeglich uebersetzen (Standard; Deutsch nur bei lang 'de')
@@ -125,6 +126,7 @@ function recordHistory(result, targets) {
   try {
     fs.mkdirSync(HISTORY_DIR(), { recursive: true });
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    lastHistoryId = id;
     const entry = {
       id, at: new Date().toISOString(),
       provider: (result.meta && result.meta.provider) || '', model: (result.meta && result.meta.model) || '',
@@ -185,6 +187,13 @@ const ENV_KEY = {
   openai: 'OPENAI_API_KEY',
   gemini: 'GEMINI_API_KEY',
   compat: 'OPENAI_COMPAT_API_KEY',
+  mistral: 'MISTRAL_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  groq: 'GROQ_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  azure: 'AZURE_OPENAI_API_KEY',
+  bedrock: 'AWS_BEARER_TOKEN_BEDROCK',
+  vertex: 'VERTEX_ACCESS_TOKEN',
 };
 
 function defaultConfig() {
@@ -238,6 +247,25 @@ function effectiveConfig(cfg, providerId) {
     consensusModel: (p.consensusModel || '').trim() || null,
     // Sprache der KI-Befundtexte (wie die Oberflaeche)
     lang: cfg.lang === 'de' ? 'de' : 'en',
+    // Azure OpenAI: API-Version je Anbieter (optional)
+    apiVersion: (p.apiVersion || '').trim() || undefined,
+    // Eigene Schwerpunkte/Vorgaben fuer die KI (gehen in Prompt und Zwischenspeicher-Schluessel ein)
+    aiFocus: String(cfg.aiFocus || '').slice(0, 2000),
+    // Strenger Datenschutz: zusaetzlich Firmennamen, interne Hosts, E-Mails, Personennamen schwaerzen
+    privacyMode: !!cfg.privacyMode,
+    privacyTerms: Array.isArray(cfg.privacyTerms) ? cfg.privacyTerms : [],
+    privacyHosts: Array.isArray(cfg.privacyHosts) ? cfg.privacyHosts : [],
+    // KI darf waehrend der Analyse Dateien/Definitionen nachschlagen (begrenzt je Block)
+    aiLookup: !!cfg.aiLookup,
+    aiLookupMax: Math.min(10, Math.max(1, Number(cfg.aiLookupMax) || 4)),
+    // Protokoll fuer Reproduzierbarkeit (Prompts, Modell, Parameter, Hashes)
+    aiRepro: !!cfg.aiRepro,
+    // Grosse Projekte: nach Relevanz ordnen, optional nur die N wichtigsten Dateien; lokale Embeddings
+    rankFiles: cfg.rankFiles !== false,
+    aiFileBudget: Math.max(0, Math.floor(Number(cfg.aiFileBudget) || 0)),
+    embedModel: String(cfg.embedModel || '').trim(),
+    embedBaseUrl: (cfg.providers.ollama && cfg.providers.ollama.baseUrl) || 'http://localhost:11434',
+    aiRunSummary: cfg.aiRunSummary !== false,
   };
 }
 
@@ -406,12 +434,20 @@ ipcMain.handle('audit:run', async (e, payload) => {
   if (scope.allow.length) { cfg.allowlist = normalizeAllowlist([...cfg.allowlist, ...scope.allow]); saveConfig(cfg); }
   const clock = new timing.PhaseClock();
   const providerId = v.data.providerId || cfg.selected;
+  // Monatliches KI-Budget: ausgeschoepft -> nur nach ausdruecklicher Bestaetigung starten
+  const over = v.data.targets.some((t) => t.type === 'path') ? budgetBlocked(cfg, effectiveConfig(cfg, providerId)) : null;
+  if (over && !v.data.budgetConfirmed) return { ok: false, budgetExceeded: true, budget: over, error: budgetMsg(over) };
   const job = orchestrator.enqueue({
     targets: scope.targets, providerId, origin: 'app',
     onProgress: (p) => { clock.tick(p); try { e.sender.send('audit:progress', p); } catch { /* Fenster weg */ } },
   });
   const out = await job.done;
-  if (out.ok) { lastResult = out.result; lastTargets = scope.targets; recordHistory(out.result, scope.targets); }
+  if (out.ok) {
+    lastResult = out.result; lastTargets = scope.targets; recordHistory(out.result, scope.targets);
+    const meta = out.result.meta || {};
+    const usd = ((meta.usage && meta.usage.usd) || 0) + ((meta.runSummary && meta.runSummary.usd) || 0);
+    recordSpend({ kind: 'run', usd, provider: meta.provider, model: meta.model, inputTokens: meta.usage && meta.usage.inputTokens, outputTokens: meta.usage && meta.usage.outputTokens, runId: out.runId });
+  }
   // Aus vollstaendigen Laeufen lernen, wie lange welche Phase wirklich dauert
   if (out.ok && !out.canceled) {
     try {
@@ -457,7 +493,7 @@ ipcMain.handle('crash:info', () => { try { return { count: fs.readdirSync(CRASH_
 ipcMain.handle('crash:open', () => { fs.mkdirSync(CRASH_DIR(), { recursive: true }); return shell.openPath(CRASH_DIR()).then((err) => ({ ok: !err })); });
 
 const ASK_PROMPT = `Du bist ein erfahrener, defensiver Sicherheitsberater und beantwortest Rueckfragen zu EINEM Befund aus einer Sicherheitspruefung des eigenen Projekts des Nutzers.
-- Antworte auf Deutsch, in Alltagssprache. KURZ: hoechstens 5 Saetze ODER 3-5 Stichpunkte, dazu bei Bedarf EIN kurzer Codeblock.
+- Antworte in Alltagssprache. KURZ: hoechstens 5 Saetze ODER 3-5 Stichpunkte, dazu bei Bedarf EIN kurzer Codeblock.
 - Beginne direkt mit der Antwort (erste Zeile = Kernaussage, z. B. "**Ja, wahrscheinlich ausnutzbar**, weil …"). KEINE Einleitung, keine Wiederholung des Befunds oder der Frage, keine Hoeflichkeitsfloskeln, keine Zusammenfassung am Ende.
 - Formatiere mit Markdown: **fett** fuer die Kernaussage, "- " fuer Stichpunkte, Backticks fuer Namen im Text und Codebloecke mit drei Backticks. Keine Tabellen, keine Ueberschriften.
 - Beziehe dich auf den mitgelieferten Code-Ausschnitt. Reicht er nicht, sag in einem Satz, was man zusaetzlich pruefen muesste.
@@ -470,20 +506,122 @@ ipcMain.handle('finding:ask', async (_e, payload) => {
   const f = p.finding || {};
   const cfg = loadConfig();
   const eff = effectiveConfig(cfg, cfg.selected);
+  const over = budgetBlocked(cfg, eff);
+  if (over) return { ok: false, budgetExceeded: true, error: budgetMsg(over) };
   let code = '';
   try { const s = readSnippet(f.location, 30); if (s) code = `Datei ${s.file}, Zeilen ${s.from}–${s.from + s.lines.length - 1} (Befund in Zeile ${s.line}):\n` + s.lines.map((l, i) => `${String(s.from + i).padStart(5)}  ${l}`).join('\n'); } catch { /* ohne Code */ }
   const facts = [`Titel: ${f.title || ''}`, `Schwere: ${f.severity || ''}`, `Ort: ${f.location || ''}`, `Kategorie: ${f.category || ''}`, f.description && `Beschreibung: ${f.description}`, f.impact && `Auswirkung: ${f.impact}`, f.reachability && `Erreichbarkeit: ${f.reachability}`, f.remediation && `Behebung: ${f.remediation}`].filter(Boolean).map((x) => String(x).slice(0, 1500)).join('\n');
   const history = (Array.isArray(p.history) ? p.history : []).slice(-6).map((h) => `${h.role === 'user' ? 'Frage' : 'Antwort'}: ${String(h.text || '').slice(0, 1500)}`).join('\n\n');
   let user = `## Befund\n${facts}\n\n${code ? '## Code\n```\n' + code + '\n```\n\n' : '## Code\n(nicht verfuegbar)\n\n'}${history ? '## Bisheriges Gespraech\n' + history + '\n\n' : ''}## Neue Frage\n${question}`;
-  const { shouldRedact, redactSecrets } = require('../src/core/harness');
-  if (shouldRedact(eff)) user = redactSecrets(user).text;
+  // Eigene Vorgaben (Einstellungen) auch bei Rueckfragen beruecksichtigen
+  if (eff.aiFocus) user = '## Vorgaben des Nutzers\n' + eff.aiFocus + '\n\n' + user;
+  const { shouldRedact, redactForCloud } = require('../src/core/harness');
+  if (shouldRedact(eff)) user = redactForCloud(user, eff).text;
   try {
     const { callProvider } = require('../src/core/providers');
-    const r = await callProvider({ ...eff, maxTokens: 700 }, { system: ASK_PROMPT, user, json: false });
+    const r = await callProvider({ ...eff, maxTokens: 700 }, { system: ASK_PROMPT + (eff.lang === 'de' ? '\n- Antworte auf Deutsch.' : '\n- Answer in English.'), user, json: false, kind: 'ask' });
+    const u = r.usage || {};
+    const c = require('../src/core/cost').estimateCost({ provider: eff.provider, model: eff.model, baseUrl: eff.baseUrl, inputTokens: u.inputTokens || 0, outputTokens: u.outputTokens || 0 });
+    recordSpend({ kind: 'ask', usd: c.usd, provider: eff.provider, model: eff.model, inputTokens: c.inputTokens, outputTokens: c.outputTokens });
     let text = String(r.text || '').trim();
     // Manche lokalen Modelle antworten wegen JSON-Modus in JSON – dann den Text herausziehen
     try { const j = JSON.parse(text); text = j.answer || j.antwort || j.text || Object.values(j).find((v) => typeof v === 'string') || text; } catch { /* normaler Text */ }
     return { ok: true, answer: text, withCode: !!code, model: eff.model };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// --- Monatliches KI-Budget ----------------------------------------------------
+const budget = require('../src/core/budget');
+const { isLocalProvider } = require('../src/core/cost');
+const SPEND_PATH = () => path.join(app.getPath('userData'), 'ai-spend.json');
+function recordSpend(entry) {
+  if (!entry || !(Number(entry.usd) > 0)) return;
+  try { const l = budget.load(SPEND_PATH()); budget.record(l, entry); budget.save(SPEND_PATH(), l); } catch { /* nicht kritisch */ }
+}
+// Liefert die Budget-Lage, wenn das Monatsbudget eines Cloud-Anbieters ausgeschoepft ist – sonst null
+function budgetBlocked(cfg, eff) {
+  const b = Number(cfg.monthlyBudgetUsd) || 0;
+  if (!b || isLocalProvider(eff.provider, eff.baseUrl)) return null;
+  const s = budget.stats(budget.load(SPEND_PATH()), b);
+  return s.exceeded ? s : null;
+}
+const budgetMsg = (s) => `Monatliches KI-Budget ausgeschöpft: ${s.spent.toFixed(2)} $ von ${s.budget.toFixed(2)} $ in ${s.month}.`;
+ipcMain.handle('budget:stats', () => { const c = loadConfig(); return budget.stats(budget.load(SPEND_PATH()), Number(c.monthlyBudgetUsd) || 0); });
+
+// --- KI-Hilfen auf Knopfdruck (Patch, Erklaerstufen, Bedrohungsmodell, Upgrade) --------
+// Alles nur Vorschlaege: Vigil schreibt keine Datei, der Nutzer kopiert/uebernimmt selbst.
+const aifix = require('../src/core/aifix');
+const findingOf = (f) => { const x = f && typeof f === 'object' ? f : {}; const s = (k, n = 3000) => String(x[k] == null ? '' : x[k]).slice(0, n); return { id: s('id', 100), title: s('title', 300), severity: s('severity', 20), location: s('location', 500), category: s('category', 40), cwe: s('cwe', 40), description: s('description'), impact: s('impact'), reachability: s('reachability'), remediation: s('remediation') }; };
+async function onDemand(kind, fn) {
+  const cfg = loadConfig();
+  applyProxySafe(cfg);
+  const eff = effectiveConfig(cfg, cfg.selected);
+  const over = budgetBlocked(cfg, eff);
+  if (over) return { ok: false, budgetExceeded: true, error: budgetMsg(over) };
+  try {
+    const r = await fn(eff, cfg);
+    if (r && r.cost) recordSpend({ kind, usd: r.cost.usd, provider: eff.provider, model: eff.model, inputTokens: r.cost.inputTokens, outputTokens: r.cost.outputTokens });
+    return r;
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+ipcMain.handle('finding:patch', (_e, payload) => onDemand('patch', async (eff) => {
+  const f = findingOf(payload && payload.finding);
+  let code = null;
+  try { code = readSnippet(f.location, 40); } catch { /* ohne Code */ }
+  return aifix.generatePatch({ finding: f, code, config: eff });
+}));
+ipcMain.handle('finding:explain', (_e, payload) => onDemand('explain', async (eff) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const f = findingOf(p.finding);
+  let code = null;
+  try { code = readSnippet(f.location, 20); } catch { /* ohne Code */ }
+  return aifix.explainFinding({ finding: f, level: String(p.level || 'dev'), code, config: eff, cache: aiCache(), refresh: !!p.refresh });
+}));
+function saveLastToHistory() {
+  if (!lastHistoryId || !lastResult) return;
+  try { fs.writeFileSync(path.join(HISTORY_DIR(), lastHistoryId + '.json'), JSON.stringify(lastResult), 'utf8'); } catch { /* egal */ }
+}
+ipcMain.handle('threat:model', () => {
+  if (!lastResult) return { ok: false, error: 'Noch kein Ergebnis vorhanden.' };
+  return onDemand('threat', async (eff) => {
+    const tm = await aifix.threatModel({ result: lastResult, targets: lastTargets, config: eff });
+    lastResult.meta = { ...(lastResult.meta || {}), threatModel: { ...tm, cost: undefined, usage: undefined } };
+    saveLastToHistory(); // geht so auch in spaetere Berichte aus dem Verlauf ein
+    return { ok: true, threatModel: lastResult.meta.threatModel, cost: tm.cost };
+  });
+});
+// Upgrade-Hinweise: Links aus den Registry-Metadaten duerfen danach geoeffnet werden
+const guideLinks = new Set();
+ipcMain.handle('upgrade:guide', (_e, pkg) => {
+  const p = pkg && typeof pkg === 'object' ? pkg : {};
+  const clean = { ecosystem: String(p.ecosystem || '').slice(0, 40), name: String(p.name || '').slice(0, 214), version: String(p.version || '').slice(0, 80), fixed: String(p.fixed || '').slice(0, 80) };
+  if (!clean.name || !/^[\w@./:+-]+$/.test(clean.name)) return { ok: false, error: 'Ungültiges Paket.' };
+  return onDemand('upgrade', async (eff) => {
+    const useAi = eff.provider && (isLocalProvider(eff.provider, eff.baseUrl) || eff.apiKey || ['vertex', 'bedrock'].includes(eff.provider));
+    const r = await require('../src/core/upgrade').upgradeGuide({ pkg: clean, config: useAi ? eff : null, aiCall: aifix.aiCall });
+    for (const l of r.links) if (/^https:\/\//.test(l.url)) guideLinks.add(l.url);
+    if (guideLinks.size > 500) guideLinks.clear();
+    return r;
+  });
+});
+// Rechner-Ausstattung und passendes lokales Modell
+ipcMain.handle('localai:hardware', async () => {
+  const hw = require('../src/core/hwdetect');
+  try {
+    const info = await hw.detectHardware();
+    let installed = [];
+    try { installed = ((await ollama.status(ollamaBase())).models || []).map((m) => m.name); } catch { /* Ollama aus */ }
+    return { ok: true, ...info, recommendation: hw.recommendModel(info, installed) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+// Verlauf: Details eines Laufs (Zusammenfassung, Kosten, Reproduzierbarkeits-Protokoll) ohne ihn zu oeffnen
+ipcMain.handle('history:details', (_e, id) => {
+  const safe = String(id || '').replace(/[^a-z0-9]/gi, '');
+  try {
+    const r = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR(), safe + '.json'), 'utf8'));
+    const m = r.meta || {};
+    const repro = m.repro ? { ...m.repro, integrity: require('../src/core/repro').verifyLog(m.repro) } : null;
+    return { ok: true, provider: m.provider, model: m.model, at: m.at, usage: m.usage || null, runSummary: m.runSummary || null, focus: !!m.focus, lookups: m.lookups ?? null, privacyMode: !!m.privacyMode, skippedByBudget: m.skippedByBudget || 0, repro };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
@@ -500,7 +638,11 @@ ipcMain.handle('sample:demo', async () => {
     const ing = await ingestTargets([{ type: 'path', value: dir }]);
     const pre = prescan(ing.units, {});
     const findings = sortFindings(applyTaxonomy(dedupeFindings([...pre.findings, ...runStaticModules(ing.units).findings]).map(enrichRemedy)));
-    return { ok: true, result: { findings, summary: summarize(findings), errors: ['Beispiel-Lauf: absichtlich unsicheres Übungsprojekt, nur feste Regeln (ohne KI).'], meta: { provider: 'regeln', model: 'ohne KI', at: new Date().toISOString(), units: ing.units.length, demo: true } } };
+    const result = { findings, summary: summarize(findings), errors: ['Beispiel-Lauf: absichtlich unsicheres Übungsprojekt, nur feste Regeln (ohne KI).'], meta: { provider: 'regeln', model: 'ohne KI', at: new Date().toISOString(), units: ing.units.length, demo: true } };
+    result.meta.runSummary = { text: require('../src/core/aifix').ruleSummary(result, { lang: loadConfig().lang }), source: 'rules' };
+    // Damit Export und Bedrohungsmodell auch fuer den Beispiel-Lauf funktionieren
+    lastResult = result; lastTargets = [{ value: 'bench/vulnerable-app' }]; lastHistoryId = null;
+    return { ok: true, result };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
@@ -526,9 +668,9 @@ ipcMain.handle('audit:estimate', async (_e, payload) => {
 ipcMain.handle('finding:setStatus', (_e, id, body) => {
   const v = check(StatusUpdateSchema, body);
   if (!v.ok) return { ok: false, error: v.error };
-  const r = orchestrator.setStatus(String(id || ''), v.data.status, v.data.note);
+  const r = orchestrator.setStatus(String(id || ''), v.data.status, v.data.note, { expiresInDays: v.data.expiresInDays });
   if (r.ok && lastResult) refreshStatuses(lastResult);
-  return r.ok ? { ok: true, status: r.finding.status } : r;
+  return r.ok ? { ok: true, status: r.finding.status, acceptedUntil: r.finding.acceptedUntil || null } : r;
 });
 ipcMain.handle('dashboard:get', (_e, filter) => ({ stats: orchestrator.stats(), findings: orchestrator.listFindings(filter || {}) }));
 ipcMain.handle('store:clear', () => { orchestrator.clear(); return { ok: true }; });
@@ -569,7 +711,7 @@ ipcMain.handle('feeds:status', () => ({ feeds: feeds.feedStatus(FEEDS_DIR()), in
 ipcMain.handle('feeds:sync', async () => { const [a, b] = await Promise.all([syncFeedsInBackground(true), syncIntelInBackground(true)]); return { ok: !!(a && a.ok !== false) && !!(b && b.ok !== false), feeds: a, intel: b }; });
 
 // --- Links: nur geprüfte Ziele im Standardbrowser öffnen --------------------
-ipcMain.handle('link:open', (_e, url) => (isAllowedLink(String(url || '')) ? shell.openExternal(String(url)).then(() => ({ ok: true })) : { ok: false, error: 'Link nicht erlaubt.' }));
+ipcMain.handle('link:open', (_e, url) => (isAllowedLink(String(url || '')) || guideLinks.has(String(url || '')) ? shell.openExternal(String(url)).then(() => ({ ok: true })) : { ok: false, error: 'Link nicht erlaubt.' }));
 
 // --- API-Rechtematrix: Konfiguration (Tokens verschluesselt, nie zurueck an die UI) ---
 ipcMain.handle('apimatrix:get', () => (loadConfig().apiMatrix || []).map((m) => ({ host: m.host, endpoints: m.endpoints, resourceIdA: m.resourceIdA, hasTokenA: !!m.tokenAEnc, hasTokenB: !!m.tokenBEnc })));
@@ -640,6 +782,7 @@ ipcMain.handle('history:open', (_e, id) => {
     const result = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR(), safe + '.json'), 'utf8'));
     refreshStatuses(result);
     lastResult = result;
+    lastHistoryId = safe;
     lastTargets = ((loadHistory().find((h) => h.id === safe) || {}).targets || []).map((v) => ({ value: v }));
     return { ok: true, result };
   } catch (e) { return { ok: false, error: e.message }; }

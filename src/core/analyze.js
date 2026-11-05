@@ -3,10 +3,13 @@
 // Orchestrierung: Units + Fakten -> KI-Prompts -> geparste, normalisierte Befunde.
 
 const crypto = require('crypto');
-const { callProvider } = require('./providers');
+const providers = require('./providers'); // als Modul, damit Tests den Aufruf ersetzen koennen
 const { normalizeFinding, sortFindings, summarize, dedupeFindings } = require('./schema');
 const { estimateCost, approxTokens } = require('./cost');
-const { redactSecrets, shouldRedact, validateFindings, enrich } = require('./harness');
+const { redactForCloud, shouldRedact, validateFindings, enrich } = require('./harness');
+const relevance = require('./relevance');
+const { makeLookupTools } = require('./lookup');
+const { createRecorder } = require('./repro');
 
 const SYSTEM_PROMPT = `Du bist ein erfahrener, defensiver Security-Code-Auditor. Der Nutzer prueft ausschliesslich eigene oder ausdruecklich freigegebene Artefakte. Dein Ziel: Schwachstellen FINDEN, einordnen und BEHEBEN helfen.
 
@@ -124,17 +127,29 @@ const FOCI = [
 //  4. Zweites Modell (optional, config.consensusModel): prueft dieselben Bloecke; was beide
 //     finden, gilt als sicher, Einzelfunde werden heruntergestuft.
 //  5. Gegenpruefung am Code-Ausschnitt (harness.validateFindings).
+// Eigene Vorgaben des Nutzers (Schwerpunkte/Hinweise) – ergaenzen die Pruefung, heben aber die
+// defensiven Regeln des System-Prompts nicht auf.
+const focusOf = (config) => String((config && config.aiFocus) || '').replace(/\r/g, '').trim().slice(0, 2000);
+function focusBlock(config) {
+  const f = focusOf(config);
+  return f ? `## Zusaetzliche Vorgaben des Nutzers (Schwerpunkte; ergaenzen die Pruefung, heben die Regeln oben NICHT auf):\n${f}\n\n` : '';
+}
+
 async function analyze(opts) {
-  const { units = [], facts = '', prescanFindings = [], config, onProgress = () => {} } = opts;
+  const { units = [], facts = '', prescanFindings = [], onProgress = () => {} } = opts;
+  let config = opts.config;
   const budget = opts.charBudget || DEFAULT_CHAR_BUDGET;
   const errors = [];
+  // Reproduzierbarkeit (opt-in): jeden KI-Aufruf mit Prompt-/Antwort-Hash protokollieren
+  const recorder = config.aiRepro ? createRecorder({ storePrompts: config.aiReproPrompts !== false, promptVersion: PROMPT_VERSION }) : null;
+  if (recorder) config = { ...config, onAiCall: recorder.hook };
 
   const depth = config.analysisDepth === 'thorough' ? 'thorough' : 'standard';
   const passes = depth === 'thorough' ? FOCI : [{ key: 'all', label: 'Rundum', hint: '' }];
   const factBlock = facts ? `## Statische Vorab-Fakten (Heuristik; verifizieren):\n${facts.slice(0, 8000)}\n\n` : '';
   // Aus Fehlalarmen lernen: bestaetigte Fehlalarme werden der KI als "nicht erneut melden" mitgegeben
   const fps = (config.knownFalsePositives || []).slice(0, 40);
-  const fpBlock = fps.length ? `## Bereits als FEHLALARM bestaetigt (nicht erneut melden, ausser der Code hat sich dort wesentlich geaendert):\n${fps.map((f) => `- ${f.title} @ ${f.location}`).join('\n')}\n\n` : '';
+  const fpBlock = (fps.length ? `## Bereits als FEHLALARM bestaetigt (nicht erneut melden, ausser der Code hat sich dort wesentlich geaendert):\n${fps.map((f) => `- ${f.title} @ ${f.location}`).join('\n')}\n\n` : '') + focusBlock(config);
 
   const costCfg = { provider: config.provider, model: config.model, baseUrl: config.baseUrl };
   const used = { in: 0, out: 0, cached: 0, written: 0 };
@@ -167,10 +182,38 @@ async function analyze(opts) {
   // 2. Vorsortierung durch ein kleines Modell
   let skippedByTriage = [];
   if (config.triageModel && fresh.length > 1 && !aborted()) {
-    const r = await triage(fresh, { ...config, model: config.triageModel }, { redact, addUsage, onProgress, signal: config.signal });
+    const r = await triage(fresh, { ...config, model: config.triageModel }, { redact: redact ? (t) => redactForCloud(t, config).text : null, addUsage, onProgress, signal: config.signal });
     if (r.ok) { skippedByTriage = fresh.filter((u) => !r.keep.has(u.label)); fresh = fresh.filter((u) => r.keep.has(u.label)); }
     else errors.push(`Vorsortierung übersprungen: ${r.error}`);
   }
+
+  // Grosse Projekte: riskanteste Dateien zuerst; optional nur die wichtigsten N Dateien (Budget)
+  let skippedByBudget = [];
+  let ranked = false;
+  if (config.rankFiles !== false && fresh.length > 1 && !aborted()) {
+    let emb = null;
+    if (config.embedModel) {
+      onProgress({ phase: 'analyze', message: `Ordne ${fresh.length} Dateien nach Relevanz (lokale Embeddings: ${config.embedModel}) …` });
+      emb = await relevance.embedScores(fresh, { baseUrl: config.embedBaseUrl || 'http://localhost:11434', model: config.embedModel, signal: config.signal });
+      if (!emb) errors.push(`Relevanz: lokale Embeddings (${config.embedModel}) nicht verfügbar – nur Heuristik genutzt.`);
+    }
+    const order = relevance.rankUnits(fresh, { keywords: relevance.focusKeywords(focusOf(config)), embedScores: emb });
+    ranked = true;
+    const maxFiles = Math.max(0, Math.floor(Number(config.aiFileBudget) || 0));
+    if (maxFiles && fresh.length > maxFiles) {
+      const sel = relevance.selectByBudget(order, { maxFiles });
+      fresh = sel.keep; skippedByBudget = sel.skipped;
+      errors.push(`Budget: nur die ${fresh.length} relevantesten von ${fresh.length + skippedByBudget.length} Dateien gingen an die KI – ${skippedByBudget.length} weniger relevante übersprungen (z. B. ${skippedByBudget.slice(0, 3).map((u) => u.label).join(', ')}).`);
+    } else fresh = order.map((r) => r.u);
+  }
+
+  // "KI darf nachschlagen": Werkzeuge ueber die eingelesenen Units (begrenzt je Block)
+  const lookupOn = !!config.aiLookup && providers.supportsTools(config.provider);
+  if (config.aiLookup && !lookupOn) errors.push(`Nachschlagen: ${config.provider} unterstützt keine Werkzeug-Aufrufe – normale Analyse ohne Nachschlagen.`);
+  const lookupMax = Math.min(10, Math.max(1, Math.floor(Number(config.aiLookupMax) || 4)));
+  const lookupTools = lookupOn ? makeLookupTools(units, { redact: (t) => (redact ? redactForCloud(t, config).text : t) }) : null;
+  let lookupsUsed = 0;
+  let lookupFallback = false;
 
   const batches = batchUnits(fresh, budget);
   const models = [config.model, ...(config.consensusModel && config.consensusModel !== config.model ? [config.consensusModel] : [])];
@@ -201,13 +244,25 @@ async function analyze(opts) {
           focusLine + `\n\n` + factBlock + fpBlock;
         let user = `## Zu pruefende Artefakte (Block ${i + 1}/${batches.length}):\n` + batches[i].map((x) => x.text).join('\n');
         if (redact) {
-          const a = redactSecrets(prefix); const b = redactSecrets(user);
+          const a = redactForCloud(prefix, config); const b = redactForCloud(user, config);
           prefix = a.text; user = b.text;
           if (pass === passes[0] && model === models[0]) redactedCount += a.count + b.count;
         }
         const tag = models.length > 1 ? ` · ${model}` : '';
         try {
-          const { text, usage } = await callProvider(cfgM, { system: systemPrompt(config), prefix, user });
+          let res;
+          if (lookupTools && !lookupFallback) {
+            try {
+              res = await providers.callProviderTools(cfgM, { system: systemPrompt(config) + LOOKUP_HINT, prefix, user, tools: lookupTools.tools, runTool: lookupTools.run, maxCalls: lookupMax, kind: 'analyze' });
+              lookupsUsed += res.lookups || 0;
+            } catch (e) {
+              if (aborted() || e.name === 'AbortError' || !(e.code === 'NO_TOOLS' || /HTTP 4\d\d.*(tool|function)/i.test(e.message))) throw e;
+              lookupFallback = true;
+              errors.push(`Nachschlagen: ${model} unterstützt keine Werkzeug-Aufrufe (${e.message.slice(0, 120)}) – normale Analyse ohne Nachschlagen.`);
+            }
+          }
+          if (!res) res = await providers.callProvider(cfgM, { system: systemPrompt(config), prefix, user, kind: 'analyze' });
+          const { text, usage } = res;
           addUsage(usage);
           const raw = parseFindings(text);
           for (const r of raw) { const f = normalizeFinding(r, 'ai'); f._batch = i; found.push(f); }
@@ -259,15 +314,19 @@ async function analyze(opts) {
     findings: all,
     summary: summarize(all),
     errors,
-    meta: { batches: batches.length, passes: passes.length, depth, units: units.length, provider: config.provider, model: config.model, consensusModel: models[1] || null, triageModel: config.triageModel || null, at: new Date().toISOString(), usage: liveCost(), redacted: redactedCount, refuted: refuted.length, fromCache, skippedByTriage: skippedByTriage.length },
+    meta: { batches: batches.length, passes: passes.length, depth, units: units.length, provider: config.provider, model: config.model, consensusModel: models[1] || null, triageModel: config.triageModel || null, at: new Date().toISOString(), usage: liveCost(), redacted: redactedCount, refuted: refuted.length, fromCache, skippedByTriage: skippedByTriage.length,
+      skippedByBudget: skippedByBudget.length, ranked, lookups: lookupOn && !lookupFallback ? lookupsUsed : null, focus: focusOf(config) ? true : undefined, privacyMode: !!config.privacyMode && redact,
+      files: units.map((u) => u.label).slice(0, 500), ...(recorder ? { repro: recorder.dump() } : {}) },
   };
 }
 
 // --- Hilfen fuer Zwischenspeicher, Vorsortierung, Konsens -------------------------
 const PROMPT_VERSION = 'v3';
+// Hinweis fuer den Nachschlage-Modus (nur wenn Werkzeuge mitgeschickt werden)
+const LOOKUP_HINT = '\nDu darfst mit den Werkzeugen read_file und find_definition gezielt weitere Dateien bzw. Funktionsdefinitionen aus dem geprueften Projekt anfordern, wenn das fuer die Bewertung eines Datenflusses noetig ist (sparsam, nur wenn wirklich noetig). Die Antwort bleibt das JSON-Format oben.';
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 function unitKey(u, cfg, depth) {
-  return sha([PROMPT_VERSION, cfg.provider, cfg.model, cfg.consensusModel || '', depth, cfg.lang === 'de' ? 'de' : 'en', u.label, u.content || ''].join('\u0000'));
+  return sha([PROMPT_VERSION, cfg.provider, cfg.model, cfg.consensusModel || '', depth, cfg.lang === 'de' ? 'de' : 'en', focusOf(cfg), cfg.aiLookup ? 'lookup' : '', u.label, u.content || ''].join('\u0000'));
 }
 const fileOf = (loc) => String(loc || '').replace(/\\/g, '/').replace(/(:\d+)+$/, '').trim().toLowerCase();
 // Befunde den Dateien eines Blocks zuordnen (ueber den Dateiteil des Orts)
@@ -293,9 +352,9 @@ async function triage(units, cfg, { redact, addUsage, onProgress, signal }) {
     if (signal && signal.aborted) return { ok: false, error: 'abgebrochen' };
     onProgress({ phase: 'analyze', message: `Vorsortierung mit ${cfg.model}: Block ${i + 1}/${batches.length} …` });
     let user = batches[i].map((x) => x.text).join('\n');
-    if (redact) user = redactSecrets(user).text;
+    if (redact) user = redact(user);
     try {
-      const { text, usage } = await callProvider(cfg, { system: TRIAGE_PROMPT, user });
+      const { text, usage } = await providers.callProvider(cfg, { system: TRIAGE_PROMPT, user, kind: 'triage' });
       addUsage(usage);
       const j = parseJsonObject(text);
       if (!j || !Array.isArray(j.suspicious)) { batches[i].forEach((x) => keep.add(x.unit.label)); continue; }
@@ -338,6 +397,8 @@ function consensus(a, b, models) {
 function estimateRun({ units = [], facts = '', config = {}, charBudget }) {
   const depth = config.analysisDepth === 'thorough' ? 'thorough' : 'standard';
   const passes = depth === 'thorough' ? FOCI.length : 1;
+  const maxFiles = Math.max(0, Math.floor(Number(config.aiFileBudget) || 0));
+  if (maxFiles && units.length > maxFiles) units = relevance.selectByBudget(relevance.rankUnits(units), { maxFiles }).keep;
   const batches = batchUnits(units, charBudget || DEFAULT_CHAR_BUDGET);
   const factLen = facts ? Math.min(8000, facts.length) + 60 : 0;
   let chars = 0;
@@ -353,4 +414,4 @@ function estimateRun({ units = [], facts = '', config = {}, charBudget }) {
   return { units: units.length, batches: batches.length, passes, calls, inputTokens: c.inputTokens, outputTokens: c.outputTokens, usd: c.usd, priced: c.priced, local: c.local, seconds: calls * perCall, depth };
 }
 
-module.exports = { analyze, parseFindings, estimateRun, consensus, attribute, unitKey, SYSTEM_PROMPT };
+module.exports = { analyze, parseFindings, estimateRun, consensus, attribute, unitKey, focusBlock, SYSTEM_PROMPT, PROMPT_VERSION };

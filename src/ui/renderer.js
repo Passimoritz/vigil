@@ -338,6 +338,18 @@ async function runAudit() {
   const est = state.estimate;
   if (needsAi() && est && !est.local && est.priced && est.usd > (state.config.costWarnUsd ?? 2)
     && !confirm(`Dieser Lauf kostet voraussichtlich ${fmtUsd(est.usd)} (${fmtK(est.inputTokens + est.outputTokens)} Tokens, ${est.calls} KI-Aufrufe).\n\nTrotzdem starten?`)) return;
+  // Monatliches KI-Budget: erreicht oder durch diesen Lauf ueberschritten -> ausdruecklich bestaetigen
+  let budgetConfirmed = false;
+  const localRun = (est && est.local) || state.config.selected === 'ollama';
+  if (needsAi() && !localRun && (state.config.monthlyBudgetUsd || 0) > 0 && window.vigil.budgetStats) {
+    let b = null;
+    try { b = await window.vigil.budgetStats(); } catch { /* ohne Budget-Info */ }
+    const add = est && est.priced ? est.usd : 0;
+    if (b && b.budget && (b.exceeded || b.spent + add > b.budget)) {
+      if (!confirm(`Monatliches KI-Budget: ${fmtUsd(b.spent)} von ${fmtUsd(b.budget)} ausgegeben.\n${add ? `Dieser Lauf kostet voraussichtlich weitere ${fmtUsd(add)}.\n` : ''}\nTrotzdem starten?`)) return;
+      budgetConfirmed = true;
+    }
+  }
   state.runStartedAt = Date.now();
   state.running = true; updateRunState();
   $('cancelBtn').hidden = false; $('cancelBtn').disabled = false;
@@ -382,7 +394,7 @@ async function runAudit() {
     if (p.cost) updateCost(p.cost, false);
   });
 
-  const res = await window.vigil.runAudit({ targets: state.targets, providerId: state.config.selected });
+  const res = await window.vigil.runAudit({ targets: state.targets, providerId: state.config.selected, ...(budgetConfirmed ? { budgetConfirmed: true } : {}) });
   // Bestaetigte Hosts hat der Main-Prozess auf die Freigabeliste gesetzt.
   try { state.config.allowlist = (await window.vigil.getConfig()).allowlist || []; } catch { /* egal */ }
   loadKnown();
@@ -568,7 +580,59 @@ function renderResult(result) {
   refreshResultView();
 }
 function refreshResultView() {
-  renderVerdict(); renderFilters(); updateBaselineStatus(); renderViewToggles(); renderFindings();
+  renderVerdict(); renderRunSummary(); renderThreatModel(); renderFilters(); updateBaselineStatus(); renderViewToggles(); renderFindings();
+}
+
+// Zusammenfassung des Laufs (KI oder regelbasiert, aus result.meta.runSummary)
+function renderRunSummary() {
+  const el = $('runSummary'); if (!el) return;
+  const s = state.lastResult && state.lastResult.meta && state.lastResult.meta.runSummary;
+  el.hidden = !(s && s.text);
+  if (!s || !s.text) return;
+  el.innerHTML = `<h3>Zusammenfassung</h3><p>${esc(s.text)}</p><span class="muted small">${s.source === 'ai' ? `von der KI geschrieben${s.model ? ' (' + esc(s.model) + ')' : ''}` : 'regelbasiert erstellt'}</span>`;
+}
+
+// --- STRIDE-Bedrohungsmodell ---------------------------------------------------
+const STRIDE_ORDER = ['S', 'T', 'R', 'I', 'D', 'E'];
+const LEVEL_DE = { high: 'hoch', medium: 'mittel', low: 'niedrig' };
+function renderThreatModel() {
+  const el = $('threatPanel'); if (!el) return;
+  const tm = state.threatBusy ? { pending: true } : state.lastResult && state.lastResult.meta && state.lastResult.meta.threatModel;
+  el.hidden = !tm;
+  if (!tm) return;
+  if (tm.pending) { el.innerHTML = `<h3>Bedrohungsmodell (STRIDE)</h3><p class="muted small">Wird erstellt …</p>${dots}`; return; }
+  const groups = STRIDE_ORDER.map((s) => ({ s, list: (tm.threats || []).filter((t) => t.stride === s) })).filter((g) => g.list.length);
+  el.innerHTML = `<div class="tm-head"><h3>Bedrohungsmodell (STRIDE)</h3><span class="muted small">${tm.source === 'ai' ? `KI${tm.model ? ' · ' + esc(tm.model) : ''}` : 'aus den Befunden abgeleitet'} · ${esc(fmtDate(tm.at))} · auch im Bericht enthalten</span><button type="button" class="btn tiny ghost tm-close">Ausblenden</button></div>
+    ${tm.summary ? `<p>${esc(tm.summary)}</p>` : ''}
+    ${tm.error ? `<p class="muted small">${esc(tm.error)}</p>` : ''}
+    ${(tm.assets || []).length || (tm.entryPoints || []).length ? `<div class="tm-facts">${tm.assets.length ? `<div><h4>Schützenswert</h4><ul>${tm.assets.map((a) => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}${tm.entryPoints.length ? `<div><h4>Eingänge</h4><ul>${tm.entryPoints.map((a) => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}</div>` : ''}
+    <div class="tm-grid">${groups.map((g) => g.list.map((t) => `<article class="tm-card stride-${g.s}">
+      <div class="tm-cat"><b>${g.s}</b> ${esc(t.category)}</div>
+      <h4 class="tm-title">${esc(t.title)}</h4>
+      ${t.asset ? `<p class="muted small">Betrifft: ${esc(t.asset)}</p>` : ''}
+      ${t.description ? `<p>${esc(t.description)}</p>` : ''}
+      <p class="small">Wahrscheinlichkeit <b>${esc(LEVEL_DE[t.likelihood] || t.likelihood)}</b> · Auswirkung <b>${esc(LEVEL_DE[t.impact] || t.impact)}</b></p>
+      ${t.mitigations.length ? `<ul class="tm-mit">${t.mitigations.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>` : ''}
+      ${t.findings.length ? `<div class="tm-links">${t.findings.map((x) => `<button type="button" class="chip-btn tm-f" data-id="${esc(x.id || '')}" data-title="${esc(x.title)}">#${x.n} ${esc(x.title.slice(0, 60))}</button>`).join('')}</div>` : ''}
+    </article>`).join('')).join('')}</div>
+    ${(tm.assumptions || []).length ? `<p class="muted small">Annahmen: ${esc(tm.assumptions.join(' · '))}</p>` : ''}`;
+  el.querySelector('.tm-close').onclick = () => { el.hidden = true; };
+  el.querySelectorAll('.tm-f').forEach((b) => b.onclick = () => {
+    const i = state.lastFindings.findIndex((x) => (b.dataset.id && x.id === b.dataset.id) || x.title === b.dataset.title);
+    if (i >= 0) selectFinding(findingKey(state.lastFindings[i], i));
+  });
+}
+async function buildThreatModel() {
+  if (state.threatBusy || !state.lastResult) return;
+  state.threatBusy = true; renderThreatModel();
+  $('threatPanel').scrollIntoView({ block: 'nearest' });
+  const r = await window.vigil.threatModel();
+  state.threatBusy = false;
+  if (r && r.ok) {
+    for (const res of [state.lastResult, state.rawResult]) if (res) res.meta = { ...(res.meta || {}), threatModel: r.threatModel };
+    toast('Bedrohungsmodell erstellt', 'ok');
+  } else flash('Bedrohungsmodell nicht erstellt: ' + ((r && r.error) || 'unbekannter Fehler'));
+  renderThreatModel();
 }
 
 // Werkzeug-Praefix ("gitleaks: …") aus dem Titel nehmen – die Quelle steht daneben.
@@ -683,6 +747,7 @@ function findingDetail(f) {
       ${f.evidence ? `<div class="f-sec evidence"><h4>Fundstelle</h4><code>${esc(f.evidence)}</code></div>` : ''}
       ${/:\d+(:\d+)?$/.test(f.location || '') && !/^https?:/i.test(f.location || '') ? '<div class="f-sec code-sec" hidden><h4>Betroffener Code</h4><div class="code-view"></div></div>' : ''}
       ${solutionBlock(f)}
+      ${aiHelpBlock(f)}
       <div class="f-sec ask-sec">
         <h4>Rückfrage an die KI</h4>
         <div class="ask-log" aria-live="polite"></div>
@@ -763,6 +828,115 @@ function hydrateDetail(root, f) {
   };
   sec.querySelectorAll('[data-q]').forEach((b) => b.onclick = () => ask(b.dataset.q));
   sec.querySelector('.ask-form').onsubmit = (e) => { e.preventDefault(); const inp = sec.querySelector('.ask-input'); ask(inp.value); inp.value = ''; };
+  hydrateAiHelp(root, f);
+}
+
+// --- KI-Hilfe im Detail: Erklaerstufen, Fix als Diff, Upgrade-Hinweise ------------------
+// Alles sind Vorschlaege: Vigil aendert keine Datei – Kopieren und Uebernehmen macht der Nutzer.
+const LEVEL_LABEL = { lay: 'Laie', dev: 'Entwickler', expert: 'Experte' };
+state.aiHelp = state.aiHelp || {};
+const findingPayload = (f) => ({ id: f.id, title: f.title, severity: f.severity, location: f.location, category: f.category, cwe: f.cwe, description: f.description, impact: f.impact, reachability: f.reachability, remediation: f.remediation });
+function aiHelpBlock(f) {
+  const pkg = f.package && f.package.name ? f.package : null;
+  const codeFix = /:\d+(:\d+)?$/.test(f.location || '') && !/^https?:/i.test(f.location || '');
+  return `<div class="f-sec ai-help">
+    <h4>KI-Hilfe</h4>
+    <div class="lvl-row"><span class="muted small">Erklärung für</span>
+      <span class="seg lvl-seg" role="radiogroup" aria-label="Erklärstufe">${Object.entries(LEVEL_LABEL).map(([k, v]) => `<button type="button" role="radio" aria-checked="false" data-level="${k}">${v}</button>`).join('')}</span>
+    </div>
+    <div class="explain-out ask-md" aria-live="polite" hidden></div>
+    <div class="patch-row">
+      ${codeFix ? '<button type="button" class="btn small gen-patch">Fix generieren</button>' : ''}
+      ${pkg ? '<button type="button" class="btn small upg-btn">Upgrade-Hinweise</button>' : ''}
+      ${codeFix || pkg ? '<span class="muted small">Nur Vorschläge – Vigil ändert keine Datei.</span>' : ''}
+    </div>
+    <div class="patch-out" aria-live="polite" hidden></div>
+    <div class="upg-out" aria-live="polite" hidden></div>
+  </div>`;
+}
+const dots = '<span class="ask-dots"><i></i><i></i><i></i></span>';
+function diffHtml(d) {
+  return `<pre class="diff-view">${String(d).split('\n').map((l) => `<span class="${/^(\+\+\+|---)/.test(l) ? 'd-file' : /^@@/.test(l) ? 'd-hunk' : /^\+/.test(l) ? 'd-add' : /^-/.test(l) ? 'd-del' : 'd-ctx'}">${esc(l) || ' '}</span>`).join('')}</pre>`;
+}
+function hydrateAiHelp(root, f) {
+  const box = root.querySelector('.ai-help');
+  if (!box) return;
+  const key = f.id || `${f.ruleId}@${f.location}`;
+  const mem = state.aiHelp[key] || (state.aiHelp[key] = { explain: {} });
+  const out = box.querySelector('.explain-out');
+  const paintExplain = () => {
+    box.querySelectorAll('.lvl-seg button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.level === mem.level)));
+    const e = mem.level && mem.explain[mem.level];
+    out.hidden = !e;
+    if (!e) return;
+    out.innerHTML = e.pending ? dots : e.error ? `<p class="err small">${esc(e.error)}</p>`
+      : `${miniMarkdown(e.text)}<p class="muted small">${esc(e.model || 'KI')}${e.cached ? ' · aus dem Zwischenspeicher' : ''} · <a href="#" class="re-explain">neu erklären</a></p>`;
+    const re = out.querySelector('.re-explain');
+    if (re) re.onclick = (ev) => { ev.preventDefault(); explain(mem.level, true); };
+  };
+  const explain = async (level, refresh) => {
+    mem.level = level;
+    if (mem.explain[level] && !refresh && !mem.explain[level].error) { paintExplain(); return; }
+    mem.explain[level] = { pending: true };
+    paintExplain();
+    const r = await window.vigil.explainFinding(findingPayload(f), level, refresh);
+    mem.explain[level] = r && r.ok ? { text: r.text, model: r.model, cached: r.cached } : { error: `Keine Antwort: ${(r && r.error) || 'unbekannter Fehler'}` };
+    if (root.contains(box)) paintExplain();
+  };
+  box.querySelectorAll('.lvl-seg button').forEach((b) => b.onclick = () => explain(b.dataset.level));
+  paintExplain();
+
+  const pout = box.querySelector('.patch-out');
+  const paintPatch = () => {
+    const p = mem.patch;
+    pout.hidden = !p;
+    if (!p) return;
+    if (p.pending) { pout.innerHTML = `<p class="muted small">Die KI schreibt einen Fix-Vorschlag …</p>${dots}`; return; }
+    if (p.error) { pout.innerHTML = `<p class="err small">${esc(p.error)}</p>`; return; }
+    const chk = p.check && p.check.checked ? (p.check.applies ? '<span class="chip ev-ok">passt zum aktuellen Code</span>' : '<span class="chip ev-weak">passt nicht exakt – vor dem Übernehmen prüfen</span>') : '';
+    pout.innerHTML = `${p.summary ? `<p>${esc(p.summary)}</p>` : ''}
+      ${p.diff ? `<div class="sol-head"><span class="muted small">+${p.stats.added} / −${p.stats.removed} Zeilen · ${esc(p.model || '')}${p.confidence ? ' · Verlässlichkeit ' + esc(CONF_LABEL[p.confidence] || p.confidence) : ''}</span>${chk}${copyBtn(p.diff)}</div>${diffHtml(p.diff)}<p class="muted small">Nichts wurde angewendet. Kopieren und z. B. mit <code>git apply</code> übernehmen – vorher lesen und testen.</p>` : '<p class="muted small">Kein Diff möglich.</p>'}
+      ${p.notes ? `<div class="ask-md">${miniMarkdown(p.notes)}</div>` : ''}`;
+    bindSolutionControls(pout);
+  };
+  const pb = box.querySelector('.gen-patch');
+  if (pb) pb.onclick = async () => {
+    if (mem.patch && mem.patch.pending) return;
+    mem.patch = { pending: true }; paintPatch(); pb.disabled = true;
+    const r = await window.vigil.patchFinding(findingPayload(f));
+    mem.patch = r && r.ok ? r : { error: `Kein Vorschlag: ${(r && r.error) || 'unbekannter Fehler'}` };
+    pb.disabled = false;
+    if (root.contains(box)) paintPatch();
+  };
+  paintPatch();
+
+  const uout = box.querySelector('.upg-out');
+  const paintUpg = () => {
+    const u = mem.upgrade;
+    uout.hidden = !u;
+    if (!u) return;
+    if (u.pending) { uout.innerHTML = `<p class="muted small">Suche Changelog und Release Notes …</p>${dots}`; return; }
+    if (u.error && !u.links) { uout.innerHTML = `<p class="err small">${esc(u.error)}</p>`; return; }
+    const j = u.jump || {};
+    const warn = j.breaking ? `<p class="upg-warn">⚠ ${j.kind === 'major' ? `Sprung über ${j.majors || 1} Hauptversion(en)` : 'Versionssprung in 0.x'} (${esc(j.from)} → ${esc(j.to)}) – brechende Änderungen sind wahrscheinlich.</p>`
+      : j.kind === 'unknown' ? '<p class="muted small">Versionssprung nicht bestimmbar.</p>' : `<p class="muted small">${j.kind === 'minor' ? 'Kleiner Versionssprung' : 'Fehlerbehebungs-Version'} (${esc(j.from)} → ${esc(j.to)}) – nach semver ohne brechende Änderungen.</p>`;
+    uout.innerHTML = warn
+      + (u.aiSummary ? `<div class="ask-md">${miniMarkdown(u.aiSummary)}</div>` : '')
+      + (u.hints && u.hints.length ? `<h4>Hinweise aus den Release Notes</h4><ul class="upg-hints">${u.hints.map((h) => `<li><b>${esc(h.tag)}</b> ${esc(h.text)}</li>`).join('')}</ul>` : '')
+      + (u.links && u.links.length ? `<div class="link-row">${u.links.map((l) => `<button type="button" class="link-chip kind-${esc(l.kind || 'doc')}" data-url="${esc(l.url)}" title="${esc(l.url)}">${LINK_ICON[l.kind] || '🔗'} ${esc(l.label)}</button>`).join('')}</div>` : '<p class="muted small">Keine Changelog-Links in den Paket-Metadaten gefunden.</p>')
+      + (u.error ? `<p class="muted small">Hinweis: ${esc(u.error)}</p>` : '');
+    bindSolutionControls(uout);
+  };
+  const ub = box.querySelector('.upg-btn');
+  if (ub) ub.onclick = async () => {
+    if (mem.upgrade && mem.upgrade.pending) return;
+    mem.upgrade = { pending: true }; paintUpg(); ub.disabled = true;
+    const r = await window.vigil.upgradeGuide(f.package);
+    mem.upgrade = r && r.ok ? r : { error: `Keine Hinweise: ${(r && r.error) || 'unbekannter Fehler'}` };
+    ub.disabled = false;
+    if (root.contains(box)) paintUpg();
+  };
+  paintUpg();
 }
 
 // --- Loesungsteil: Warum, Schritte, Versions-Patch, Schnipsel, Links -------
@@ -886,12 +1060,42 @@ const HIDDEN_STATUS = new Set(['FALSE_POSITIVE', 'ACCEPTED_RISK']);
 function statusSelect(id, status) {
   return `<select class="status-select st-${status}" data-id="${esc(id)}" aria-label="Status des Befunds">${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}"${k === status ? ' selected' : ''}>${v}</option>`).join('')}</select>`;
 }
+// "Risiko akzeptiert" ist befristet: Frist (Standard 90 Tage) und Begruendung abfragen.
+// Liefert { days, note } oder null (abgebrochen).
+function askAcceptance() {
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'accept-dlg';
+    dlg.innerHTML = `<form method="dialog">
+      <h3>Risiko akzeptieren</h3>
+      <p class="muted small">Die Akzeptanz läuft ab – danach ist der Befund wieder offen und wird neu bewertet.</p>
+      <label class="field"><span>Gültig für</span><select class="acc-days">${[[30, '30 Tage'], [90, '90 Tage (Standard)'], [180, '180 Tage'], [365, '1 Jahr']].map(([d, l]) => `<option value="${d}"${d === 90 ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="field"><span>Begründung (optional)</span><input type="text" class="acc-note" maxlength="500" placeholder="z. B. nur intern erreichbar, Behebung im nächsten Release" /></label>
+      <div class="dlg-actions"><button type="button" class="btn ghost acc-cancel">Abbrechen</button><button type="submit" class="btn primary acc-ok">Akzeptieren</button></div>
+    </form>`;
+    document.body.appendChild(dlg);
+    const done = (v) => { try { dlg.close(); } catch { /* egal */ } dlg.remove(); resolve(v); };
+    dlg.querySelector('.acc-cancel').onclick = () => done(null);
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); done(null); });
+    dlg.querySelector('form').onsubmit = (e) => { e.preventDefault(); done({ days: Number(dlg.querySelector('.acc-days').value) || 90, note: dlg.querySelector('.acc-note').value.trim() }); };
+    try { dlg.showModal(); } catch { dlg.setAttribute('open', ''); }
+    dlg.querySelector('.acc-days').focus();
+  });
+}
 function bindStatusSelects(root, onChanged) {
   root.querySelectorAll('.status-select').forEach((sel) => {
     sel.onclick = (e) => e.stopPropagation();
+    let prev = sel.value;
+    sel.onfocus = () => { prev = sel.value; };
     sel.onchange = async () => {
-      const r = await window.vigil.setFindingStatus(sel.dataset.id, sel.value);
-      if (r.ok) onChanged(sel.dataset.id, r.status);
+      let r;
+      if (sel.value === 'ACCEPTED_RISK') {
+        const a = await askAcceptance();
+        if (!a) { sel.value = prev; return; }
+        r = await window.vigil.setFindingStatus(sel.dataset.id, sel.value, a.note, a.days);
+        if (r.ok && r.acceptedUntil) toast(`Akzeptiert bis ${new Date(r.acceptedUntil).toLocaleDateString(state.config && state.config.lang === 'de' ? 'de-DE' : 'en-GB')}`, 'ok');
+      } else r = await window.vigil.setFindingStatus(sel.dataset.id, sel.value);
+      if (r.ok) { prev = sel.value; onChanged(sel.dataset.id, r.status); }
       else flash('Status nicht gespeichert: ' + r.error);
     };
   });
@@ -928,6 +1132,29 @@ function renderViewToggles() {
 }
 function sourceLabel(s) { return ({ osv: 'Schwachstellen-DB (OSV)', prescan: 'statische Prüfung', webscan: 'Server-Check', nmap: 'nmap', nuclei: 'nuclei', gitleaks: 'gitleaks', trufflehog: 'trufflehog', trivy: 'trivy', grype: 'grype', semgrep: 'semgrep', bandit: 'bandit', checkov: 'checkov', retire: 'retire.js', hadolint: 'hadolint', 'osv-scanner': 'osv-scanner', binary: 'Binary-Analyse', ai: 'KI', 'supply-chain-audit': 'Lieferkette', 'container-host-audit': 'Container-Prüfung', 'semgrep-custom-sast': 'Code-Regeln', 'llm-prompt-security': 'KI-Sicherheit', 'linux-host-audit': 'Server-Konfig', 'web-exposure-audit': 'Web-Exposure', 'web-tls-posture': 'Web/TLS', 'dns-mail-drift': 'DNS & Mail', 'headless-dom-audit': 'Browser-Prüfung', 'api-auth-matrix': 'API-Rechtematrix', correlator: 'Angriffsweg-Analyse' })[s] || s || 'KI'; }
 
+// Details eines Laufs: Modell, Kosten, Zusammenfassung und (falls aufgezeichnet) das
+// Reproduzierbarkeits-Protokoll mit Prompt- und Antwort-Pruefsummen.
+const REPRO_KIND = { analyze: 'Analyse', triage: 'Vorsortierung', validate: 'Gegenprüfung', summary: 'Zusammenfassung' };
+function historyDetailsHtml(d) {
+  const u = d.usage || {};
+  const facts = [
+    d.provider && `${esc(d.provider)} / ${esc(d.model || '–')}`,
+    u.inputTokens || u.outputTokens ? `${fmtK((u.inputTokens || 0) + (u.outputTokens || 0))} Tokens` : '',
+    u.priced ? fmtUsd(u.usd || 0) : u.local ? 'Lokal' : '',
+    d.lookups != null ? `${d.lookups} Nachschlage-Abfragen` : '',
+    d.privacyMode ? 'strenger Datenschutz' : '',
+    d.skippedByBudget ? `${d.skippedByBudget} Dateien wegen Budget übersprungen` : '',
+  ].filter(Boolean).map((x) => '<span>' + x + '</span>').join(' · ');
+  const r = d.repro;
+  const repro = r ? `<h4>Protokoll für Reproduzierbarkeit</h4>
+    <p class="muted small"><span>${r.calls} KI-Aufruf(e)</span> · <span>Prompt-Version ${esc(r.promptVersion || '–')}</span> · <span>${r.integrity && r.integrity.ok ? 'Prüfsummen stimmen' : 'Prüfsummen weichen ab: ' + esc((r.integrity && r.integrity.bad || []).join(', '))}</span>${r.truncated ? ' · <span>Prompts teilweise nur als Prüfsumme (Größenlimit)</span>' : ''}</p>
+    <div class="repro-list">${(r.entries || []).slice(0, 200).map((e) => `<details class="repro-item"><summary><b>#${e.n}</b> <span>${esc(REPRO_KIND[e.kind] || e.kind)}</span> · ${esc(e.model || '')} · T=${esc(String(e.params && e.params.temperature != null ? e.params.temperature : '–'))} · max ${esc(String((e.params && e.params.maxTokens) || '–'))} <code title="SHA-256 des Prompts">${esc(String(e.promptSha256).slice(0, 12))}</code> → <code title="SHA-256 der Antwort">${esc(String(e.responseSha256).slice(0, 12))}</code></summary>
+      <p class="muted small">Prompt-SHA-256: <code>${esc(e.promptSha256)}</code><br>Antwort-SHA-256: <code>${esc(e.responseSha256)}</code></p>
+      ${e.prompt ? `<pre class="repro-pre">${esc([e.prompt.system, e.prompt.prefix, e.prompt.user].filter(Boolean).join('\n\n').slice(0, 20000))}</pre><h4>Antwort</h4><pre class="repro-pre">${esc(String(e.response || '').slice(0, 8000))}</pre>` : '<p class="muted small">Nur Prüfsummen gespeichert.</p>'}
+    </details>`).join('')}</div>` : '<p class="muted small">Kein Reproduzierbarkeits-Protokoll (in den Einstellungen unter „Belastbarkeit &amp; Datenschutz“ einschaltbar).</p>';
+  return `${facts ? `<p class="small">${facts}</p>` : ''}${d.runSummary && d.runSummary.text ? `<p>${esc(d.runSummary.text)}</p>` : ''}${repro}`;
+}
+
 // --- Scan-Verlauf -------------------------------------------------------
 async function loadHistory() {
   renderHistory(await window.vigil.historyList());
@@ -939,12 +1166,20 @@ function renderHistory(runs) {
     const c = r.counts || {};
     const when = new Date(r.at).toLocaleString('de-DE');
     const tgt = (r.targets || []).join(', ');
-    return `<button type="button" class="hist-row" data-id="${esc(r.id)}">
+    return `<div class="hist-item"><button type="button" class="hist-row" data-id="${esc(r.id)}">
       <span class="hist-when">${esc(when)}</span>
       <span class="hist-tgt" title="${esc(tgt)}">${esc(tgt || '—')}</span>
       <span class="hist-counts">${r.total || 0} Befund(e)${c.critical ? ` · ${c.critical} kritisch` : ''}${c.high ? ` · ${c.high} hoch` : ''}</span>
-    </button>`;
+    </button><button type="button" class="btn tiny ghost hist-det" data-id="${esc(r.id)}" aria-expanded="false">Details</button><div class="hist-details" hidden></div></div>`;
   }).join('');
+  box.querySelectorAll('.hist-det').forEach((b) => b.onclick = async () => {
+    const pane = b.parentElement.querySelector('.hist-details');
+    if (!pane.hidden) { pane.hidden = true; b.setAttribute('aria-expanded', 'false'); return; }
+    pane.hidden = false; b.setAttribute('aria-expanded', 'true');
+    pane.innerHTML = dots;
+    const d = await window.vigil.historyDetails(b.dataset.id);
+    pane.innerHTML = d && d.ok ? historyDetailsHtml(d) : `<p class="err small">${esc((d && d.error) || 'Nicht lesbar.')}</p>`;
+  });
   box.querySelectorAll('.hist-row').forEach((b) => b.onclick = async () => {
     const res = await window.vigil.historyOpen(b.dataset.id);
     if (!res.ok) return;
@@ -993,7 +1228,9 @@ function collectDisabledRules() {
 }
 
 // --- KI-Auswahl: Lokal (Ollama) oder Cloud ------------------------------
-const CLOUD_IDS = ['anthropic', 'openai', 'gemini', 'compat'];
+const CLOUD_IDS = ['anthropic', 'openai', 'gemini', 'mistral', 'deepseek', 'groq', 'openrouter', 'azure', 'bedrock', 'vertex', 'compat'];
+// Anbieter, die zwingend eine eigene Basis-URL brauchen (Einstellungen > Server-Adressen)
+const NEEDS_URL = new Set(['compat', 'azure', 'vertex']);
 const MODEL_CACHE = {};
 const CUSTOM = '__custom__'; // Sentinel fuer „eigenes Modell eingeben"
 const ai = { mode: 'local', ollama: null, recommended: [], pulling: null, busy: false, localList: [] };
@@ -1033,7 +1270,7 @@ function aiReady() {
     return { ok: true, label: pcfg('ollama').model || 'Ollama' };
   }
   const id = state.config.cloudProvider;
-  if (!cloudHasAccess(id)) return { ok: false, why: id === 'compat' ? 'Trage in den Einstellungen die Server-Adresse des Dienstes ein.' : 'Füge unter „KI“ deinen API-Schlüssel ein.' };
+  if (!cloudHasAccess(id)) return { ok: false, why: NEEDS_URL.has(id) && !pcfg(id).baseUrl ? 'Trage in den Einstellungen die Server-Adresse des Dienstes ein.' : 'Füge unter „KI“ deinen API-Schlüssel ein.' };
   if (!pcfg(id).model) return { ok: false, why: 'Wähle unter „KI“ ein Modell.' };
   return { ok: true, label: pcfg(id).model };
 }
@@ -1125,18 +1362,37 @@ function renderLocalModels() {
   const models = ai.ollama.models;
   const p = pcfg('ollama');
   const names = models.map((m) => m.name);
-  if (!names.includes(p.model)) { p.model = pickPreferred('ollama', names, ''); saveCfg(); }
+  if (!names.includes(p.model)) {
+    // Passt ein installiertes Modell zur Ausstattung des PCs? Dann dieses vorauswaehlen.
+    const hw = ai.hardware && ai.hardware.recommendation;
+    p.model = (hw && hw.installedChoice && names.includes(hw.installedChoice)) ? hw.installedChoice : pickPreferred('ollama', names, '');
+    saveCfg();
+  }
   $('localModel').innerHTML = models.map((m) => `<option value="${esc(m.name)}"${m.name === p.model ? ' selected' : ''}>${esc(m.name)}${m.size ? ' · ' + fmtSize(m.size) : ''}</option>`).join('');
 }
 const fullTag = (n) => (n.includes(':') ? n : n + ':latest');
 const isInstalled = (n) => ai.ollama.models.some((m) => m.name === n || m.name === fullTag(n));
+// Hinweis: erkannte Grafikkarte/RAM und das dazu passende Modell
+function renderHwRec() {
+  const el = $('hwRec'); if (!el) return;
+  const h = ai.hardware;
+  el.hidden = !(h && h.recommendation);
+  if (!h || !h.recommendation) return;
+  const r = h.recommendation;
+  const g = (h.gpus || [])[0];
+  const have = ai.ollama && ai.ollama.models && isInstalled(r.name);
+  el.innerHTML = `<span class="hw-ico" aria-hidden="true">⚙</span><div><b>Empfohlen für deinen PC: ${esc(r.label)}</b><span class="muted small">${g ? esc(g.name) + (g.vramGB ? ' · ' + String(g.vramGB).replace('.', ',') + ' GB Grafikspeicher' : '') + ' · ' : ''}${String(h.ramGB).replace('.', ',')} GB RAM – ${r.mode === 'gpu' ? 'läuft auf der Grafikkarte' : 'läuft auf dem Prozessor (langsamer)'}</span></div>${have ? '<span class="rec-ok">✓ installiert</span>' : ai.ollama && ai.ollama.running ? `<button class="btn small hw-pull" data-m="${esc(r.name)}"${ai.pulling ? ' disabled' : ''}>Laden</button>` : ''}`;
+  const b = el.querySelector('.hw-pull'); if (b) b.onclick = () => pullModel(b.dataset.m);
+}
 function renderRecommended() {
+  renderHwRec();
+  const best = ai.hardware && ai.hardware.recommendation && ai.hardware.recommendation.name;
   $('recList').innerHTML = ai.recommended.map((r) => {
     const have = isInstalled(r.name);
     const action = have ? '<span class="rec-ok">✓ installiert</span>'
       : `<button class="btn small rec-pull" data-m="${esc(r.name)}"${ai.pulling ? ' disabled' : ''}>Laden</button>`;
     return `<div class="rec${have ? ' have' : ''}">
-      <div class="rec-main"><b>${esc(r.label)}</b><span class="muted small">${esc(r.note)}</span></div>
+      <div class="rec-main"><b>${esc(r.label)}${r.name === best ? ' <span class="chip ev-ok">passt zu deinem PC</span>' : ''}</b><span class="muted small">${esc(r.note)}</span></div>
       <span class="rec-meta">${esc(r.size)} · ${esc(r.ram)}</span>${action}</div>`;
   }).join('');
   $('recList').querySelectorAll('.rec-pull').forEach((b) => b.onclick = () => pullModel(b.dataset.m));
@@ -1206,6 +1462,8 @@ async function pullModel(name) {
 function cloudHasAccess(id) {
   const c = pcfg(id);
   if (id === 'compat') return !!c.baseUrl;
+  if (id === 'vertex') return !!c.baseUrl; // Token optional (gcloud)
+  if (id === 'azure') return !!c.baseUrl && !!(providerMeta(id).envKeyPresent || c.apiKey);
   return !!(providerMeta(id).envKeyPresent || c.apiKey);
 }
 function setCloudStatus(kind, msg) {
@@ -1232,7 +1490,7 @@ function refreshCloud() {
   $('cloudKeyBadge').hidden = !meta.envKeyPresent;
   buildCloudSelect(id);
   if (cloudHasAccess(id)) loadCloudModels(id);
-  else setCloudStatus('muted', id === 'compat' ? 'Für OpenAI-kompatible Dienste die Server-Adresse in den Einstellungen eintragen.' : 'Schlüssel eingeben – die Modelle laden dann automatisch.');
+  else setCloudStatus('muted', NEEDS_URL.has(id) && !c.baseUrl ? (id === 'compat' ? 'Für OpenAI-kompatible Dienste die Server-Adresse in den Einstellungen eintragen.' : 'Die Server-Adresse (Basis-URL) des Dienstes in den Einstellungen eintragen.') : 'Schlüssel eingeben – die Modelle laden dann automatisch.');
 }
 async function loadCloudModels(id) {
   const c = pcfg(id);
@@ -1709,6 +1967,14 @@ function renderReportLogo() {
   $('reportLogoPreview').hidden = !has; $('reportLogoClear').hidden = !has;
   if (has) $('reportLogoPreview').src = state.config.reportLogo;
 }
+// Ausgaben dieses Monats (lokal geschaetzt) neben der Budget-Einstellung
+function renderBudgetInfo() {
+  if (!window.vigil.budgetStats || !$('budgetInfo')) return;
+  window.vigil.budgetStats().then((s) => {
+    const last = (s.recentRuns || [])[0];
+    $('budgetInfo').textContent = `Diesen Monat: ${fmtUsd(s.spent || 0)}${s.budget ? ` von ${fmtUsd(s.budget)} (${s.percent} %)` : ''} · ${s.runs || 0} Läufe${s.avgRunUsd ? ` · Ø ${fmtUsd(s.avgRunUsd)} je Lauf` : ''}${last ? ` · letzter Lauf ${fmtUsd(last.usd)}` : ''}.`;
+  }).catch(() => {});
+}
 function tempText(v) {
   if (v <= 0.2) return 'Niedrig – genaue, nachvollziehbare Ergebnisse (empfohlen).';
   if (v <= 0.5) return 'Mittel – etwas freier formuliert.';
@@ -1727,6 +1993,19 @@ function renderSettings() {
   $('consensusModelInput').value = pcfg(state.config.selected || 'ollama').consensusModel || '';
   if (window.vigil.aiCacheInfo) window.vigil.aiCacheInfo().then((c) => { $('cacheInfo').textContent = c.entries ? `Derzeit ${c.entries} Dateien gemerkt.` : ''; }).catch(() => {});
   $('redactChk').checked = state.config.redactSecrets !== false;
+  // KI & Datenschutz: eigene Vorgaben, Nachschlagen, Datei-Budget, Budget, strenger Datenschutz, Protokoll
+  $('aiFocusInput').value = state.config.aiFocus || '';
+  $('lookupChk').checked = !!state.config.aiLookup;
+  $('lookupMaxInput').value = state.config.aiLookupMax || 4;
+  $('fileBudgetInput').value = state.config.aiFileBudget || 0;
+  $('embedModelInput').value = state.config.embedModel || '';
+  $('runSumChk').checked = state.config.aiRunSummary !== false;
+  $('monthlyBudgetInput').value = state.config.monthlyBudgetUsd || 0;
+  $('privacyChk').checked = !!state.config.privacyMode;
+  $('privacyTermsInput').value = (state.config.privacyTerms || []).join('\n');
+  $('privacyHostsInput').value = (state.config.privacyHosts || []).join('\n');
+  $('reproChk').checked = !!state.config.aiRepro;
+  renderBudgetInfo();
   $('domChk').checked = state.config.domAudit !== false;
   $('costWarnInput').value = state.config.costWarnUsd ?? 2;
   $('reportCompanyInput').value = state.config.reportCompany || '';
@@ -1780,6 +2059,19 @@ function collectSettings() {
   pcfg(state.config.selected || 'ollama').triageModel = $('triageModelInput').value.trim();
   pcfg(state.config.selected || 'ollama').consensusModel = $('consensusModelInput').value.trim();
   state.config.redactSecrets = $('redactChk').checked;
+  state.config.aiFocus = $('aiFocusInput').value.trim().slice(0, 2000);
+  state.config.aiLookup = $('lookupChk').checked;
+  state.config.aiLookupMax = Math.min(10, Math.max(1, parseInt($('lookupMaxInput').value, 10) || 4));
+  state.config.aiFileBudget = Math.max(0, parseInt($('fileBudgetInput').value, 10) || 0);
+  state.config.embedModel = $('embedModelInput').value.trim();
+  state.config.aiRunSummary = $('runSumChk').checked;
+  state.config.monthlyBudgetUsd = Math.max(0, parseFloat($('monthlyBudgetInput').value) || 0);
+  state.config.privacyMode = $('privacyChk').checked;
+  const lines = (id) => $(id).value.split(/\n/).map((x) => x.trim()).filter(Boolean).slice(0, 200);
+  state.config.privacyTerms = lines('privacyTermsInput');
+  state.config.privacyHosts = lines('privacyHostsInput');
+  state.config.aiRepro = $('reproChk').checked;
+  setTimeout(renderBudgetInfo, 200);
   state.config.domAudit = $('domChk').checked;
   state.config.costWarnUsd = Math.max(0, parseFloat($('costWarnInput').value) || 0);
   state.config.malwareScan = $('malwareChk').checked;
@@ -1842,6 +2134,9 @@ async function init() {
   state.config = await window.vigil.getConfig();
   state.config.providers = state.config.providers || {};
   try { ai.recommended = await window.vigil.ollama.recommended(); } catch { ai.recommended = []; }
+  // Ausstattung des PCs erkennen (im Hintergrund) -> passendes lokales Modell empfehlen
+  if (window.vigil.ollama.hardware) window.vigil.ollama.hardware().then((h) => { ai.hardware = h && h.ok ? h : null; if (ai.ollama && ai.ollama.running) { renderLocalModels(); renderRecommended(); } renderHwRec(); }).catch(() => {});
+  if ($('threatBtn')) $('threatBtn').onclick = buildThreatModel;
 
   const sel = state.config.selected || 'ollama';
   if (!CLOUD_IDS.includes(state.config.cloudProvider)) state.config.cloudProvider = CLOUD_IDS.includes(sel) ? sel : 'anthropic';

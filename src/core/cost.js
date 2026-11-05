@@ -31,7 +31,43 @@ const PRICING = {
     { re: /(2\.0-flash-lite|1\.5-flash-8b)/i, in: 0.075, out: 0.30 },
     { re: /flash/i, in: 0.10, out: 0.40 },
   ],
+  mistral: [
+    { re: /codestral/i, in: 0.30, out: 0.90 },
+    { re: /(mistral-large|pixtral-large)/i, in: 2, out: 6 },
+    { re: /mistral-medium/i, in: 0.40, out: 2 },
+    { re: /(mistral-small|ministral|devstral)/i, in: 0.10, out: 0.30 },
+  ],
+  deepseek: [
+    { re: /reasoner/i, in: 0.55, out: 2.19 },
+    { re: /deepseek/i, in: 0.27, out: 1.10 },
+  ],
+  groq: [
+    { re: /(70b|versatile)/i, in: 0.59, out: 0.79 },
+    { re: /(8b|instant)/i, in: 0.05, out: 0.08 },
+    { re: /gpt-oss-120b/i, in: 0.15, out: 0.75 },
+    { re: /gpt-oss/i, in: 0.10, out: 0.50 },
+    { re: /qwen/i, in: 0.29, out: 0.59 },
+  ],
+  bedrock: [
+    { re: /nova-pro/i, in: 0.80, out: 3.20 },
+    { re: /nova-lite/i, in: 0.06, out: 0.24 },
+    { re: /nova-micro/i, in: 0.035, out: 0.14 },
+    { re: /llama3-[13]-70b/i, in: 0.72, out: 0.72 },
+    { re: /mistral-large/i, in: 2, out: 6 },
+  ],
 };
+
+// Anbieter, die Modelle anderer Hersteller weiterreichen, rechnen mit deren Tarif:
+// Azure = OpenAI, Vertex = Gemini, OpenRouter "hersteller/modell", Bedrock "…anthropic.claude-…".
+const VENDOR = { openai: 'openai', anthropic: 'anthropic', google: 'gemini', mistralai: 'mistral', deepseek: 'deepseek' };
+function delegated(provider, model) {
+  const m = String(model || '');
+  if (provider === 'azure') return ['openai', m];
+  if (provider === 'vertex') return ['gemini', m];
+  if (provider === 'openrouter') { const [v, ...rest] = m.split('/'); return VENDOR[v] ? [VENDOR[v], v === 'anthropic' ? rest.join('/').replace(/\./g, '-') : rest.join('/')] : null; }
+  if (provider === 'bedrock' && /anthropic\./i.test(m)) return ['anthropic', m.replace(/\./g, '-')];
+  return null;
+}
 
 // Sieht die Basis-URL nach einem lokalen Ziel aus? (localhost/127.0.0.1/::1/*.local)
 function looksLocalUrl(baseUrl) {
@@ -54,6 +90,8 @@ function isLocalProvider(provider, baseUrl) {
 
 // Tarif fuer provider+model finden (oder null, wenn unbekannt).
 function priceFor(provider, model) {
+  const d = delegated(provider, model);
+  if (d) { const r = priceFor(d[0], d[1]); if (r) return r; }
   const list = PRICING[provider];
   if (!list) return null;
   const m = String(model || '');
@@ -69,7 +107,7 @@ function approxTokens(chars) {
 // Kosten fuer eine (geschaetzte oder tatsaechliche) Token-Menge berechnen.
 // Rueckgabe: { local, priced, usd, inputTokens, outputTokens, rate }
 // Zwischengespeicherte Eingangs-Tokens kosten nur einen Bruchteil (Anteil des normalen Preises).
-const CACHE_READ_FACTOR = { anthropic: 0.1, openai: 0.25, gemini: 0.25 };
+const CACHE_READ_FACTOR = { anthropic: 0.1, openai: 0.25, gemini: 0.25, azure: 0.25, vertex: 0.25, deepseek: 0.1, bedrock: 0.1 };
 const CACHE_WRITE_FACTOR = { anthropic: 1.25 };
 
 function estimateCost({ provider, model, baseUrl, inputTokens = 0, outputTokens = 0, cachedTokens = 0, cacheWriteTokens = 0 } = {}) {

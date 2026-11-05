@@ -174,6 +174,7 @@
               </div>
               <pre id="ollamaLog" class="log mini" hidden></pre>
 
+              <div id="hwRec" class="hw-rec" hidden></div>
               <div id="localModelRow" class="field" hidden>
                 <label for="localModel">Modell</label>
                 <select id="localModel"></select>
@@ -286,6 +287,7 @@
             <button id="exportJsonBtn" role="menuitem"><b>JSON</b><span>maschinenlesbar, inkl. Risiko und Lösungen</span></button>
           </div>
         </div>
+        <button id="threatBtn" class="btn" title="STRIDE-Bedrohungsmodell des Projekts erstellen">Bedrohungsmodell</button>
         <button id="newScanBtn" class="btn primary">Neue Prüfung</button>
       </div>
     </header>
@@ -346,6 +348,8 @@
     <!-- Ergebnis -->
     <section id="resultPanel" class="result" hidden>
       <div id="verdict" class="verdict card"></div>
+      <div id="runSummary" class="run-summary card" hidden></div>
+      <section id="threatPanel" class="threat-panel card" hidden aria-label="Bedrohungsmodell"></section>
 
       <div class="toolbar">
         <label class="search">
@@ -598,6 +602,30 @@
             <div class="set-label"><b>Zweites Modell prüft gegen</b><span>Optional: Ein zweites Modell prüft dieselben Dateien. Was beide finden, gilt als sicher, Einzelfunde werden heruntergestuft. Verdoppelt Zeit und Kosten der KI-Analyse.</span></div>
             <input id="consensusModelInput" type="text" class="set-input" placeholder="z. B. llama3.1:8b" spellcheck="false" />
           </div>
+          <div class="set-row">
+            <div class="set-label"><b>Monatliches KI-Budget</b><span>Obergrenze für Cloud-KI pro Kalendermonat (0 = aus). Ist sie erreicht, fragt Vigil vor jedem Lauf nach und sperrt Einzelaufrufe. <span id="budgetInfo"></span></span></div>
+            <label class="cost-limit"><input id="monthlyBudgetInput" aria-label="Monatliches KI-Budget" type="number" min="0" step="1" /> <span>$</span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Eigene Vorgaben für die KI</b><span>Schwerpunkte oder Hinweise zu deinem Projekt, z. B. „Mandantentrennung über tenant_id prüfen“. Gehen in jede Analyse ein; geänderte Vorgaben prüfen alle Dateien neu.</span></div>
+          </div>
+          <textarea id="aiFocusInput" aria-label="Eigene Vorgaben für die KI" rows="3" maxlength="2000" spellcheck="false" placeholder="z. B. Achte besonders auf Rechteprüfungen in /api/admin und auf die Zahlungslogik."></textarea>
+          <div class="set-row">
+            <div class="set-label"><b>KI darf nachschlagen</b><span>Die KI kann während der Analyse weitere Dateien oder Funktionsdefinitionen aus dem geprüften Projekt anfordern (Claude, OpenAI-Format, Gemini, Ollama). Höchstens so viele Abfragen je Block:</span></div>
+            <span class="set-ctrl"><input id="lookupMaxInput" type="number" min="1" max="10" step="1" class="set-input tiny-num" aria-label="Höchstzahl Abfragen je Block" /><label class="switch"><input type="checkbox" id="lookupChk" /><span></span></label></span>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Große Projekte: Datei-Budget</b><span>Vigil ordnet Dateien nach Risiko (Routen, Anmeldung, Eingaben, Shell, SQL …). Optional gehen nur die wichtigsten N Dateien an die KI (0 = alle).</span></div>
+            <input id="fileBudgetInput" type="number" min="0" step="10" class="set-input tiny-num" aria-label="Höchstzahl Dateien für die KI" />
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Lokale Embeddings zum Ordnen</b><span>Optional: ein Ollama-Embedding-Modell verfeinert die Reihenfolge – läuft lokal, nichts verlässt den Rechner. Leer lassen zum Abschalten.</span></div>
+            <input id="embedModelInput" aria-label="Lokale Embeddings zum Ordnen" type="text" class="set-input" placeholder="z. B. nomic-embed-text" spellcheck="false" />
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Zusammenfassung per KI</b><span>Nach jedem Lauf ein Absatz in Alltagssprache über das Ergebnis. Aus: Vigil schreibt ihn regelbasiert.</span></div>
+            <label class="switch"><input type="checkbox" id="runSumChk" /><span></span></label>
+          </div>
         </section>
 
         <section class="card set-block" id="set-privacy">
@@ -609,6 +637,18 @@
           <div class="set-row">
             <div class="set-label"><b>Secrets schwärzen</b><span>Bevor Code an externe KI-Anbieter geht. Lokale Modelle sehen den Code unverändert, dort verlässt nichts den Rechner.</span></div>
             <label class="switch"><input type="checkbox" id="redactChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Strenger Datenschutz</b><span>Schwärzt vor dem Versand an Cloud-KI zusätzlich E-Mail-Adressen, interne Hostnamen und private IPs, Personennamen (Autor-/Copyright-Zeilen) und die Firmennamen unten.</span></div>
+            <label class="switch"><input type="checkbox" id="privacyChk" /><span></span></label>
+          </div>
+          <div class="priv-lists">
+            <textarea id="privacyTermsInput" rows="2" spellcheck="false" aria-label="Firmen- und Projektnamen" placeholder="Firmen- und Projektnamen, einer pro Zeile"></textarea>
+            <textarea id="privacyHostsInput" rows="2" spellcheck="false" aria-label="Interne Domains" placeholder="Interne Domains, z. B. firma.intern"></textarea>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>Protokoll für Reproduzierbarkeit</b><span>Speichert je Lauf Prompts (wie gesendet, also geschwärzt), Modell, Parameter und Prüfsummen der Antworten – nur lokal, einsehbar im Verlauf.</span></div>
+            <label class="switch"><input type="checkbox" id="reproChk" /><span></span></label>
           </div>
         </section>
 

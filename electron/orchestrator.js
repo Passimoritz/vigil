@@ -12,6 +12,9 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
   const queue = [];
   let current = null; // { job, ctrl }
   const persist = () => { try { store.save(storeFile, db); } catch (e) { console.warn('Befund-Speicher nicht gespeichert:', e.message); } };
+  // Befristete Risikoakzeptanz: abgelaufene Eintraege zuruecksetzen (hoechstens einmal pro Minute pruefen)
+  let lastExpire = 0;
+  const expire = () => { if (Date.now() - lastExpire < 60000) return { expired: 0 }; lastExpire = Date.now(); const r = store.expireAcceptedRisks(db); if (r.expired) persist(); return r; };
 
   // job: { targets (scope-geprueft), providerId, origin: 'app'|'api', onProgress? }
   function enqueue(job) {
@@ -86,10 +89,11 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
     enqueue,
     cancel() { if (current) { current.ctrl.abort(); return true; } return false; },
     getRun: (id) => db.runs.find((r) => r.id === id) || null,
-    listFindings: (filter) => store.listFindings(db, filter),
-    stats: () => store.stats(db),
+    listFindings: (filter) => { expire(); return store.listFindings(db, filter); },
+    stats: () => { expire(); return store.stats(db); },
+    expireRisks: () => { lastExpire = 0; return expire(); },
     targets: () => store.stats(db).targets,
-    setStatus(id, status, note) { const r = store.setStatus(db, id, status, note); if (r.ok) persist(); return r; },
+    setStatus(id, status, note, opts) { const r = store.setStatus(db, id, status, note, opts || {}); if (r.ok) persist(); return r; },
     setBaseline(targetId) { const r = store.setBaseline(db, targetId); if (r.ok) persist(); return r; },
     searchSbom: (q) => store.searchSbom(db, q),
     getTarget: (id) => db.targets[id] || null,

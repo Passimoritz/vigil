@@ -24,9 +24,62 @@ function redactSecrets(text) {
   return { text: out, count };
 }
 
+// --- Strenger Datenschutz-Modus ("privmode") --------------------------------
+// Zusaetzlich zu Secrets: Firmennamen (eigene Liste), interne Hostnamen und private IPs,
+// E-Mail-Adressen und Personennamen (einfache Heuristik: Autor-/Copyright-/Signatur-Zeilen).
+// Gleiche Werte bekommen im selben Text denselben Platzhalter, damit der Code lesbar bleibt.
+const INTERNAL_TLD = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:internal|intern|corp|local|lan|intranet|localdomain|home\.arpa|private|priv)\b/gi;
+const PRIVATE_IP = /\b(?:10\.(?:\d{1,3}\.){2}\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/g;
+const EMAIL = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/g;
+const NAME = "[A-ZÄÖÜ][a-zäöüßéèáàóòíìñç'-]+(?:[ \\t]+(?:von|van|de|der|zu|di|da|le)\\b)?(?:[ \\t]+[A-ZÄÖÜ][a-zäöüßéèáàóòíìñç'-]+){1,2}";
+const PERSON_LINES = [
+  new RegExp(`(@author\\s+|\\bAuthor(?:s)?\\s*[:=]\\s*["']?|\\bAutor(?:in)?\\s*[:=]\\s*["']?|\\bMaintainer\\s*[:=]\\s*["']?|\\bCreated by\\s+|\\bErstellt von\\s+|\\bWritten by\\s+|\\bSigned-off-by:\\s*|\\bCo-authored-by:\\s*|\\bContact\\s*[:=]\\s*["']?|\\bKontakt\\s*[:=]\\s*["']?)(${NAME})`, 'g'),
+  new RegExp(`(\\b(?:[Cc]opyright|COPYRIGHT)[ \\t]*(?:\\(c\\)|©)?\\s*(?:\\d{4}(?:\\s*[-–]\\s*\\d{4})?,?\\s*)?)(${NAME})`, 'g'),
+  new RegExp(`("(?:author|maintainer|name)"\\s*:\\s*")(${NAME})(?=\\s*[<"(])`, 'g'),
+];
+const listOf = (v) => (Array.isArray(v) ? v : String(v || '').split(/[\n,;]+/)).map((x) => String(x).trim()).filter((x) => x.length >= 2).slice(0, 200);
+const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function redactPrivate(text, opts = {}) {
+  let out = String(text || '');
+  let count = 0;
+  const maps = {};
+  const ph = (kind, val) => {
+    const m = maps[kind] || (maps[kind] = new Map());
+    const k = val.toLowerCase();
+    if (!m.has(k)) m.set(k, `«${kind}-${m.size + 1}»`);
+    count++;
+    return m.get(k);
+  };
+  // 1. Firmen- und Projektnamen aus der eigenen Liste (laengste zuerst)
+  for (const term of listOf(opts.terms).sort((a, b) => b.length - a.length)) {
+    out = out.replace(new RegExp(`(^|[^\\p{L}\\p{N}_])(${reEsc(term)})(?=$|[^\\p{L}\\p{N}_])`, 'giu'), (_m, pre, t) => pre + ph('firma', t));
+  }
+  // 2. E-Mail-Adressen (vor den Hostnamen, sonst wird nur die Domain ersetzt)
+  out = out.replace(EMAIL, (m) => ph('email', m));
+  // 3. Eigene interne Domains, interne Endungen und private IP-Adressen
+  for (const d of listOf(opts.hosts).map((x) => x.replace(/^\*?\./, '').toLowerCase())) {
+    out = out.replace(new RegExp(`\\b(?:[a-z0-9-]+\\.)*${reEsc(d)}\\b`, 'gi'), (m) => ph('host', m));
+  }
+  out = out.replace(INTERNAL_TLD, (m) => ph('host', m));
+  out = out.replace(PRIVATE_IP, (m) => ph('ip', m));
+  // 4. Personennamen in typischen Autor-/Copyright-/Signaturzeilen
+  for (const re of PERSON_LINES) out = out.replace(re, (_m, pre, name) => pre + ph('person', name));
+  return { text: out, count };
+}
+
+// Alles, was vor dem Versand an eine Cloud-KI geschwaerzt werden muss – EIN Einstieg fuer alle Aufrufer.
+function redactForCloud(text, config = {}) {
+  let out = String(text || '');
+  let count = 0;
+  if (config.redactSecrets !== false) { const r = redactSecrets(out); out = r.text; count += r.count; }
+  if (config.privacyMode) { const r = redactPrivate(out, { terms: config.privacyTerms, hosts: config.privacyHosts }); out = r.text; count += r.count; }
+  return { text: out, count };
+}
+
 // Nur fuer externe Anbieter schwaerzen; lokale Modelle sehen den Originalcode.
 function shouldRedact(config) {
-  return config.redactSecrets !== false && !isLocalProvider(config.provider, config.baseUrl);
+  return (config.redactSecrets !== false || !!config.privacyMode) && !isLocalProvider(config.provider, config.baseUrl);
 }
 
 // --- Code-Slices ---------------------------------------------------------
@@ -101,9 +154,9 @@ async function validateFindings({ findings, units, config, onProgress = () => {}
       return `### Befund ${i}\nTitel: ${f.title}\nOrt: ${f.location || '-'}\nKategorie: ${f.category}\nBehauptung: ${f.description}\n${code}`;
     });
     let user = `Pruefe die folgenden ${items.length} Befunde. Nutze als id die Nummer hinter "Befund".\n\n${items.join('\n\n')}`;
-    if (redact) user = redactSecrets(user).text;
+    if (redact) user = redactForCloud(user, config).text;
     try {
-      const { text, usage: u } = await providers.callProvider({ ...config, temperature: 0 }, { system: VALIDATOR_PROMPT, user });
+      const { text, usage: u } = await providers.callProvider({ ...config, temperature: 0 }, { system: VALIDATOR_PROMPT, user, kind: 'validate' });
       if (u) { usage.inputTokens += u.inputTokens || 0; usage.outputTokens += u.outputTokens || 0; }
       for (const v of parseVerdicts(text)) {
         const f = batches[b][Number(v.id)];
@@ -161,4 +214,4 @@ function enrich(findings, units = []) {
   return findings.map((f) => ({ ...f, assurance: assuranceOf(f), context: contextOf(f, units) }));
 }
 
-module.exports = { redactSecrets, shouldRedact, extractSlice, validateFindings, enrich, assuranceOf, parseVerdicts, VALIDATOR_PROMPT };
+module.exports = { redactSecrets, redactPrivate, redactForCloud, shouldRedact, extractSlice, validateFindings, enrich, assuranceOf, parseVerdicts, VALIDATOR_PROMPT };

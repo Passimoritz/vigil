@@ -113,6 +113,7 @@ function fingerprintOf(targetId, f) {
 // Ergebnis: annotierte Befunde + Statistik dieses Laufs.
 function applyRun(store, run) {
   const now = run.now || new Date().toISOString();
+  expireAcceptedRisks(store, now); // abgelaufene Akzeptanzen vor dem Abgleich zuruecksetzen
   const runTargets = run.targets.map((t) => ({ ...t, id: upsertTarget(store, t, now) }));
   const seen = new Set();
   const counters = { created: 0, reopened: 0, resolved: 0, updated: 0 };
@@ -280,13 +281,43 @@ function setTargetMeta(store, targetId, patch) {
 }
 
 // --- Status & Abfragen -----------------------------------------------------
-function setStatus(store, id, status, note) {
+// "Risiko akzeptiert" gilt nur befristet (Standard 90 Tage): danach wieder OPEN mit Hinweis.
+const DEFAULT_ACCEPT_DAYS = 90;
+const MAX_ACCEPT_DAYS = 3650;
+function setStatus(store, id, status, note, opts = {}) {
   if (!FINDING_STATUSES.includes(status)) return { ok: false, error: 'Unbekannter Status.' };
   const rec = store.findings[id];
   if (!rec) return { ok: false, error: 'Befund nicht gefunden.' };
-  if (rec.status !== status) { rec.status = status; rec.statusChangedAt = new Date().toISOString(); rec.resolvedAt = status === 'RESOLVED' ? rec.statusChangedAt : null; }
+  const now = opts.now || new Date().toISOString();
+  if (rec.status !== status) { rec.status = status; rec.statusChangedAt = now; rec.resolvedAt = status === 'RESOLVED' ? rec.statusChangedAt : null; }
   rec.statusNote = note || undefined;
+  if (status === 'ACCEPTED_RISK') {
+    const days = Math.min(MAX_ACCEPT_DAYS, Math.max(1, Math.round(Number(opts.expiresInDays) || DEFAULT_ACCEPT_DAYS)));
+    rec.acceptedUntil = new Date(Date.parse(now) + days * 864e5).toISOString();
+  } else delete rec.acceptedUntil;
   return { ok: true, finding: rec };
+}
+
+// Abgelaufene Risikoakzeptanzen zuruecksetzen. Alte Eintraege ohne Ablaufdatum bekommen
+// einmalig eines (Standardfrist ab der Akzeptanz) statt sofort zu verfallen.
+function expireAcceptedRisks(store, now = new Date().toISOString()) {
+  const t = Date.parse(now);
+  const expired = [];
+  for (const rec of Object.values(store.findings)) {
+    if (rec.status !== 'ACCEPTED_RISK') continue;
+    if (!rec.acceptedUntil) {
+      const since = Date.parse(rec.statusChangedAt) || t;
+      rec.acceptedUntil = new Date(since + DEFAULT_ACCEPT_DAYS * 864e5).toISOString();
+    }
+    if (Date.parse(rec.acceptedUntil) > t) continue;
+    const day = String(rec.acceptedUntil).slice(0, 10);
+    rec.status = 'OPEN'; rec.statusChangedAt = now; rec.resolvedAt = null;
+    rec.statusNote = `Risikoakzeptanz am ${day} abgelaufen – wieder offen. Bitte neu bewerten.`;
+    rec.acceptanceExpiredAt = now;
+    delete rec.acceptedUntil;
+    expired.push({ id: rec.id, title: rec.title });
+  }
+  return { expired: expired.length, items: expired };
 }
 
 const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
@@ -348,4 +379,4 @@ function updateRun(store, id, patch) {
   return r;
 }
 
-module.exports = { emptyStore, load, save, targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, falsePositivesFor, deleteFindings, deleteTarget, deleteRun, purgeResolved, setStatus, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };
+module.exports = { emptyStore, load, save, targetIdOf, upsertTarget, assignTarget, fingerprintOf, applyRun, falsePositivesFor, deleteFindings, deleteTarget, deleteRun, purgeResolved, setStatus, expireAcceptedRisks, DEFAULT_ACCEPT_DAYS, setBaseline, searchSbom, setTargetMeta, listFindings, stats, addRun, updateRun, HIDDEN };
