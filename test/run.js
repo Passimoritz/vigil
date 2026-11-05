@@ -1135,7 +1135,7 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const selfF = dedupeFindings([...prescan(self.units, {}).findings, ...runStaticModules(self.units).findings]);
     const crit = selfF.filter((f) => f.severity === 'critical');
     // Regel-Definitionen enthalten die gesuchten Muster selbst (z. B. "jwt.decode(") – das sind keine Luecken
-    const RULE_FILES = /modules[\\/](static|langs|iac|mobile|webdeep)\.js|prescan\.js|findings-en\.js|remedies\.js/;
+    const RULE_FILES = /modules[\\/](static|langs|iac|mobile|webdeep|cryptoinv)\.js|prescan\.js|findings-en\.js|remedies\.js/;
     const high = selfF.filter((f) => f.severity === 'high' && !RULE_FILES.test(f.location));
     check(`selbst-scan: keine kritischen Befunde in Vigils eigenem Code (${self.units.length} Dateien)`, self.units.length > 40 && crit.length === 0);
     check('selbst-scan: keine hohen Befunde außerhalb der Regel-Dateien', high.length === 0);
