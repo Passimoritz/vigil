@@ -46,7 +46,7 @@ jobs:
 
       - name: Ungepackte App hochladen (für SignPath)
         id: unpacked
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vigil-unpacked
           path: dist/win-unpacked
@@ -76,7 +76,7 @@ jobs:
 
       - name: Installer hochladen (für SignPath)
         id: installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vigil-installers
           path: |
