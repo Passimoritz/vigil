@@ -23,7 +23,9 @@ const TEXT_EXT = new Set([
   '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.json', '.json5',
   '.py', '.rb', '.php', '.java', '.kt', '.kts', '.go', '.rs', '.c', '.h',
   '.cpp', '.cc', '.hpp', '.cs', '.swift', '.m', '.mm', '.scala', '.clj',
-  '.sh', '.bash', '.zsh', '.ps1', '.psm1', '.bat', '.cmd',
+  '.cxx', '.hh', '.hxx', '.dart', '.sc', '.ex', '.exs', '.lua', '.erb', '.rake', '.cshtml', '.razor',
+  '.sh', '.bash', '.zsh', '.ps1', '.psm1', '.psd1', '.bat', '.cmd',
+  '.ipynb', '.gql',
   '.html', '.htm', '.css', '.scss', '.vue', '.svelte',
   '.sql', '.graphql', '.proto',
   '.yml', '.yaml', '.toml', '.ini', '.cfg', '.conf', '.env', '.properties',
@@ -45,6 +47,19 @@ const { extractDocUrls } = require('./linkcheck');
 const MAX_DEPTH = 2; // Archiv im Archiv (bzw. Anhang in der Mail) – tiefer wird nicht entpackt
 // Diese Eintraege werden auch gross gelesen (bis zur Archiv-Grenze), weil sie eigene Pruefungen haben
 const BIG_OK = /\.(exe|dll|so|dylib|sys|ocx|scr|msi|bin|jar|war|ear|zip|7z|rar|tar|tgz|gz|iso|img|vhdx?|dmg|cab|eml|msg|pdf|docx?|docm|xlsx?|xlsm|pptx?|pptm|rtf)$/i;
+const { analyzeModelFile, isModelExt } = require('./modelscan');
+
+// Modelldatei lesen: ZIP-Modelle (PyTorch) bis 512 MB ganz, sonst nur der Anfang (dort steht der Pickle)
+function readModel(full, size) {
+  const HEAD = 32 * 1024 * 1024;
+  if (size <= HEAD) return fs.readFileSync(full);
+  const fd = fs.openSync(full, 'r');
+  try {
+    const magic = Buffer.alloc(4); fs.readSync(fd, magic, 0, 4, 0);
+    if (magic.readUInt32BE(0) === 0x504b0304 && size <= 512 * 1024 * 1024) return fs.readFileSync(full);
+    const buf = Buffer.alloc(HEAD); const n = fs.readSync(fd, buf, 0, HEAD, 0); return buf.subarray(0, n);
+  } finally { fs.closeSync(fd); }
+}
 
 function extname(p) {
   const e = path.extname(p).toLowerCase();
@@ -61,6 +76,10 @@ function langFor(ext) {
     '.c': 'c', '.cpp': 'cpp', '.h': 'c', '.sh': 'bash', '.ps1': 'powershell',
     '.sql': 'sql', '.html': 'html', '.yml': 'yaml', '.yaml': 'yaml',
     '.xml': 'xml', '.gradle': 'gradle',
+    '.cc': 'cpp', '.cxx': 'cpp', '.hpp': 'cpp', '.hh': 'cpp', '.hxx': 'cpp',
+    '.dart': 'dart', '.scala': 'scala', '.sc': 'scala', '.ex': 'elixir', '.exs': 'elixir', '.lua': 'lua',
+    '.rake': 'ruby', '.erb': 'ruby', '.bash': 'bash', '.zsh': 'bash', '.psm1': 'powershell', '.psd1': 'powershell',
+    '.kts': 'kotlin', '.swift': 'swift', '.ipynb': 'json', '.json': 'json', '.graphql': 'graphql', '.gql': 'graphql',
   };
   return map[ext] || 'text';
 }
@@ -197,6 +216,11 @@ function ingestFile(col, full, root) {
     try { const buf = fs.readFileSync(full); for (const f of analyzeDocument(buf, label)) col.findings.push(f); col.addLinks(extractDocUrls(buf, ext), label); } catch (e) { col.notes.push(`Dokument nicht lesbar: ${rel}`); }
     if (ext !== '.pdf' && ext !== '.rtf') return; // Office-Binaerformate liefern keinen sinnvollen Text
   }
+  // KI-Modelldateien (Pickle): gefaehrliche Importe pruefen, ohne die Datei zu laden
+  if (isModelExt(ext)) {
+    try { for (const f of analyzeModelFile(readModel(full, stat.size), rel.replace(/\\/g, '/'))) col.findings.push(f); }
+    catch (e) { col.notes.push(`Modelldatei nicht lesbar: ${rel}`); }
+  }
   if (BINARY_EXE_EXT.has(ext)) {
     try {
       const buf = fs.readFileSync(full);
@@ -247,6 +271,7 @@ function processEntry(col, label, name, buf, depth) {
     col.addLinks(extractDocUrls(buf, ext), label);
     if (ext !== '.pdf' && ext !== '.rtf') return;
   }
+  if (isModelExt(ext)) { try { for (const f of analyzeModelFile(buf, label)) col.findings.push(f); } catch { /* defekt */ } }
   if (depth >= 2 && ext === '.class') return; // Klassen in verschachtelten JARs: nur die Paketangaben zaehlen
   addTextBuffer(col, label, 'archive-entry', buf, name);
 }

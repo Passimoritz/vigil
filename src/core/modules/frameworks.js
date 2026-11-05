@@ -1,0 +1,100 @@
+'use strict';
+
+// Framework-Regeln: Next.js, Nuxt, Laravel, Spring, Django, Rails, ASP.NET.
+// Typische Fehlkonfigurationen (CSRF aus, Debug an, Mass Assignment, ungeschuetzte Server-Actions …).
+// Rein statisch: es werden nur die eingelesenen Dateien gelesen.
+
+const { base, fileName, applyRules, mk, oneLine } = require('./rulekit');
+
+const M = 'framework-rules';
+const JS = /\.(m?[jt]sx?|cjs)$/i;
+const PY = /\.py$/i;
+const RB = /\.(rb|erb|rake)$/i;
+const PHP = /\.php$/i;
+const JAVA = /\.(java|kt|kts|groovy)$/i;
+const CS = /\.(cs|cshtml|razor)$/i;
+const SPRING_CONF = /(^|\/)application[\w-]*\.(properties|ya?ml)$/i;
+const RAILS_PROD = /(^|\/)config\/environments\/production\.rb$/i;
+const DEV_SETTINGS = /(^|\/)(settings[_/]?(local|dev|development|test)\w*|local_settings|dev_settings)\.py$|(^|\/)\.env\.(local|dev|development|test|example)$/i;
+
+const RULES = [
+  // --- Next.js ---
+  { id: 'next-public-secret', sev: 'high', cat: 'Secrets', re: /\bNEXT_PUBLIC_\w*(SECRET|PRIVATE|PASSWORD|SERVICE_ROLE|ADMIN_KEY)\w*/g, title: 'Geheimnis als NEXT_PUBLIC_-Variable (Next.js)', desc: 'Variablen mit NEXT_PUBLIC_ werden in den Browser-Code eingebaut. Ein so benanntes Geheimnis kann jeder Besucher im JavaScript der Seite lesen.', fix: 'Das Präfix NEXT_PUBLIC_ entfernen und den Wert nur auf dem Server (Route Handler, Server Action) verwenden; den Schlüssel austauschen.' },
+  // --- Nuxt ---
+  { id: 'nuxt-public-secret', sev: 'high', cat: 'Secrets', files: /(^|\/)nuxt\.config\.[jt]s$/i, re: /\bpublic\s*:\s*\{[^}]*?\b\w*(secret|password|privateKey|private_key|serviceRole)\w*\s*:/gi, title: 'Geheimnis in runtimeConfig.public (Nuxt)', desc: 'Alles unter runtimeConfig.public wird an den Browser ausgeliefert. Ein Geheimnis an dieser Stelle ist für jeden Besucher lesbar.', fix: 'Geheime Werte direkt unter runtimeConfig (ohne public) ablegen – dort sind sie nur auf dem Server verfügbar.' },
+  { id: 'nuxt-xss-v-html', sev: 'medium', cat: 'XSS', files: /\.vue$/i, re: /\bv-html\s*=\s*["'](?!\s*\$?t\()[^"']+["']/g, title: 'v-html gibt Inhalt ungefiltert als HTML aus (Vue/Nuxt)', desc: 'v-html setzt den Wert als rohes HTML in die Seite. Kommt er von Nutzern oder aus der Datenbank, können darüber Skripte eingeschleust werden.', fix: 'Text mit {{ }} ausgeben oder das HTML vorher mit DOMPurify bereinigen.' },
+  // --- Laravel ---
+  { id: 'laravel-debug-on', sev: 'medium', cat: 'Config', files: /(^|\/)\.env(\.[\w-]+)?$/i, re: /^\s*APP_DEBUG\s*=\s*["']?true\b/gim, test: (m, c, u) => !DEV_SETTINGS.test(base(u)), title: 'Debug-Modus aktiv (Laravel APP_DEBUG=true)', desc: 'Mit APP_DEBUG=true zeigt Laravel bei Fehlern Quelltext, Umgebungsvariablen und Zugangsdaten an – auf einem erreichbaren Server ein Geschenk für Angreifer.', fix: 'In der Produktions-.env APP_DEBUG=false und APP_ENV=production setzen.' },
+  { id: 'laravel-mass-assignment', sev: 'medium', cat: 'AccessControl', files: PHP, re: /protected\s+\$guarded\s*=\s*(\[\s*\]|array\(\s*\))/g, title: 'Alle Felder per Mass Assignment änderbar (Laravel $guarded = [])', desc: 'Ein leeres $guarded erlaubt, jedes Feld des Modells über Formular- oder API-Daten zu setzen – auch Felder wie is_admin oder balance.', fix: 'Stattdessen $fillable mit einer festen Liste der erlaubten Felder pflegen.' },
+  { id: 'laravel-mass-assignment-request', sev: 'high', cat: 'AccessControl', files: PHP, re: /::(create|forceCreate|update|firstOrCreate|updateOrCreate)\s*\(\s*\$request->(all|input)\(\s*\)|->(update|fill|forceFill)\s*\(\s*\$request->(all|input)\(\s*\)/g, title: 'Komplette Anfrage wird ins Modell geschrieben (Laravel)', desc: '$request->all() übernimmt jedes mitgeschickte Feld. Wer zusätzliche Felder mitsendet, kann so Rechte oder Beträge verändern.', fix: '$request->validated() bzw. $request->only([...]) mit den erlaubten Feldern verwenden.' },
+  { id: 'laravel-csrf-except', sev: 'medium', cat: 'AccessControl', files: /VerifyCsrfToken\.php$|(^|\/)bootstrap\/app\.php$/i, re: /(\$except\s*=\s*\[[^\]]*['"][^'"]+['"]|validateCsrfTokens\(\s*except\s*:\s*\[[^\]]*['"][^'"]+['"])/g, title: 'Routen vom CSRF-Schutz ausgenommen (Laravel)', desc: 'Für die ausgenommenen Routen prüft Laravel kein CSRF-Token. Eine fremde Webseite kann dann Aktionen im Namen angemeldeter Nutzer auslösen.', fix: 'Ausnahmen nur für Webhooks mit eigener Signaturprüfung nutzen; alle anderen Routen aus $except entfernen.' },
+  { id: 'laravel-raw-sql', sev: 'high', cat: 'Injection', files: PHP, re: /(DB::(raw|select|statement|unprepared)|->(whereRaw|selectRaw|orderByRaw|havingRaw))\s*\(\s*("[^"]*\$\w|'[^']*'\s*\.\s*\$|[^,)]*\$request)/g, title: 'SQL mit eingesetzten Variablen (Laravel Raw-Query)', desc: 'In einer Raw-Abfrage werden Variablen direkt in den SQL-Text eingesetzt. Wer den Wert steuert, verändert die Abfrage.', fix: 'Platzhalter mit Bindings verwenden: whereRaw("price > ?", [$price]).' },
+  { id: 'laravel-xss-blade-unescaped', sev: 'medium', cat: 'XSS', files: /\.blade\.php$/i, re: /\{!!\s*\$(?!slot\b)[^!]*!!\}/g, title: 'Ungefilterte Ausgabe in Blade ({!! !!})', desc: '{!! !!} gibt den Wert ohne Maskierung aus. Stammt er vom Nutzer, lassen sich Skripte in die Seite einschleusen.', fix: '{{ $wert }} verwenden; HTML nur nach Bereinigung (z. B. mit HTMLPurifier) roh ausgeben.' },
+  // --- Spring ---
+  { id: 'spring-csrf-disabled', sev: 'high', cat: 'AccessControl', files: JAVA, re: /\.csrf\(\)\s*\.\s*disable\(\)|\.csrf\(\s*(AbstractHttpConfigurer::disable|(\w+)\s*->\s*\w+\.disable\(\))\s*\)/g, test: (m, c) => !/SessionCreationPolicy\.STATELESS|oauth2ResourceServer|jwt\(/.test(c), title: 'CSRF-Schutz abgeschaltet (Spring Security)', desc: 'Ohne CSRF-Schutz kann eine fremde Webseite Formulare im Namen angemeldeter Nutzer abschicken, solange die Anmeldung über Cookies läuft.', fix: 'CSRF aktiviert lassen; nur reine Token-APIs (STATELESS, Bearer-Token) dürfen ihn abschalten.' },
+  { id: 'spring-permit-all', sev: 'medium', cat: 'AccessControl', files: JAVA, re: /\.(requestMatchers|antMatchers|mvcMatchers)\(\s*"\/\*\*"\s*\)\s*\.permitAll\(\)|\.anyRequest\(\)\s*\.permitAll\(\)/g, title: 'Alle Pfade ohne Anmeldung freigegeben (Spring Security)', desc: 'permitAll() für alle Anfragen schaltet die Zugriffskontrolle praktisch ab. Neue Endpunkte sind automatisch öffentlich.', fix: 'Standardmäßig anyRequest().authenticated() setzen und nur einzelne öffentliche Pfade freigeben.' },
+  { id: 'spring-actuator-exposed', sev: 'high', cat: 'Config', files: SPRING_CONF, re: /management\.endpoints\.web\.exposure\.include\s*[=:]\s*["']?\*|exposure:\s*\n\s*include:\s*["']?\*/g, title: 'Alle Actuator-Endpunkte freigegeben (Spring Boot)', desc: 'Mit include=* sind auch /actuator/env, /heapdump und /configprops erreichbar. Darüber lassen sich Passwörter, Schlüssel und Speicherinhalte auslesen.', fix: 'Nur health und info freigeben und die Actuator-Endpunkte hinter eine Anmeldung oder einen eigenen Port legen.' },
+  { id: 'spring-h2-console', sev: 'medium', cat: 'Config', files: SPRING_CONF, re: /spring\.h2\.console\.enabled\s*[=:]\s*true|h2:\s*\n\s*console:\s*\n\s*enabled:\s*true/g, title: 'H2-Datenbankkonsole aktiviert (Spring Boot)', desc: 'Die H2-Konsole erlaubt direkte SQL-Befehle über den Browser. Ist sie erreichbar, kann man die Datenbank auslesen oder Code ausführen.', fix: 'spring.h2.console.enabled=false setzen (höchstens in einem lokalen Entwicklungsprofil aktivieren).' },
+  { id: 'spring-error-stacktrace', sev: 'low', cat: 'Config', files: SPRING_CONF, re: /server\.error\.include-(stacktrace|exception|message)\s*[=:]\s*(always|true)/g, title: 'Fehlerseiten zeigen interne Details (Spring Boot)', desc: 'Stacktraces und Fehlermeldungen in Antworten verraten Klassen, Bibliotheken und Pfade der Anwendung.', fix: 'server.error.include-stacktrace=never und server.error.include-message=never setzen.' },
+  { id: 'spring-cors-wildcard', sev: 'medium', cat: 'AccessControl', files: JAVA, re: /@CrossOrigin\s*\(\s*(origins\s*=\s*)?["']\*["']|\.allowedOrigins\(\s*["']\*["']\s*\)|setAllowedOrigins\([^)]*["']\*["']/g, title: 'CORS erlaubt jede Herkunft (Spring)', desc: 'Jede fremde Webseite darf Antworten dieser API im Browser lesen. Zusammen mit Anmelde-Cookies können so Nutzerdaten abfließen.', fix: 'Erlaubte Origins als feste Liste angeben (allowedOrigins("https://app.example.com")).' },
+  // --- Django ---
+  { id: 'django-debug-on', sev: 'medium', cat: 'Config', files: PY, re: /^\s*DEBUG\s*=\s*True\b/gm, test: (m, c, u) => /settings|config/i.test(base(u)) && !DEV_SETTINGS.test(base(u)), title: 'Debug-Modus aktiv (Django DEBUG = True)', desc: 'Mit DEBUG = True zeigt Django bei Fehlern Einstellungen, Pfade und SQL-Abfragen an – auf einem öffentlichen Server ein großes Informationsleck.', fix: 'DEBUG aus einer Umgebungsvariable lesen und in Produktion auf False setzen: DEBUG = os.environ.get("DJANGO_DEBUG") == "1".' },
+  { id: 'django-allowed-hosts-wildcard', sev: 'medium', cat: 'Config', files: PY, re: /ALLOWED_HOSTS\s*=\s*\[\s*["']\*["']/g, title: 'ALLOWED_HOSTS erlaubt jeden Hostnamen (Django)', desc: 'Mit "*" beantwortet Django Anfragen für beliebige Hostnamen. Das ermöglicht Host-Header-Angriffe, etwa manipulierte Links in Passwort-Mails.', fix: 'Nur die eigenen Domains eintragen: ALLOWED_HOSTS = ["example.com"].' },
+  { id: 'django-csrf-exempt', sev: 'high', cat: 'AccessControl', files: PY, re: /@csrf_exempt\b/g, title: 'View vom CSRF-Schutz ausgenommen (Django @csrf_exempt)', desc: 'Für diese View prüft Django kein CSRF-Token. Eine fremde Seite kann sie im Namen angemeldeter Nutzer aufrufen.', fix: '@csrf_exempt entfernen; für Webhooks stattdessen eine Signatur prüfen.' },
+  { id: 'django-insecure-cookie', sev: 'low', cat: 'Config', files: PY, re: /^\s*(SESSION_COOKIE_SECURE|CSRF_COOKIE_SECURE|SESSION_COOKIE_HTTPONLY)\s*=\s*False\b/gm, title: 'Cookie ohne Schutz-Attribut (Django)', desc: 'Sitzungs- oder CSRF-Cookies ohne Secure gehen auch über unverschlüsseltes HTTP, ohne HttpOnly kann ein eingeschleustes Skript sie lesen.', fix: 'SESSION_COOKIE_SECURE, CSRF_COOKIE_SECURE und SESSION_COOKIE_HTTPONLY auf True setzen.' },
+  { id: 'django-xss-mark-safe', sev: 'medium', cat: 'XSS', files: PY, re: /\bmark_safe\s*\(\s*(f["']|[a-zA-Z_][\w.]*\s*[%+)]|["'][^"']*["']\s*(%|\.format|\+))/g, title: 'mark_safe mit eingesetzten Werten (Django)', desc: 'mark_safe schaltet die automatische Maskierung ab. Werden darin Variablen eingesetzt, lässt sich HTML oder JavaScript einschleusen.', fix: 'format_html() verwenden – es maskiert die eingesetzten Werte.' },
+  { id: 'django-raw-sql', sev: 'high', cat: 'Injection', files: PY, re: /\.(raw|extra)\s*\(\s*(f["']|["'][^"']*["']\s*(%|\.format|\+))|\bcursor\.execute\s*\(\s*(f["']|["'][^"']*["']\s*(%(?!\s*\()|\.format|\+))/g, title: 'SQL mit eingesetzten Werten (Django raw/extra/execute)', desc: 'Der SQL-Text wird mit f-String, % oder + zusammengesetzt. Wer einen der Werte steuert, kann die Abfrage verändern.', fix: 'Parameter getrennt übergeben: Model.objects.raw("… WHERE id = %s", [id]) bzw. cursor.execute(sql, [wert]).' },
+  { id: 'django-mass-assignment-all-fields', sev: 'medium', cat: 'AccessControl', files: PY, re: /^\s*fields\s*=\s*["']__all__["']/gm, test: (m, c) => /ModelForm|ModelSerializer|HyperlinkedModelSerializer/.test(c), title: 'Formular/Serializer übernimmt alle Modellfelder (Django)', desc: 'Mit fields = "__all__" lassen sich über das Formular bzw. die API alle Felder des Modells setzen – auch solche, die Nutzer nicht ändern sollen.', fix: 'Die erlaubten Felder ausdrücklich aufzählen: fields = ["name", "email"].' },
+  // --- Rails ---
+  { id: 'rails-csrf-skipped', sev: 'high', cat: 'AccessControl', files: RB, re: /skip_before_action\s+:verify_authenticity_token|protect_from_forgery\s+(with:\s*:null_session\s*,\s*)?(if|unless|except|only):|skip_forgery_protection/g, title: 'CSRF-Schutz übersprungen (Rails)', desc: 'Für diesen Controller prüft Rails kein CSRF-Token. Eine fremde Webseite kann Aktionen im Namen angemeldeter Nutzer auslösen.', fix: 'Die Ausnahme entfernen; nur reine Token-APIs ohne Cookie-Anmeldung dürfen auf CSRF verzichten.' },
+  { id: 'rails-mass-assignment', sev: 'high', cat: 'AccessControl', files: RB, re: /\bparams\.permit!|\.(new|create|update|update_attributes|assign_attributes)\s*\(\s*params(\[[^\]]+\])?\s*\)/g, title: 'Alle Parameter per Mass Assignment übernommen (Rails)', desc: 'permit! bzw. params direkt im Modell erlaubt, jedes Attribut zu setzen – auch admin oder role.', fix: 'Strong Parameters verwenden: params.require(:user).permit(:name, :email).' },
+  { id: 'rails-sql-interp', sev: 'high', cat: 'Injection', files: RB, re: /\.(where|order|group|having|joins|select|find_by_sql|exists\?|pluck|calculate)\s*\(\s*"[^"]*#\{/g, title: 'SQL mit #{...} zusammengesetzt (Rails)', desc: 'Werte werden per #{} direkt in den SQL-Text eingesetzt. Wer sie steuert, kann die Abfrage verändern und fremde Daten lesen.', fix: 'Platzhalter verwenden: where("name = ?", name) bzw. where(name: name).' },
+  { id: 'rails-xss-html-safe', sev: 'medium', cat: 'XSS', files: RB, re: /(#\{[^}]*\}[^"\n]*"|\b(params|@\w+)[\w.[\]:]*)\.html_safe\b|<%==\s*[^%]+%>|\braw\s*\(?\s*(params|@\w+)/g, title: 'Ausgabe ohne Maskierung (Rails html_safe/raw)', desc: 'html_safe, raw und <%== geben den Wert als echtes HTML aus. Stammt er vom Nutzer, lassen sich Skripte einschleusen.', fix: 'Normal mit <%= %> ausgeben; HTML nur über sanitize(...) mit erlaubten Tags durchlassen.' },
+  { id: 'rails-debug-on', sev: 'medium', cat: 'Config', files: RAILS_PROD, re: /config\.consider_all_requests_local\s*=\s*true/g, title: 'Detaillierte Fehlerseiten in Produktion (Rails)', desc: 'consider_all_requests_local = true zeigt jedem Besucher Stacktraces und Konfigurationsdetails.', fix: 'In config/environments/production.rb auf false setzen.' },
+  { id: 'rails-no-https', sev: 'low', cat: 'Transport', files: RAILS_PROD, re: /config\.force_ssl\s*=\s*false/g, title: 'HTTPS in Produktion nicht erzwungen (Rails)', desc: 'Ohne force_ssl lassen sich Seiten und Cookies auch über unverschlüsseltes HTTP aufrufen.', fix: 'config.force_ssl = true setzen.' },
+  { id: 'rails-path-send-file', sev: 'high', cat: 'PathTraversal', files: RB, re: /\b(send_file|send_data\s*\(\s*File\.read|File\.(read|open))\s*\(?\s*(params|"[^"]*#\{\s*params)/g, title: 'Dateipfad aus der Anfrage (Rails)', desc: 'Welche Datei gelesen wird, bestimmt der Besucher. Mit ../ lassen sich beliebige Dateien des Servers abrufen.', fix: 'Nur Dateien aus einer festen Liste bzw. per ID aus der Datenbank ausliefern; File.basename allein genügt nicht.' },
+  { id: 'rails-constantize-params', sev: 'high', cat: 'Injection', files: RB, re: /params\[[^\]]+\]\s*\.(constantize|safe_constantize)|\.(send|public_send)\s*\(\s*params/g, title: 'Klasse oder Methode aus der Anfrage gewählt (Rails)', desc: 'constantize bzw. send mit Werten aus params lässt den Besucher bestimmen, welche Klasse oder Methode aufgerufen wird – bis hin zur Code-Ausführung.', fix: 'Erlaubte Namen über eine feste Liste (Hash) zuordnen.' },
+  // --- ASP.NET ---
+  { id: 'aspnet-custom-errors-off', sev: 'medium', cat: 'Config', files: /(^|\/)web\.config$/i, re: /<customErrors\s+[^>]*mode\s*=\s*["']Off["']/gi, title: 'Detaillierte Fehlerseiten für alle (ASP.NET customErrors Off)', desc: 'Jeder Besucher sieht bei Fehlern Stacktraces und Konfigurationsdetails der Anwendung.', fix: '<customErrors mode="RemoteOnly" defaultRedirect="~/Error"/> setzen.' },
+  { id: 'aspnet-debug-on', sev: 'medium', cat: 'Config', files: /(^|\/)web\.config$/i, re: /<compilation\s+[^>]*debug\s*=\s*["']true["']/gi, title: 'Debug-Kompilierung aktiv (ASP.NET)', desc: 'Mit debug="true" läuft die Anwendung langsamer und gibt bei Fehlern mehr interne Informationen preis.', fix: 'In der Produktions-web.config debug="false" setzen (z. B. per Transformation).' },
+  { id: 'aspnet-xss-request-validation-off', sev: 'medium', cat: 'XSS', files: /(^|\/)web\.config$|\.(cs|aspx|cshtml)$/i, re: /validateRequest\s*=\s*["']false["']|\[ValidateInput\(\s*false\s*\)\]|requestValidationMode\s*=\s*["']2\.0["']/gi, title: 'Eingabeprüfung abgeschaltet (ASP.NET)', desc: 'Die eingebaute Prüfung auf HTML in Anfragen ist aus. Eingeschleuster Code wird dann nur noch durch die Ausgabe-Maskierung gestoppt.', fix: 'Die Prüfung aktiv lassen und HTML-Eingaben nur gezielt mit [AllowHtml] und Bereinigung zulassen.' },
+  { id: 'aspnet-csrf-ignored', sev: 'high', cat: 'AccessControl', files: CS, re: /\[IgnoreAntiforgeryToken[^\]]*\]|\.DisableAntiforgery\(\)/g, title: 'CSRF-Schutz abgeschaltet (ASP.NET Antiforgery)', desc: 'Für diese Aktionen wird kein Antiforgery-Token geprüft. Eine fremde Webseite kann sie im Namen angemeldeter Nutzer auslösen.', fix: '[IgnoreAntiforgeryToken] entfernen bzw. [ValidateAntiForgeryToken] verwenden.' },
+  { id: 'aspnet-dev-exception-page', sev: 'low', cat: 'Config', files: CS, re: /\bapp\.UseDeveloperExceptionPage\(\)/g, test: (m, c) => !/IsDevelopment\(\)/.test(c.slice(Math.max(0, m.index - 300), m.index)), title: 'Entwickler-Fehlerseite ohne Umgebungsprüfung (ASP.NET Core)', desc: 'UseDeveloperExceptionPage zeigt Stacktraces, Quelltextauszüge und Header. Ohne IsDevelopment()-Prüfung auch in Produktion.', fix: 'Nur innerhalb von if (env.IsDevelopment()) aufrufen, sonst UseExceptionHandler("/Error").' },
+  { id: 'aspnet-cors-any-origin', sev: 'medium', cat: 'AccessControl', files: CS, re: /\.AllowAnyOrigin\(\)|\.SetIsOriginAllowed\(\s*\w+\s*=>\s*true\s*\)/g, title: 'CORS erlaubt jede Herkunft (ASP.NET Core)', desc: 'Jede fremde Webseite darf Antworten dieser API im Browser lesen.', fix: 'WithOrigins("https://app.example.com") mit einer festen Liste verwenden.' },
+  { id: 'aspnet-mass-assignment', sev: 'medium', cat: 'AccessControl', files: CS, re: /\bTryUpdateModel(Async)?\s*\(\s*\w+\s*\)/g, title: 'Modell ohne Feldliste aktualisiert (ASP.NET Mass Assignment)', desc: 'TryUpdateModel ohne Feldliste übernimmt alle mitgeschickten Werte – auch Felder, die Nutzer nicht ändern sollen.', fix: 'Eine Feldliste angeben oder ein eigenes Eingabe-Modell (DTO) mit nur den erlaubten Feldern verwenden.' },
+];
+
+// Next.js Server Actions: jede exportierte Funktion in einer 'use server'-Datei ist ein oeffentlicher
+// POST-Endpunkt. Ohne Anmelde-/Rechtepruefung kann sie jeder aufrufen.
+const AUTH_HINT = /\b(auth|getServerSession|currentUser|getSession|getUser|requireUser|requireAuth|verifySession|checkAuth|isAuthenticated|cookies\(\)\.get|clerk|getToken|withAuth|session|authorize|permission|can\()\w*/i;
+function serverActions(u, out) {
+  const c = u.content || '';
+  if (!/^\s*(['"])use server\1/m.test(c)) return;
+  const re = /export\s+(?:default\s+)?async\s+function\s+(\w+)\s*\([^)]*\)\s*(?::[^{]+)?\{/g; let m, n = 0;
+  while ((m = re.exec(c)) && n < 5) {
+    const body = c.slice(m.index + m[0].length, m.index + m[0].length + 800);
+    if (AUTH_HINT.test(body)) continue;
+    // Nur Aktionen, die etwas veraendern
+    if (!/\b(insert|update|delete|create|upsert|remove|destroy|save|set|write|prisma|db\.|sql|fetch\(|revalidate)/i.test(body)) continue;
+    n++;
+    out.push(mk(M, u, m.index, {
+      ruleId: 'next-server-action-no-auth', severity: 'high', category: 'AccessControl',
+      title: 'Server Action ohne Anmeldeprüfung (Next.js)',
+      description: 'Exportierte Funktionen in einer „use server“-Datei sind öffentlich per POST aufrufbar – auch ohne die Seite zu benutzen. Diese Aktion ändert Daten, prüft aber keine Anmeldung oder Berechtigung.',
+      remediation: 'Am Anfang jeder Server Action die Sitzung prüfen (z. B. const session = await auth(); if (!session) throw new Error("Unauthorized")) und die Rechte für den Datensatz kontrollieren.',
+      evidence: oneLine(m[0]),
+    }));
+  }
+}
+
+function runFrameworks(units) {
+  const out = [];
+  for (const u of units) {
+    if (!u || typeof u.content !== 'string' || u.kind === 'binary-strings') continue;
+    if (JS.test(base(u))) serverActions(u, out);
+    applyRules(M, u, RULES, out);
+  }
+  return out;
+}
+
+module.exports = { runFrameworks, FRAMEWORK_RULES: RULES, fileName };

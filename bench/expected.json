@@ -40,6 +40,17 @@
     { "id": "goat-cmdi", "label": "Befehls-Injection mit Process.Start (WebGoat-Muster)", "file": "dotnet/Lessons.cs", "cats": ["Injection"], "rule": "process" },
     { "id": "goat-tls", "label": "Zertifikatsprüfung abgeschaltet (WebGoat-Muster)", "file": "dotnet/Lessons.cs", "cats": ["Transport"], "rule": "cert" },
     { "id": "goat-deser", "label": "BinaryFormatter (WebGoat-Muster)", "file": "dotnet/Lessons.cs", "cats": ["Deserialization"], "rule": "binaryformatter" },
-    { "id": "goat-md5", "label": "Passwort-Hash mit MD5 (WebGoat-Muster)", "file": "dotnet/Lessons.cs", "cats": ["Crypto"], "rule": "hash" }
+    { "id": "goat-md5", "label": "Passwort-Hash mit MD5 (WebGoat-Muster)", "file": "dotnet/Lessons.cs", "cats": ["Crypto"], "rule": "hash" },
+    { "id": "next-action", "label": "Next.js Server Action ohne Anmeldeprüfung", "file": "src/actions.ts", "cats": ["AccessControl"], "rule": "server-action" },
+    { "id": "log-password", "label": "Passwort wird ins Log geschrieben", "file": "src/auth.js", "cats": ["Logging"], "rule": "log-" },
+    { "id": "c-gets", "label": "gets() und Formatstring in C", "file": "src/legacy.c", "cats": ["Other", "Injection"], "rule": "c-gets|format-string" },
+    { "id": "sql-grant", "label": "GRANT ALL für jeden Host mit Standard-Passwort", "file": "db/grants.sql", "cats": ["AccessControl", "Secrets"], "rule": "sql-" },
+    { "id": "nginx-tls", "label": "nginx erlaubt TLS 1.0", "file": "infra/nginx.conf", "cats": ["Transport"], "rule": "old-tls" },
+    { "id": "nginx-autoindex", "label": "nginx zeigt Verzeichnislisten", "file": "infra/nginx.conf", "cats": ["Config"], "rule": "autoindex" },
+    { "id": "openapi", "label": "API-Operation ohne Absicherung (OpenAPI)", "file": "openapi.yaml", "cats": ["Auth"], "rule": "openapi" },
+    { "id": "mcp-token", "label": "Schlüssel im Klartext in der MCP-Konfiguration", "file": ".mcp.json", "cats": ["Secrets"], "rule": "mcp-plaintext" },
+    { "id": "mcp-unpinned", "label": "MCP-Server per npx -y ohne feste Version", "file": ".mcp.json", "cats": ["Dependencies"], "rule": "unpinned" },
+    { "id": "mcp-fs", "label": "MCP-Dateisystem-Server mit ganzem Benutzerordner", "file": ".mcp.json", "cats": ["AccessControl"], "rule": "broad-fs" },
+    { "id": "ps-iex", "label": "PowerShell lädt Skript und führt es mit iex aus", "file": "deploy.ps1", "cats": ["Injection"], "rule": "download-exec|invoke-expression" }
   ]
 }

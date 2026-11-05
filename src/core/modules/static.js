@@ -7,8 +7,10 @@
 //  supply-chain-audit   Lockfiles, Registries, Install-Skripte, Tippfehler-Pakete, Dockerfile, CI
 //  container-host-audit docker-compose / Dockerfile-Haertung
 //  semgrep-custom-sast  Race Conditions, Krypto, Timing, JWT, Prototype Pollution, ReDoS, SSRF, Mass Assignment
-//  llm-prompt-security  Prompt-Injection-Muster, KI-Ausgabe in gefaehrlichen Senken, offene KI-Server
+//  llm-prompt-security  Prompt-Injection-Muster, KI-Ausgabe in SQL/Shell/eval, Agenten-Werkzeuge, offene KI-Server
 //  linux-host-audit     sshd_config, Dateirechte sensibler Dateien (statisch, nur Linux/macOS)
+//  weitere Module (eigene Dateien): lang-rules, framework-rules, sql-audit, api-spec-audit,
+//  mcp-config-audit, webserver-config-audit, privacy-audit, crypto-inventory, code-quality
 
 const fs = require('fs');
 const path = require('path');
@@ -190,6 +192,71 @@ function sast(units) {
 }
 
 // --- KI / LLM -------------------------------------------------------------
+const LLM_CTX = /openai|anthropic|langchain|llama_?index|ollama|generativeai|google\.genai|@google\/genai|mistral|cohere|groq|ChatCompletion|messages\.create|chat\.completions|\bllm\b|\bLLM\b|modelcontextprotocol/i;
+const AGENT_TOOLS = /\b(ShellTool|BashProcess|PythonREPLTool|PythonAstREPLTool|PythonREPL|FileManagementToolkit|WriteFileTool|DeleteFileTool|MoveFileTool|TerminalTool)\b|load_tools\(\s*\[[^\]]*["'](terminal|python_repl|shell|bash)["']/g;
+const TOOL_NAME = /\b(name|"name"|'name')\s*[:=]\s*['"](run_?shell|shell|bash|exec(?:ute)?(?:_command|_code|_shell|_sql)?|run_?(?:command|code|sql|script)|terminal|write_?file|delete_?file|remove_?file|python(?:_exec)?)['"]|\bdef\s+(run_?shell|exec(?:ute)?_(?:command|code|shell)|run_?command|delete_?file|write_?file)\s*\(|server\.tool\(\s*['"](run_?shell|shell|bash|exec\w*|run_?command|write_?file|delete_?file)['"]/g;
+const TOOL_CTX = /tools\s*[:=]|@tool\b|function_declarations|DynamicTool|StructuredTool|\btool\(\s*\{|input_schema|inputSchema|server\.tool\(|registerTool\(|tool_choice/;
+const DANGER_API = /child_process|execSync|\bexec\(|\bspawn\(|subprocess|os\.system|os\.popen|fs\.(writeFile|unlink|rm)\w*|shutil\.rmtree|os\.remove|Process\.Start|Runtime\.getRuntime/;
+const HUMAN_GATE = /confirm|approval|approve|human_in_the_loop|interrupt_before|allow_?list|allowed_?commands|requireApproval|needsApproval|ask_user/i;
+const LLM_CALL = /(?:const|let|var)?\s*([A-Za-z_]\w*)\s*=\s*(?:await\s+)?[\w.]*(?:chat\.completions\.create|completions\.create|messages\.create|generateContent|generate_content|\.invoke|\.ainvoke|\.predict|\.complete|ChatCompletion\.create|\.chat)\s*\(/g;
+const LLM_TEXT = /(?:const|let|var)?\s*([A-Za-z_]\w*)\s*=\s*(?:await\s+)?[\w.[\]]*(?:choices\[0\]\.message\.content|choices\[0\]\.text|content\[0\]\.text|\.output_text|\.response\.text\(\)|\.text\b)/g;
+const LLM_NAMES = ['completion', 'llmOutput', 'aiResponse', 'aiOutput', 'llm_output', 'ai_response', 'ai_output', 'generated_sql', 'generatedSql', 'generated_code', 'generatedCode', 'llm_response', 'llmResponse', 'model_output'];
+const SINKS = [
+  ['llm-output-to-sql', /\b(execute|executemany|executescript|query|raw|\$queryRawUnsafe|\$executeRawUnsafe|knex\.raw|db\.(run|all|get|exec)|cursor\.execute|read_sql(_query)?)\s*\(/, 'KI-Ausgabe wird als SQL ausgeführt', 'Eine KI-Antwort wird als Datenbank-Befehl verwendet. Über Prompt-Injection (eingeschleuste Anweisungen in Eingaben, Webseiten oder Dokumenten) kann ein Dritter so Daten auslesen, ändern oder löschen.', 'KI-Antworten nie direkt als SQL ausführen: nur vordefinierte, parametrisierte Abfragen zulassen oder einen Datenbank-Nutzer mit reinen Leserechten auf freigegebene Views verwenden.'],
+  ['llm-output-to-shell', /\b(execSync|exec|spawnSync|spawn|os\.system|os\.popen|subprocess\.(run|call|Popen|check_output)|system|popen|shell_exec|Process\.Start)\s*\(/, 'KI-Ausgabe wird als Systembefehl ausgeführt', 'Eine KI-Antwort wird als Befehl auf dem Rechner gestartet. Über Prompt-Injection kann ein Dritter so beliebige Programme ausführen.', 'Keine KI-Ausgabe als Befehl starten; höchstens feste, erlaubte Aktionen aus einer Liste auswählen lassen und vorher bestätigen.'],
+  ['llm-output-to-eval', /\b(eval|exec|compile|new\s+Function|vm\.runIn\w+)\s*\(/, 'KI-Ausgabe wird als Code ausgeführt', 'Eine KI-Antwort wird mit eval/exec als Programmcode ausgeführt. Über Prompt-Injection kann ein Dritter so eigenen Code in deiner Anwendung starten.', 'Generierten Code nicht im eigenen Prozess ausführen; wenn nötig nur in einer isolierten Sandbox ohne Netz- und Dateizugriff.'],
+];
+const SYS_PROMPT = [
+  /["']role["']\s*:\s*["']system["']\s*,\s*["']content["']\s*:\s*(f["'][^"'\n]*\{[^}]*(request|user|input|query|message|prompt|body|question)|[^,}\n]*\+\s*(request|user_input|input|query|message|body|question))/gi,
+  /\bsystem(_prompt|_message|_msg|Prompt|Message)?\s*=\s*f["'][^"'\n]*\{\s*(request\.|user|input|query|message|body|question|data\[)/gi,
+  /role\s*:\s*['"]system['"]\s*,\s*content\s*:\s*[^,}\n]*\+\s*(req\.|request\.|input|userInput|query|message|body|params)/gi,
+  /\bsystem\w*\s*[:=]\s*['"][^'"\n]*['"]\s*\+\s*(req\.|request\.|input\b|userInput|query\b|message\b|body\b|params\b)/gi,
+];
+
+function llmDeep(u, c, out) {
+  const M = 'llm-prompt-security';
+  if (!LLM_CTX.test(c)) return;
+  const py = /\.py$/i.test(base(u));
+  let m;
+  // Werkzeuge mit Shell-/Dateizugriff fuer das Modell
+  if (!HUMAN_GATE.test(c)) {
+    const hits = [];
+    AGENT_TOOLS.lastIndex = 0;
+    while ((m = AGENT_TOOLS.exec(c)) && hits.length < 3) hits.push(m);
+    if (TOOL_CTX.test(c) && DANGER_API.test(c)) { TOOL_NAME.lastIndex = 0; while ((m = TOOL_NAME.exec(c)) && hits.length < 3) hits.push(m); }
+    for (const h of hits) out.push(mk(M, u, h.index, { ruleId: 'llm-tool-excessive-agency', severity: 'high', category: 'Injection', title: 'KI-Agent darf Befehle ausführen oder Dateien ändern', description: `Dem Modell wird ein Werkzeug mit Shell- bzw. Dateisystem-Zugriff gegeben (\`${h[0].replace(/\s+/g, ' ').slice(0, 80)}\`), ohne dass eine Bestätigung oder Positivliste zu sehen ist. Eine Prompt-Injection in einer gelesenen Webseite, Mail oder Datei kann so Befehle auf dem Rechner auslösen.`, remediation: 'Werkzeuge auf das Nötigste beschränken (feste Befehle statt freier Shell, nur ein Arbeitsordner), gefährliche Aktionen vom Menschen bestätigen lassen und den Agenten in einer Sandbox ohne Zugangsdaten laufen lassen.', confidence: 'medium' }));
+  }
+  // KI-Ausgabe in SQL / Shell / eval
+  const vars = new Set(LLM_NAMES);
+  for (const re of [LLM_CALL, LLM_TEXT]) { re.lastIndex = 0; while ((m = re.exec(c))) if (!/^(const|let|var|await|self|this)$/.test(m[1])) vars.add(m[1]); }
+  const varRe = new RegExp(`\\b(${[...vars].map((v) => v.replace(/[$]/g, '\\$')).join('|')})\\b|choices\\[0\\]\\.message\\.content|content\\[0\\]\\.text|\\.output_text`);
+  const lines = c.split('\n');
+  let off = 0;
+  const count = {};
+  for (const line of lines) {
+    if (line.length < 400) {
+      for (const [id, sink, title, desc, fix] of SINKS) {
+        if ((count[id] || 0) >= 3) continue;
+        const s = line.match(sink);
+        if (!s) continue;
+        // exec(): in Python Code-Ausfuehrung, in JS Shell
+        if (/^exec$/.test(s[1]) && ((id === 'llm-output-to-shell' && py) || (id === 'llm-output-to-eval' && !py))) continue;
+        const arg = line.slice(s.index + s[0].length);
+        if (!varRe.test(arg)) continue;
+        count[id] = (count[id] || 0) + 1;
+        out.push(mk(M, u, off + s.index, { ruleId: id, severity: id === 'llm-output-to-sql' ? 'high' : 'critical', category: 'Injection', title, description: desc, remediation: fix, confidence: 'medium' }));
+        break;
+      }
+    }
+    off += line.length + 1;
+  }
+  // Nutzereingabe im System-Prompt (Python f-Strings, Verkettung)
+  for (const re of SYS_PROMPT) {
+    re.lastIndex = 0;
+    while ((m = re.exec(c))) out.push(mk(M, u, m.index, { ruleId: 'llm-prompt-injection-concat', severity: 'high', category: 'Injection', title: 'Nutzereingabe direkt im System-Prompt', description: 'Unvertraute Eingaben werden in den System-Prompt eingesetzt. Damit kann ein Nutzer die Anweisungen der KI überschreiben (Prompt Injection).', remediation: 'Eingabe als eigene user-Nachricht übergeben.', confidence: 'medium' }));
+  }
+}
+
 function llm(units) {
   const out = [];
   const M = 'llm-prompt-security';
@@ -204,6 +271,7 @@ function llm(units) {
         /dangerouslySetInnerHTML=\{\{\s*__html:\s*(completion|response|answer|llmOutput|aiResponse|reply|generated)/gi,
       ];
       for (const r of sinks) { r.lastIndex = 0; while ((m = r.exec(c))) out.push(mk(M, u, m.index, { ruleId: 'llm-output-to-sink', severity: 'high', category: 'Injection', title: 'KI-Ausgabe landet in gefährlicher Senke', description: 'Eine KI-Antwort wird ausgeführt oder als HTML verwendet. Über indirekte Prompt-Injection (präparierte Webseiten oder Dokumente) steuert so ein Dritter deinen Code.', remediation: 'KI-Ausgabe validieren und nur als Text verwenden.', confidence: 'medium' })); }
+      llmDeep(u, c, out);
     }
     const bind = c.search(/OLLAMA_HOST\s*[=:]\s*["']?0\.0\.0\.0|["']?0\.0\.0\.0:11434|-p\s+11434:11434\b|["']11434:11434["']|vllm[^\n]{0,80}--host[= ]0\.0\.0\.0/i);
     if (bind >= 0) out.push(mk(M, u, bind, { ruleId: 'llm-server-exposed', severity: 'high', category: 'Config', title: 'KI-Server lauscht auf allen Schnittstellen', description: 'Ollama/vLLM wird ohne Bindung an 127.0.0.1 und ohne Anmeldung gestartet. Jeder im Netz kann die Modelle nutzen oder verändern.', remediation: 'An 127.0.0.1 binden oder Proxy mit Authentifizierung davorschalten.', confidence: 'high' }));
@@ -253,7 +321,15 @@ const MODULES = [
   { id: 'license-audit', label: 'Lizenzen der Pakete', run: runLicense },
   { id: 'taint-flow', label: 'Datenflüsse über mehrere Dateien', run: analyzeTaint },
   { id: 'mobile-audit', label: 'Handy-Apps (Android, iOS)', run: runMobile },
-  { id: 'lang-rules', label: 'Regeln für Go, Rust, C#, PHP, Kotlin, Swift', run: runLangs },
+  { id: 'lang-rules', label: 'Regeln für Go, Rust, C/C++, C#, PHP, Kotlin, Swift, Ruby, Dart, Scala, Elixir, Lua, PowerShell, Bash', run: runLangs },
+  { id: 'framework-rules', label: 'Framework-Regeln (Next.js, Nuxt, Laravel, Spring, Django, Rails, ASP.NET)', run: require('./frameworks').runFrameworks },
+  { id: 'sql-audit', label: 'Datenbank-Rechte in SQL und Migrationen', run: require('./sqlaudit').runSqlAudit },
+  { id: 'api-spec-audit', label: 'API-Beschreibungen (OpenAPI, GraphQL)', run: require('./apidefs').runApiDefs },
+  { id: 'mcp-config-audit', label: 'MCP-Konfigurationen für KI-Assistenten', run: require('./mcp').runMcp },
+  { id: 'webserver-config-audit', label: 'Webserver-Konfiguration (nginx, Apache, Caddy)', run: require('./srvconf').runSrvConf },
+  { id: 'privacy-audit', label: 'Personenbezogene Daten, Log-Ausgaben, Notebooks', run: require('./privacy').runPrivacy },
+  { id: 'crypto-inventory', label: 'Krypto-Inventar', run: require('./cryptoinv').runCryptoInventory },
+  { id: 'code-quality', label: 'Code-Qualität (lange Funktionen, Kopien)', run: require('./quality').runQuality },
   // Lieferkette, Container-Build, CI und CMS (modules/supply.js, modules/cms.js)
   { id: 'lockfile-drift', label: 'Lockfile passt zum Manifest', run: (u) => require('./supply').lockDrift(u) },
   { id: 'dockerfile-audit', label: 'Dockerfile (ADD, curl|bash, HEALTHCHECK, Geheimnisse)', run: (u) => require('./supply').dockerfile(u) },

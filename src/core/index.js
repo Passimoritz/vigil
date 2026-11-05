@@ -263,6 +263,17 @@ async function runAudit(targets, config, onProgress = () => {}) {
       pre.findings = sx.prescanFindings; webFindings.push(...sx.findings); moduleNotes.push(...sx.notes); scannersRun.push(...sx.ran);
     } catch (e) { moduleNotes.push('Lieferkette: ' + e.message); }
   }
+  // Texterkennung in Bildern (nur wenn tesseract installiert ist, sonst still uebersprungen)
+  if (config.ocr !== false && !aborted()) {
+    const pathTargets = targets.filter((x) => x.type === 'path').map((x) => x.value);
+    if (pathTargets.length) {
+      try {
+        const o = await require('./ocr').scanImages(pathTargets, { signal: config.signal, onProgress });
+        gitFindings.push(...o.findings);
+        if (o.ran) for (const t of pathTargets) scannersRun.push({ target: t, source: 'ocr-image-audit' });
+      } catch { /* OCR ist optional */ }
+    }
+  }
   const staticFindings = [...pre.findings, ...gitFindings, ...mods.findings, ...cveFindings, ...webFindings, ...(ing.findings || [])];
   const extraMeta = { scannersRun, throttled, sbom, modulesRun: [...new Set(scannersRun.map((s) => s.source))], ...(Object.keys(webWatch).length ? { webWatch } : {}) };
 

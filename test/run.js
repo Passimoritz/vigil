@@ -13,9 +13,9 @@ const { makeMatcher } = require('../src/core/ignore');
 const { analyzeBinary, detectType } = require('../src/core/binaryaudit');
 
 let pass = 0, fail = 0;
-function check(name, cond) {
+function check(name, cond, info) {
   if (cond) { pass++; console.log('  ok   ' + name); }
-  else { fail++; console.log('  FAIL ' + name); }
+  else { fail++; console.log('  FAIL ' + name + (info ? ` (${info})` : '')); }
 }
 
 // --- Fixtures (absichtlich verwundbar) ---------------------------------
@@ -2122,6 +2122,233 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     await api.stop();
     const mf = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'extensions', 'browser', 'manifest.json'), 'utf8'));
     check('erweiterung: Manifest V3, nur 127.0.0.1', mf.manifest_version === 3 && mf.host_permissions.join() === 'http://127.0.0.1/*' && fs.existsSync(path.join(__dirname, '..', 'extensions', 'browser', mf.action.default_popup)));
+  }
+
+  // --- Code-Regeln: Frameworks, Sprachen, Konfigurationen, Daten, Modelle ---
+  {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const AdmZip = require('adm-zip');
+    const { runStaticModules } = require('../src/core/modules/static');
+    const { classify } = require('../src/core/taxonomy');
+    const i18n = require('../src/core/findings-i18n');
+    const collected = [];
+    const run = (us) => { const r = runStaticModules(us); collected.push(...r.findings); return r.findings; };
+    const has = (fs2, id, file) => fs2.some((f) => f.ruleId === id && (!file || f.location.startsWith(file)));
+
+    // Frameworks
+    const fw = run([
+      { label: 'web/app/actions.ts', content: `'use server'\nimport { db } from './db';\nexport async function deletePost(id: string) {\n  await db.post.delete({ where: { id } });\n}\n` },
+      { label: 'web/app/safe-actions.ts', content: `'use server'\nexport async function deletePost(id) {\n  const session = await auth();\n  if (!session) throw new Error('no');\n  await db.post.delete({ where: { id } });\n}\n` },
+      { label: 'web/.env.production', content: 'NEXT_PUBLIC_STRIPE_SECRET=abc\nAPP_DEBUG=true\n' },
+      { label: 'web/.env.local', content: 'APP_DEBUG=true\n' },
+      { label: 'web/nuxt.config.ts', content: 'export default defineNuxtConfig({ runtimeConfig: { apiSecret: "", public: { stripeSecret: "x" } } })' },
+      { label: 'web/Comp.vue', content: '<div v-html="post.body"></div>' },
+      { label: 'web/app/Models/User.php', content: '<?php class User extends Model { protected $guarded = []; }\nUser::create($request->all());' },
+      { label: 'web/app/Http/Middleware/VerifyCsrfToken.php', content: "<?php protected $except = ['api/*'];" },
+      { label: 'web/resources/views/p.blade.php', content: '<div>{!! $post->body !!}</div> {!! $slot !!}' },
+      { label: 'web/app/Repo.php', content: '<?php DB::select("SELECT * FROM u WHERE id = $id"); $q->whereRaw("price > ?", [$p]);' },
+      { label: 'svc/SecurityConfig.java', content: 'http.csrf(AbstractHttpConfigurer::disable).authorizeHttpRequests(a -> a.anyRequest().permitAll());' },
+      { label: 'svc/ApiConfig.java', content: 'http.csrf(c -> c.disable()).sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS));' },
+      { label: 'svc/src/main/resources/application.properties', content: 'management.endpoints.web.exposure.include=*\nspring.h2.console.enabled=true\nserver.error.include-stacktrace=always\n' },
+      { label: 'dj/proj/settings.py', content: "DEBUG = True\nALLOWED_HOSTS = ['*']\nSESSION_COOKIE_SECURE = False\n" },
+      { label: 'dj/proj/settings_dev.py', content: 'DEBUG = True\n' },
+      { label: 'dj/app/views.py', content: "@csrf_exempt\ndef hook(request):\n    User.objects.raw(f\"SELECT * FROM u WHERE n = '{request.GET['n']}'\")\n    return mark_safe(f'<b>{name}</b>')\nclass F(ModelForm):\n    class Meta:\n        fields = '__all__'\n" },
+      { label: 'dj/app/safe.py', content: 'User.objects.raw("SELECT * FROM u WHERE id = %s", [uid])\nformat_html("<b>{}</b>", name)\n' },
+      { label: 'rb/app/controllers/users_controller.rb', content: 'skip_before_action :verify_authenticity_token\nUser.where("name = \'#{params[:n]}\'")\nUser.new(params.permit!)\nsend_file params[:path]\nparams[:type].constantize\n' },
+      { label: 'rb/config/environments/production.rb', content: 'config.consider_all_requests_local = true\nconfig.force_ssl = false\n' },
+      { label: 'net/web.config', content: '<system.web><customErrors mode="Off"/><compilation debug="true"/><pages validateRequest="false"/></system.web>' },
+      { label: 'net/Startup.cs', content: '[IgnoreAntiforgeryToken]\npublic class C {}\napp.UseDeveloperExceptionPage();\npolicy.AllowAnyOrigin();\nawait TryUpdateModelAsync(user);' },
+      { label: 'net/Program.cs', content: 'if (env.IsDevelopment()) { app.UseDeveloperExceptionPage(); }' },
+    ]);
+    check('fw: Next.js Server Action ohne Anmeldung erkannt, mit auth() nicht', has(fw, 'next-server-action-no-auth', 'web/app/actions.ts') && !has(fw, 'next-server-action-no-auth', 'web/app/safe-actions.ts'));
+    check('fw: NEXT_PUBLIC_-Geheimnis und Nuxt public secret', has(fw, 'next-public-secret') && has(fw, 'nuxt-public-secret') && has(fw, 'nuxt-xss-v-html'));
+    check('fw: Laravel Debug, Mass Assignment, CSRF-Ausnahme, Blade, Raw-SQL', ['laravel-debug-on', 'laravel-mass-assignment', 'laravel-mass-assignment-request', 'laravel-csrf-except', 'laravel-xss-blade-unescaped', 'laravel-raw-sql'].every((id) => has(fw, id)));
+    check('fw: Laravel .env.local und {!! $slot !!} bleiben ruhig', !has(fw, 'laravel-debug-on', 'web/.env.local') && fw.filter((f) => f.ruleId === 'laravel-xss-blade-unescaped').length === 1 && fw.filter((f) => f.ruleId === 'laravel-raw-sql').length === 1);
+    check('fw: Spring CSRF aus, permitAll, Actuator, H2, Stacktrace', ['spring-csrf-disabled', 'spring-permit-all', 'spring-actuator-exposed', 'spring-h2-console', 'spring-error-stacktrace'].every((id) => has(fw, id)) && !has(fw, 'spring-csrf-disabled', 'svc/ApiConfig.java'));
+    check('fw: Django Debug, Hosts, Cookie, csrf_exempt, raw, mark_safe, __all__', ['django-debug-on', 'django-allowed-hosts-wildcard', 'django-insecure-cookie', 'django-csrf-exempt', 'django-raw-sql', 'django-xss-mark-safe', 'django-mass-assignment-all-fields'].every((id) => has(fw, id)));
+    check('fw: Django settings_dev und parametrisierte raw() bleiben ruhig', !has(fw, 'django-debug-on', 'dj/proj/settings_dev.py') && !fw.some((f) => f.location.startsWith('dj/app/safe.py')));
+    check('fw: Rails CSRF, SQL, permit!, send_file, constantize, Produktion', ['rails-csrf-skipped', 'rails-sql-interp', 'rails-mass-assignment', 'rails-path-send-file', 'rails-constantize-params', 'rails-debug-on', 'rails-no-https'].every((id) => has(fw, id)));
+    check('fw: ASP.NET customErrors, debug, validateRequest, Antiforgery, CORS, TryUpdateModel', ['aspnet-custom-errors-off', 'aspnet-debug-on', 'aspnet-xss-request-validation-off', 'aspnet-csrf-ignored', 'aspnet-dev-exception-page', 'aspnet-cors-any-origin', 'aspnet-mass-assignment'].every((id) => has(fw, id)) && !has(fw, 'aspnet-dev-exception-page', 'net/Program.cs'));
+    check('fw: CSRF → CWE-352, Server Action → CWE-862', classify({ ruleId: 'django-csrf-exempt' }).cwe === 'CWE-352' && classify({ ruleId: 'next-server-action-no-auth' }).cwe === 'CWE-862');
+
+    // C/C++ und weitere Sprachen
+    const lg = run([
+      { label: 'c/main.c', content: 'char b[8];\ngets(b);\nstrcpy(b, argv[1]);\nsprintf(b, "%s", s);\nprintf(user);\nfprintf(stderr, msg);\nmemcpy(dst, src, n);\nscanf("%s", b);\nsystem(cmd);\n' },
+      { label: 'c/safe.c', content: 'fgets(b, sizeof b, stdin);\nsnprintf(b, sizeof b, "%s", s);\nprintf("%s", user);\nif (n > sizeof dst) return;\nmemcpy(dst, src, n);\nmemcpy(dst, src, sizeof dst);\nscanf("%7s", b);\nsystem("ls");\n' },
+      { label: 'r/app.rb', content: 'system("convert #{params[:f]}")\neval(params[:code])\nYAML.unsafe_load(body)\nMarshal.load(cookies[:x])\nopen(params[:url])\nhttp.verify_mode = OpenSSL::SSL::VERIFY_NONE\n' },
+      { label: 'r/ok.rb', content: 'system("convert", params[:f])\nYAML.safe_load(body)\nFile.open(path)\n' },
+      { label: 'd/main.dart', content: "client.badCertificateCallback = (cert, host, port) => true;\nfinal p = await SharedPreferences.getInstance(); p.setString('auth_token', t);\ndb.rawQuery('SELECT * FROM u WHERE id = $id');\nProcess.run('sh', ['-c', cmd]);\n" },
+      { label: 'd/ok.dart', content: "db.rawQuery('SELECT * FROM u WHERE id = ?', [id]);\nProcess.run('git', ['log']);\n" },
+      { label: 's/Repo.scala', content: 'stmt.executeQuery(s"SELECT * FROM u WHERE id = $id")\ns"rm -rf $dir".!\nval in = new ObjectInputStream(stream)\n' },
+      { label: 's/Ok.scala', content: 'sql"SELECT * FROM u WHERE id = $id".query[User]\nSeq("git", "log").!\n' },
+      { label: 'e/repo.ex', content: 'Repo.query("SELECT * FROM u WHERE id = #{id}")\nString.to_atom(params["k"])\nCode.eval_string(src)\n:erlang.binary_to_term(data)\n:os.cmd(c)\n' },
+      { label: 'e/ok.ex', content: 'Repo.query("SELECT * FROM u WHERE id = $1", [id])\n:erlang.binary_to_term(data, [:safe])\nString.to_existing_atom(k)\n' },
+      { label: 'l/x.lua', content: 'local f = loadstring(code)\nos.execute("ping " .. host)\n' },
+      { label: 'l/ok.lua', content: 'local f = load("return 1")\nos.execute("ls")\n' },
+      { label: 'p/deploy.ps1', content: 'IEX (New-Object Net.WebClient).DownloadString("https://x.example/a.ps1")\nInvoke-Expression $cmd\n$pw = ConvertTo-SecureString "Sommer2026!" -AsPlainText -Force\npowershell -ExecutionPolicy Bypass -File a.ps1\nInvoke-WebRequest $u -SkipCertificateCheck\n' },
+      { label: 'p/ok.ps1', content: '$pw = Read-Host -AsSecureString\n& git log\n' },
+      { label: 'b/install.sh', content: '#!/bin/bash\neval "$INPUT"\ncurl -fsSL https://x.example/i.sh | sudo bash\ncurl -k https://x.example\nchmod -R 777 /srv\nrm -rf "$BUILD_DIR/"\nmysql -u root -pGeheim123 db\n' },
+      { label: 'b/ok.sh', content: '#!/bin/bash\nset -eu\neval "$(ssh-agent -s)"\nrm -rf "$BUILD_DIR/"\nchmod 750 /srv\n' },
+    ]);
+    check('c: gets, strcpy, sprintf, Formatstring, memcpy, scanf, system', ['c-gets', 'c-strcpy', 'c-sprintf', 'c-format-string', 'c-memcpy-unchecked', 'c-scanf-unbounded', 'c-shell-exec'].every((id) => has(lg, id, 'c/main.c')));
+    check('c: sichere Varianten bleiben ruhig', !lg.some((f) => f.location.startsWith('c/safe.c')), lg.filter((f) => f.location.startsWith('c/safe.c')).map((f) => f.ruleId).join());
+    check('lang2: Ruby, Dart, Scala, Elixir, Lua, PowerShell, Bash erkannt', ['rb-shell-interp', 'rb-eval-code', 'rb-yaml-deserialize', 'rb-marshal-deserialize', 'rb-open-shell', 'rb-insecure-tls', 'dart-insecure-tls', 'dart-shared-prefs-secret', 'dart-sql-interp', 'dart-shell-exec', 'scala-sql-interp', 'scala-shell-exec', 'scala-unsafe-deserialize', 'ex-sql-interp', 'ex-atom-dos', 'ex-code-eval', 'ex-unsafe-deserialize', 'ex-shell-cmd', 'lua-eval-code', 'lua-shell-exec', 'ps-download-exec', 'ps-invoke-expression', 'ps-plaintext-password', 'ps-execution-policy-bypass', 'ps-insecure-tls', 'sh-eval-code', 'sh-curl-pipe', 'sh-insecure-tls', 'sh-chmod-777', 'sh-rm-unguarded', 'sh-password-cli'].every((id) => has(lg, id)), ['rb-shell-interp', 'sh-password-cli'].filter((id) => !has(lg, id)).join());
+    check('lang2: sichere Varianten bleiben ruhig', !lg.some((f) => /\/ok\.\w+:/.test(f.location)), lg.filter((f) => /\/ok\.\w+:/.test(f.location)).map((f) => f.ruleId).join());
+    check('lang2: Passwörter in Fundstellen maskiert', lg.filter((f) => /password/.test(f.ruleId)).every((f) => !/Sommer2026|Geheim123/.test(f.evidence || '') && /REDACTED/.test(f.evidence)));
+    const { TEXT_EXT } = require('../src/core/ingest');
+    check('ingest: neue Endungen werden gelesen', ['.dart', '.ex', '.exs', '.lua', '.ps1', '.sh', '.rb', '.scala', '.cpp', '.hh', '.ipynb'].every((e) => TEXT_EXT.has(e)));
+
+    // SQL-Rechte
+    const sq = run([
+      { label: 'db/init.sql', content: "CREATE USER 'app'@'%' IDENTIFIED BY 'changeme';\nGRANT ALL PRIVILEGES ON shop.* TO 'app'@'%';\nGRANT SELECT ON ALL TABLES IN SCHEMA public TO PUBLIC;\nCREATE ROLE admin WITH LOGIN SUPERUSER PASSWORD 'Xy7!kq2Lmn';\n" },
+      { label: 'db/migrations/002_users.sql', content: "CREATE ROLE reader WITH LOGIN NOSUPERUSER PASSWORD '${READER_PW}';\nGRANT SELECT ON orders TO reader;\n" },
+    ]);
+    check('sql: GRANT ALL, PUBLIC, jeder Host, Standard-Passwort, Superuser', ['sql-grant-all', 'sql-grant-public', 'sql-grant-any-host', 'sql-default-password', 'sql-superuser-role', 'sql-plaintext-password'].every((id) => has(sq, id)));
+    check('sql: gezielte Rechte und Platzhalter-Passwort bleiben ruhig', !sq.some((f) => f.location.startsWith('db/migrations/')) && sq.every((f) => !/changeme|Xy7!kq2Lmn/.test(f.evidence || '')));
+    check('sql: GRANT → CWE-269, nicht SQL-Injection', classify({ ruleId: 'sql-grant-all' }).cwe === 'CWE-269');
+
+    // OpenAPI und GraphQL
+    const spec = `openapi: 3.0.3\ninfo:\n  title: Shop\nservers:\n  - url: http://api.shop.example.com\ncomponents:\n  securitySchemes:\n    key:\n      type: apiKey\n      in: query\n      name: api_key\npaths:\n  /orders:\n    get:\n      parameters:\n        - name: access_token\n          in: query\n          schema:\n            type: string\n        - name: q\n          in: query\n          schema:\n            type: string\n    post:\n      requestBody:\n        content:\n          application/json:\n            schema:\n              type: object\n              properties:\n                note:\n                  type: string\n                items:\n                  type: array\n                  items:\n                    type: string\n`;
+    const okSpec = `{"openapi":"3.1.0","security":[{"bearer":[]}],"components":{"securitySchemes":{"bearer":{"type":"http","scheme":"bearer"}}},"servers":[{"url":"https://api.example.com"}],"paths":{"/a":{"get":{"parameters":[{"name":"q","in":"query","schema":{"type":"string","maxLength":50}}]}}}}`;
+    const ap = run([
+      { label: 'api/openapi.yaml', content: spec },
+      { label: 'api/ok.json', content: okSpec },
+      { label: 'gql/server.js', content: 'const server = new ApolloServer({ typeDefs, resolvers, introspection: true });' },
+    ]);
+    check('openapi: ungeschützte Operationen, Schlüssel/Token in der URL, Grenzen, HTTP', ['openapi-no-security', 'openapi-apikey-in-query', 'openapi-secret-in-query', 'openapi-no-limits', 'openapi-http-server'].every((id) => has(ap, id, 'api/openapi.yaml')) && ap.find((f) => f.ruleId === 'openapi-no-security').severity === 'high');
+    check('openapi: abgesicherte Spezifikation bleibt ruhig', !ap.some((f) => f.location.startsWith('api/ok.json')));
+    check('graphql: Introspection an und keine Tiefengrenze', has(ap, 'graphql-introspection-on') && has(ap, 'graphql-no-depth-limit'));
+    const ap2 = run([{ label: 'gql/server.js', content: "import depthLimit from 'graphql-depth-limit';\nconst server = new ApolloServer({ typeDefs, introspection: process.env.NODE_ENV !== 'production', validationRules: [depthLimit(8)] });" }]);
+    check('graphql: mit depthLimit und bedingter Introspection ruhig', !ap2.length);
+
+    // Krypto-Inventar
+    const cr = run([
+      { label: 'k/keys.js', content: "crypto.generateKeyPairSync('rsa', { modulusLength: 1024 });\nconst c = crypto.createCipheriv('aes-256-gcm', k, iv);\nconst h = crypto.createHash('md5');\nconst s = crypto.createHash('sha256');\n" },
+      { label: 'k/sign.py', content: 'from cryptography.hazmat.primitives.asymmetric import ec\nkey = ec.generate_private_key(ec.SECP384R1())  # ECDSA P-384\n' },
+    ]);
+    const inv = cr.find((f) => f.ruleId === 'crypto-inventory');
+    check('krypto: ein Info-Befund mit Verfahren', inv && inv.severity === 'info' && /RSA/.test(inv.description) && /AES-GCM/.test(inv.description) && cr.filter((f) => f.ruleId === 'crypto-inventory').length === 1);
+    check('krypto: nicht quantensicher notiert, schwache Verfahren und kurze Schlüssel höher', has(cr, 'crypto-not-pq-ready') && cr.find((f) => f.ruleId === 'crypto-weak-algorithm').severity === 'medium' && cr.find((f) => f.ruleId === 'crypto-weak-key-size').severity === 'high');
+    const cr2 = run([{ label: 'k/pq.go', content: 'kem := mlkem.GenerateKey768()\nx := ecdh.X25519()\nh := sha256.Sum256(b)\nrsa.GenerateKey(rand.Reader, 3072)\n' }]);
+    check('krypto: mit ML-KEM kein PQ-Hinweis, 3072 Bit nicht zu kurz', has(cr2, 'crypto-inventory') && !has(cr2, 'crypto-not-pq-ready') && !has(cr2, 'crypto-weak-key-size') && !has(cr2, 'crypto-weak-algorithm'));
+
+    // LLM vertieft
+    const ll = run([
+      { label: 'ai/agent.py', content: 'from langchain_community.tools import ShellTool\nfrom openai import OpenAI\nresp = client.chat.completions.create(model="x", messages=[{"role": "system", "content": f"Du hilfst {user_input}"}])\nsql = resp.choices[0].message.content\ncursor.execute(sql)\nexec(resp.choices[0].message.content)\nos.system(sql)\n' },
+      { label: 'ai/tools.ts', content: "import OpenAI from 'openai';\nimport { execSync } from 'child_process';\nconst tools = [{ type: 'function', function: { name: 'run_shell', parameters: {} } }];\nconst r = await openai.chat.completions.create({ tools });\nconst out = r.choices[0].message.content;\nexecSync(out);\n" },
+      { label: 'ai/safe.ts', content: "import OpenAI from 'openai';\nconst r = await openai.chat.completions.create({ messages: [{ role: 'system', content: 'Fest' }, { role: 'user', content: input }] });\nconsole.info(r.choices[0].message.content.length);\n" },
+    ]);
+    check('llm: Werkzeuge mit Shell-Zugriff (LangChain und eigene Tools)', has(ll, 'llm-tool-excessive-agency', 'ai/agent.py') && has(ll, 'llm-tool-excessive-agency', 'ai/tools.ts'));
+    check('llm: KI-Ausgabe in SQL, eval und Shell', has(ll, 'llm-output-to-sql', 'ai/agent.py') && has(ll, 'llm-output-to-eval', 'ai/agent.py') && has(ll, 'llm-output-to-shell', 'ai/agent.py') && has(ll, 'llm-output-to-shell', 'ai/tools.ts'));
+    check('llm: Eingabe im System-Prompt (Python f-String)', has(ll, 'llm-prompt-injection-concat', 'ai/agent.py'));
+    check('llm: saubere Nutzung bleibt ruhig', !ll.some((f) => f.location.startsWith('ai/safe.ts')));
+
+    // MCP-Konfigurationen
+    const mc = run([
+      { label: 'proj/.mcp.json', content: JSON.stringify({ mcpServers: { github: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'], env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8' } }, fs: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem@2025.1.14', 'C:\\Users\\pat'] }, remote: { url: 'http://mcp.example.com/sse' } } }, null, 2) },
+      { label: 'proj/.cursor/mcp.json', content: JSON.stringify({ mcpServers: { github: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github@1.2.3'], env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${env:GITHUB_TOKEN}' } }, fs: { command: 'npx', args: ['@modelcontextprotocol/server-filesystem@1.0.0', 'C:\\Users\\pat\\Projekte\\app'] }, py: { command: 'uvx', args: ['mcp-server-fetch==2025.1.17'] } } }, null, 2) },
+    ]);
+    check('mcp: Klartext-Token, ungepinntes npx -y, zu weiter Ordner, HTTP', ['mcp-plaintext-token', 'mcp-unpinned-package', 'mcp-broad-fs-root', 'mcp-remote-http'].every((id) => has(mc, id, 'proj/.mcp.json')));
+    check('mcp: Platzhalter, feste Versionen und Projektordner bleiben ruhig', !mc.some((f) => f.location.startsWith('proj/.cursor/')));
+    check('mcp: Token in der Fundstelle maskiert', mc.filter((f) => f.ruleId === 'mcp-plaintext-token').every((f) => /REDACTED/.test(f.evidence) && !/a1B2c3D4e5F6g7H8i9J0/.test(f.evidence)));
+
+    // Personenbezogene Daten, Logs, Notebooks
+    const { ibanValid, steuerIdValid, ausweisValid } = require('../src/core/modules/privacy');
+    check('pii: IBAN-Prüfsumme', ibanValid('DE44 5001 0517 5407 3249 31') && !ibanValid('DE44 5001 0517 5407 3249 32'));
+    check('pii: Steuer-ID und Ausweisnummer mit Prüfziffer', steuerIdValid('86095742719') && !steuerIdValid('86095742718') && ausweisValid('T220001293') && !ausweisValid('T220001294'));
+    const pv = run([
+      { label: 'shop/test/fixtures/customers.json', content: JSON.stringify([{ name: 'A', mail: 'anna.schmidt@gmx.de', iban: 'DE44 5001 0517 5407 3249 31', tel: '+49 170 1234567' }, { mail: 'b.meier@web.de', tel: '+49 30 98765432' }, { mail: 'c.k@t-online.de' }, { mail: 'd.x@posteo.de' }, { mail: 'e.y@mailbox.org' }, { steuer_id: '86095742719' }]) },
+      { label: 'shop/test/fixtures/fake.json', content: JSON.stringify([{ mail: 'a@example.com', iban: 'DE89370400440532013000' }, { mail: 'b@example.com' }, { tel: '+49 30 1234567' }]) },
+      { label: 'shop/src/auth.js', content: "console.log('login', user.email, password);\nlogger.info(`token=${token}`);\napp.use((req, res, next) => { console.log(req.headers); next(); });\n" },
+      { label: 'shop/src/ok.js', content: "console.log('Password changed for', user.id);\nlogger.info('token expired');\nconsole.log(token.length);\n" },
+      { label: 'nb/analyse.ipynb', content: JSON.stringify({ cells: [{ cell_type: 'code', source: ['print(os.environ)'], outputs: [{ output_type: 'stream', text: ["{'OPENAI_API_KEY': 'sk-" + 'abcdefghijklmnopqrstuvwx1234' + "'}\n"] }] }, { cell_type: 'code', source: ['df.head()'], outputs: [{ output_type: 'execute_result', data: { 'text/plain': ['   name   email\n0  Anna  anna.schmidt@gmx.de\n1  Ben  b.meier@web.de\n2  Cem  c.k@t-online.de\n'] } }] }], metadata: {}, nbformat: 4 }) },
+      { label: 'nb/clean.ipynb', content: JSON.stringify({ cells: [{ cell_type: 'code', source: ['1+1'], outputs: [{ output_type: 'execute_result', data: { 'text/plain': ['2'] } }] }], nbformat: 4 }) },
+    ]);
+    check('pii: IBAN, E-Mail-Liste, Telefon, Steuer-ID in Testdaten', ['pii-iban', 'pii-email-list', 'pii-phone-list', 'pii-german-id'].every((id) => has(pv, id, 'shop/test/fixtures/customers.json')));
+    check('pii: Beispiel-IBAN und @example.com bleiben ruhig', !pv.some((f) => f.location.startsWith('shop/test/fixtures/fake.json')));
+    check('pii: Werte maskiert', pv.filter((f) => /^pii-/.test(f.ruleId)).every((f) => !/5407 ?3249|anna\.schmidt|86095742719/.test(f.evidence || '')));
+    check('logs: Passwort/Token und ganze Header im Log erkannt', has(pv, 'log-sensitive-data', 'shop/src/auth.js') && has(pv, 'log-full-request', 'shop/src/auth.js') && pv.filter((f) => f.location.startsWith('shop/src/auth.js')).length === 3);
+    check('logs: Texte und .length bleiben ruhig', !pv.some((f) => f.location.startsWith('shop/src/ok.js')));
+    check('notebook: Schlüssel und personenbezogene Daten in Ausgaben', has(pv, 'notebook-output-secret', 'nb/analyse.ipynb') && has(pv, 'notebook-output-pii', 'nb/analyse.ipynb') && pv.filter((f) => f.ruleId === 'notebook-output-secret').every((f) => !/abcdefghijklmnop/.test(f.evidence)));
+    check('notebook: Notebook ohne Daten bleibt ruhig', !pv.some((f) => f.location.startsWith('nb/clean.ipynb')));
+
+    // Webserver-Konfiguration
+    const sv = run([
+      { label: 'ops/nginx.conf', content: 'http {\n  server {\n    listen 443 ssl;\n    ssl_certificate /etc/x.pem;\n    ssl_protocols TLSv1 TLSv1.1 TLSv1.2;\n    ssl_ciphers HIGH:!aNULL:RC4-SHA;\n    location / { autoindex on; }\n  }\n}\n' },
+      { label: 'ops/good-nginx.conf', content: 'http {\n  server_tokens off;\n  server {\n    listen 443 ssl;\n    ssl_certificate /etc/x.pem;\n    ssl_protocols TLSv1.2 TLSv1.3;\n    ssl_ciphers HIGH:!aNULL:!MD5:!RC4;\n    add_header Strict-Transport-Security "max-age=31536000" always;\n    add_header X-Content-Type-Options nosniff;\n    add_header Content-Security-Policy "default-src \'self\'";\n    add_header X-Frame-Options DENY;\n  }\n}\n' },
+      { label: 'ops/apache/site.conf', content: '<VirtualHost *:443>\n  SSLEngine on\n  SSLProtocol all -SSLv3\n  Options Indexes FollowSymLinks\n  ServerTokens Full\n  TraceEnable On\n</VirtualHost>\n' },
+      { label: 'ops/apache/good.conf', content: '<VirtualHost *:443>\n  SSLEngine on\n  SSLProtocol -all +TLSv1.2 +TLSv1.3\n  Options -Indexes\n  ServerTokens Prod\n  Header always set Strict-Transport-Security "max-age=31536000"\n  Header always set X-Content-Type-Options nosniff\n  Header always set Content-Security-Policy "default-src \'self\'"\n  Header always set X-Frame-Options DENY\n</VirtualHost>\n' },
+      { label: 'ops/Caddyfile', content: 'example.com {\n  tls {\n    protocols tls1.0\n  }\n  file_server browse\n}\n' },
+    ]);
+    check('srvconf: nginx alte TLS, schwache Chiffre, autoindex, server_tokens, Header', ['nginx-old-tls', 'nginx-weak-ciphers', 'nginx-autoindex', 'nginx-server-tokens', 'nginx-missing-headers'].every((id) => has(sv, id, 'ops/nginx.conf')));
+    check('srvconf: Apache und Caddy', ['apache-old-tls', 'apache-dir-listing', 'apache-server-tokens', 'apache-trace-enabled', 'apache-missing-headers'].every((id) => has(sv, id, 'ops/apache/site.conf')) && has(sv, 'caddy-old-tls') && has(sv, 'caddy-dir-listing'));
+    check('srvconf: gehärtete Konfigurationen bleiben ruhig', !sv.some((f) => /good/.test(f.location)), sv.filter((f) => /good/.test(f.location)).map((f) => f.ruleId).join());
+
+    // Code-Qualitaet
+    const longFn = 'function huge(a) {\n' + Array.from({ length: 160 }, (_, i) => `  const v${i} = a + ${i};`).join('\n') + '\n  return a;\n}\n';
+    const branchy = 'function decide(x) {\n' + Array.from({ length: 32 }, (_, i) => `  if (x === ${i} && x > 0) return ${i};`).join('\n') + '\n}\n';
+    const block = Array.from({ length: 12 }, (_, i) => `  total = total + items[${i}].price * items[${i}].quantity * rate;`).join('\n');
+    const qa = run([
+      { label: 'q/big.js', content: longFn + branchy },
+      { label: 'q/a.js', content: `function a(items, rate) {\n  let total = 0;\n${block}\n  return total;\n}\n` },
+      { label: 'q/b.js', content: `function b(items, rate) {\n  let total = 0;\n${block}\n  return total;\n}\n` },
+      { label: 'q/small.py', content: 'def f(x):\n    return x + 1\n' },
+    ]);
+    check('quality: lange und verzweigte Funktion (niedrig)', has(qa, 'quality-long-function', 'q/big.js') && has(qa, 'quality-complex-function', 'q/big.js') && qa.filter((f) => /long|complex/.test(f.ruleId)).every((f) => f.severity === 'low'));
+    check('quality: kopierter Block als Hinweis', has(qa, 'quality-duplicate-block', 'q/b.js') && qa.find((f) => f.ruleId === 'quality-duplicate-block').severity === 'info' && !qa.some((f) => f.location.startsWith('q/small.py')));
+
+    // Regeldateien (rules/*.yml)
+    const { loadRuleFiles } = require('../src/core/rulefiles');
+    const { PATTERN_RULES, prescan: pscan } = require('../src/core/prescan');
+    const OLD = [['XSS', 'Rails: html_safe', /\.html_safe\b/g, 'medium'], ['Injection', 'Rails: SQL-Interpolation in where', /\.where\s*\(\s*["'][^"']*#\{/g, 'high'], ['AccessControl', 'Rails: CSRF-Schutz uebersprungen', /skip_before_action\s*:verify_authenticity_token/g, 'high'], ['AccessControl', 'Rails: Mass Assignment (permit!)', /\.permit!/g, 'medium'], ['XSS', 'Django: mark_safe', /mark_safe\s*\(/g, 'medium'], ['Injection', 'Django: raw/extra SQL', /\.(?:raw|extra)\s*\(/g, 'medium'], ['AccessControl', 'Django: csrf_exempt', /csrf_exempt/g, 'high'], ['Config', 'Django: ALLOWED_HOSTS Wildcard', /ALLOWED_HOSTS\s*=\s*\[\s*["']\*["']/g, 'medium']];
+    check('regeldateien: migrierte Rails-/Django-Regeln identisch', OLD.every(([cat, name, re, sev]) => PATTERN_RULES.some((r) => r.name === name && r.cat === cat && r.sev === sev && r.re.source === re.source && r.re.flags === re.flags)) && PATTERN_RULES.filter((r) => /^(Rails|Django):/.test(r.name)).length === 8);
+    const ps = pscan([{ label: 'x.rb', content: 'skip_before_action :verify_authenticity_token\nUser.where("a = #{b}")' }]);
+    check('regeldateien: Muster landen weiter in den KI-Fakten', /Rails: CSRF-Schutz uebersprungen/.test(ps.facts) && /Rails: SQL-Interpolation in where/.test(ps.facts));
+    const tmpRules = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-rules-'));
+    fs.writeFileSync(path.join(tmpRules, 'eigen.yaml'), "rules:\n  - name: Interner Debug-Schalter\n    category: Config\n    severity: low\n    regex: 'FEATURE_DEBUG\\s*=\\s*1'\n    kind: finding\n  - name: Kaputt\n    severity: extrem\n    regex: 'x'\n  - name: Klammer\n    regex: '(('\n");
+    fs.writeFileSync(path.join(tmpRules, 'more.json'), JSON.stringify({ rules: [{ name: 'JSON-Regel', category: 'XSS', severity: 'medium', regex: 'v-html', flags: 'i' }] }));
+    const lr = loadRuleFiles([tmpRules]);
+    check('regeldateien: YAML/JSON geladen, ungültige Regeln abgewiesen', lr.findings.length === 1 && lr.patterns.length === 1 && lr.patterns[0].re.flags === 'gi' && lr.errors.length === 2);
+    fs.rmSync(tmpRules, { recursive: true, force: true });
+
+    // Modelldateien (Pickle) – nur lesen, nie laden
+    const { analyzeModelFile, scanPickle } = require('../src/core/modelscan');
+    const evil2 = Buffer.concat([Buffer.from([0x80, 0x02]), Buffer.from('cposix\nsystem\nq\x00X', 'latin1'), Buffer.from([7, 0, 0, 0]), Buffer.from('echo hi'), Buffer.from([0x71, 0x01, 0x85, 0x71, 0x02, 0x52, 0x71, 0x03, 0x2e])]);
+    const s4 = (t) => Buffer.concat([Buffer.from([0x8c, t.length]), Buffer.from(t), Buffer.from([0x94])]);
+    const evil4 = Buffer.concat([Buffer.from([0x80, 0x04]), s4('builtins'), s4('eval'), Buffer.from([0x93, 0x94]), s4('1+1'), Buffer.from([0x85, 0x94, 0x52, 0x94, 0x2e])]);
+    const safe = Buffer.concat([Buffer.from([0x80, 0x02]), Buffer.from('ccollections\nOrderedDict\nq\x00)Rq\x01.', 'latin1')]);
+    check('modell: GLOBAL os/posix.system + REDUCE kritisch', (() => { const f = analyzeModelFile(evil2, 'm/model.pkl'); return f.length === 1 && f[0].severity === 'critical' && /posix\.system/.test(f[0].title); })());
+    check('modell: STACK_GLOBAL builtins.eval (Protokoll 4)', analyzeModelFile(evil4, 'm/x.joblib').some((f) => /builtins\.eval/.test(f.title)));
+    check('modell: harmloses Pickle bleibt ruhig, Opcodes werden gelesen', !analyzeModelFile(safe, 'm/ok.pkl').length && scanPickle(safe).ok && scanPickle(safe).globals[0].mod === 'collections');
+    check('modell: zweites Pickle nach dem ersten (alte torch-Dateien)', analyzeModelFile(Buffer.concat([safe, evil2, Buffer.from([1, 2, 3, 0xff])]), 'm/legacy.pt').length === 1);
+    const tmpM = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-model-'));
+    const zip = new AdmZip(); zip.addFile('archive/data.pkl', evil4); zip.addFile('archive/data/0', Buffer.alloc(64)); zip.writeZip(path.join(tmpM, 'model.pt'));
+    fs.writeFileSync(path.join(tmpM, 'weights.pkl'), safe);
+    const { ingestTargets: ingT } = require('../src/core/ingest');
+    const ingM = await ingT([{ type: 'path', value: tmpM }]);
+    const mf = ingM.findings.filter((f) => f.ruleId === 'model-pickle-dangerous-global');
+    check('modell: ZIP-basiertes .pt beim Einlesen geprüft (data.pkl)', mf.length === 1 && /model\.pt!\/archive\/data\.pkl/.test(mf[0].location) && classify(mf[0]).cwe === 'CWE-502');
+    fs.rmSync(tmpM, { recursive: true, force: true });
+
+    // OCR (tesseract nur simuliert)
+    const { scanImages } = require('../src/core/ocr');
+    const tmpI = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-ocr-'));
+    fs.writeFileSync(path.join(tmpI, 'login.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const o1 = await scanImages([tmpI], { run: async () => ({ ok: true, text: 'Server: db01\nPasswort: Sommer2026!\n' }) });
+    const o2 = await scanImages([tmpI], { run: async () => ({ ok: true, text: 'Passwort: ********\nWillkommen' }) });
+    const o3 = await scanImages([tmpI], { run: async () => ({ ok: false, missing: true, text: '' }) });
+    check('ocr: sichtbares Passwort erkannt und maskiert', o1.findings.length === 1 && o1.findings[0].ruleId === 'ocr-visible-password' && !/Sommer2026/.test(o1.findings[0].evidence));
+    check('ocr: Sternchen ruhig, fehlendes tesseract still übersprungen', !o2.findings.length && !o3.findings.length && !o3.notes.length && !o3.ran);
+    fs.rmSync(tmpI, { recursive: true, force: true });
+    collected.push(...o1.findings, ...mf);
+
+    // Alle neuen Texte haben eine englische Fassung
+    const GER2 = /[äöüß]|\b(der|die|das|und|nicht|ist|mit|für|oder|wird|werden|auf|eine?|zu|von|bei|nach|aus|sich|Datei|ohne)\b/;
+    const leftEn = collected.map(i18n.localizeFinding).flatMap((f) => [f.title, f.description, f.impact, f.remediation]).filter((t) => t && GER2.test(t));
+    check('code-regeln: alle neuen Befundtexte haben eine englische Fassung', leftEn.length === 0, [...new Set(leftEn)].slice(0, 3).join(' | '));
+    if (leftEn.length) console.log([...new Set(leftEn)].slice(0, 40).join('\n'));
   }
 
   console.log(`\n${pass} ok, ${fail} fehlgeschlagen`);

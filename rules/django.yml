@@ -1,0 +1,19 @@
+# Musterregeln fuer Django (Hinweise fuer die KI-Analyse, kind: pattern).
+# Aufbau siehe src/core/rulefiles.js. Regex in einfachen Anfuehrungszeichen: ' wird zu ''.
+rules:
+  - name: "Django: mark_safe"
+    category: XSS
+    severity: medium
+    regex: 'mark_safe\s*\('
+  - name: "Django: raw/extra SQL"
+    category: Injection
+    severity: medium
+    regex: '\.(?:raw|extra)\s*\('
+  - name: "Django: csrf_exempt"
+    category: AccessControl
+    severity: high
+    regex: 'csrf_exempt'
+  - name: "Django: ALLOWED_HOSTS Wildcard"
+    category: Config
+    severity: medium
+    regex: 'ALLOWED_HOSTS\s*=\s*\[\s*["'']\*["'']'

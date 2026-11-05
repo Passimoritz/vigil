@@ -1,0 +1,15 @@
+openapi: 3.0.3
+info:
+  title: Shop-API
+  version: "1.0"
+paths:
+  /orders/{id}:
+    delete:
+      summary: Bestellung loeschen
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
