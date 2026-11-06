@@ -150,8 +150,7 @@ To add an AI provider, add an entry and a call in `src/core/providers.js` – ev
 
 Vigil speaks **English (default)** and **German** (*Settings → General*): the interface, all finding texts, the reports (PDF, HTML, Markdown, SARIF) and the AI answers follow the selected language. On the command line use `--lang de` for German output.
 
-## Roadmap, signing, license
+## Signing, license
 
-- Planned features: [ROADMAP.md](ROADMAP.md)
 - Code signing: [SIGNING.md](SIGNING.md) · policy: [CODE_SIGNING.md](CODE_SIGNING.md)
 - License: [MIT](LICENSE)

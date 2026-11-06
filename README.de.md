@@ -165,8 +165,7 @@ test/         Kern- und Oberflächen-Tests
 
 Neuer KI-Anbieter: in `src/core/providers.js` einen Eintrag und einen Aufruf ergänzen – der Rest bleibt gleich.
 
-## Roadmap, Signieren, Lizenz
+## Signieren, Lizenz
 
-- Geplante Erweiterungen: [ROADMAP.md](ROADMAP.md)
 - Signieren: [SIGNING.md](SIGNING.md) · Richtlinie: [CODE_SIGNING.md](CODE_SIGNING.md)
 - Lizenz: [MIT](LICENSE)
