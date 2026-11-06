@@ -237,6 +237,17 @@ async function analyze(opts) {
       for (const pass of passes) {
         if (typeof config.checkpoint === 'function') await config.checkpoint(); // Pause zwischen KI-Bloecken
         if (aborted()) { aborts = true; break; }
+        // Gespeicherter Stand: Dieser KI-Block lief vor der Pause schon (und ist schon bezahlt)
+        const tagStep = models.length > 1 ? ` · ${model}` : '';
+        const stepKey = config.stepCache ? `ai:${model}:${depth}:${pass.label}:${i}:${require('crypto').createHash('sha256').update(batches[i].map((x) => x.text).join('\n')).digest('hex')}` : null;
+        const stepHit = stepKey ? config.stepCache.get(stepKey) : undefined;
+        if (stepHit) {
+          addUsage(stepHit.usage);
+          for (const r of stepHit.raw) { const f = normalizeFinding(r, 'ai'); f._batch = i; found.push(f); }
+          progress.done++;
+          onProgress({ phase: 'analyze', message: `Block ${i + 1}/${batches.length} · ${pass.label}${tagStep}: schon erledigt`, total: progress.total, done: progress.done, cost: liveCost() });
+          continue;
+        }
         const focusLine = pass.hint ? `\nSCHWERPUNKT dieses Durchgangs: ${pass.hint} Melde auch andere klare Funde, aber grabe bei diesem Schwerpunkt besonders tief.\n` : '';
         // Gleichbleibender Anfang (wird beim Anbieter zwischengespeichert) + wechselnder Block
         let prefix =
@@ -267,6 +278,7 @@ async function analyze(opts) {
           addUsage(usage);
           const raw = parseFindings(text);
           for (const r of raw) { const f = normalizeFinding(r, 'ai'); f._batch = i; found.push(f); }
+          if (stepKey && !aborted()) config.stepCache.set(stepKey, { raw, usage });
           progress.done++;
           onProgress({ phase: 'analyze', message: `Block ${i + 1}/${batches.length} · ${pass.label}${tag}: ${raw.length} Befund(e)`, total: progress.total, done: progress.done, cost: liveCost() });
         } catch (e) {

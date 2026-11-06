@@ -7,10 +7,21 @@
 const crypto = require('crypto');
 const store = require('../src/core/store');
 
-function createOrchestrator({ storeFile, runAudit, buildConfig }) {
+function createOrchestrator({ storeFile, runAudit, buildConfig, runState = null }) {
   let db = store.load(storeFile);
+  // Laeufe, die beim letzten Beenden noch aktiv waren: mit gespeichertem Stand pausiert, sonst unterbrochen
+  const saved = runState ? runState.read() : null;
+  let stale = false;
+  for (const r of db.runs || []) {
+    if (saved && saved.id === r.id) { stale = true; r.status = 'PAUSED'; r.finishedAt = null; r.errorLog = null; continue; }
+    if (r.status !== 'RUNNING' && r.status !== 'QUEUED') continue;
+    stale = true;
+    if (saved && saved.id === r.id) r.status = 'PAUSED';
+    else { r.status = 'FAILED'; r.finishedAt = r.finishedAt || new Date().toISOString(); r.errorLog = 'Durch Beenden der App unterbrochen.'; }
+  }
   const queue = [];
   let current = null; // { job, ctrl }
+  let shuttingDown = false;
   // Pause: der Lauf wartet an den Haltepunkten (zwischen Phasen bzw. KI-Bloecken), bis fortgesetzt wird
   let paused = null; // { promise, resolve }
   const checkpoint = async () => { while (paused && current && !current.ctrl.signal.aborted) await paused.promise; };
@@ -19,14 +30,17 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
   const trashTimers = new Set();
   const schedulePurge = () => { const t = setTimeout(() => { trashTimers.delete(t); if (store.purgeTrash(db)) persist(); }, store.UNDO_MS + 500); trashTimers.add(t); };
   const persist = () => { try { store.save(storeFile, db); } catch (e) { console.warn('Befund-Speicher nicht gespeichert:', e.message); } };
+  if (stale) persist();
   // Befristete Risikoakzeptanz: abgelaufene Eintraege zuruecksetzen (hoechstens einmal pro Minute pruefen)
   let lastExpire = 0;
   const expire = () => { if (Date.now() - lastExpire < 60000) return { expired: 0 }; lastExpire = Date.now(); const r = store.expireAcceptedRisks(db); if (r.expired) persist(); return r; };
 
   // job: { targets (scope-geprueft), providerId, origin: 'app'|'api', onProgress? }
   function enqueue(job) {
-    const id = crypto.randomUUID();
-    const run = store.addRun(db, {
+    const known = job.resumeId ? db.runs.find((r) => r.id === job.resumeId) : null;
+    const id = job.resumeId || crypto.randomUUID();
+    if (known) store.updateRun(db, id, { status: 'QUEUED', finishedAt: null, errorLog: null });
+    const run = known || store.addRun(db, {
       id, status: 'QUEUED', origin: job.origin || 'app', providerId: job.providerId || null,
       targets: job.targets.map((t) => ({ type: t.type, value: t.value })),
       targetIds: job.targets.map((t) => store.targetIdOf(t)),
@@ -44,7 +58,8 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
     if (current || !queue.length) return;
     const job = queue.shift();
     const ctrl = new AbortController();
-    current = { job, ctrl };
+    const ck = runState && job.origin === 'app' ? runState.open({ id: job.id, targets: job.targets, providerId: job.providerId }, { resume: !!job.resumeId }) : null;
+    current = { job, ctrl, ck };
     store.updateRun(db, job.id, { status: 'RUNNING', startedAt: new Date().toISOString() });
     persist();
     let outcome;
@@ -53,6 +68,7 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
       const cfg = buildConfig(job.providerId);
       cfg.signal = ctrl.signal;
       cfg.checkpoint = checkpoint;
+      if (ck) cfg.stepCache = ck;
       // Domain-Nachweis aus dem Speicher mitgeben – entscheidet ueber tiefe Web-Pruefungen.
       const targets = job.targets.map((t) => { const rec = db.targets[store.targetIdOf(t)]; return { ...t, verified: !!(rec && rec.ownershipVerified) }; });
       // Aus Fehlalarmen lernen: bestaetigte Fehlalarme dieser Ziele gehen als Hinweis an die KI
@@ -89,6 +105,8 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
       outcome = { ok: false, error: e.message, runId: job.id };
     } finally {
       persist();
+      // Fertig oder vom Nutzer abgebrochen: Der gespeicherte Stand wird nicht mehr gebraucht
+      if (ck && !shuttingDown) ck.clear();
       current = null;
       if (paused) { paused.resolve(); paused = null; }
     }
@@ -98,9 +116,12 @@ function createOrchestrator({ storeFile, runAudit, buildConfig }) {
 
   return {
     enqueue,
+    // App wird beendet: Werkzeuge stoppen, der gespeicherte Stand bleibt fuer den naechsten Start
+    shutdown() { shuttingDown = true; if (current) current.ctrl.abort(); if (paused) { paused.resolve(); paused = null; } },
     cancel() { if (current) { current.ctrl.abort(); if (paused) { paused.resolve(); paused = null; } return true; } return false; },
-    pause() { if (!current || paused) return false; let resolve; const promise = new Promise((r) => { resolve = r; }); paused = { promise, resolve }; return true; },
-    resume() { if (!paused) return false; paused.resolve(); paused = null; return true; },
+    pause() { if (!current || paused) return false; let resolve; const promise = new Promise((r) => { resolve = r; }); paused = { promise, resolve }; if (current.ck) current.ck.setPaused(true); return true; },
+    resume() { if (!paused) return false; paused.resolve(); paused = null; if (current && current.ck) current.ck.setPaused(false); return true; },
+    discardSaved() { if (!runState || current) return false; const d = runState.read(); if (d && db.runs.some((r) => r.id === d.id)) { store.updateRun(db, d.id, { status: 'FAILED', finishedAt: new Date().toISOString(), errorLog: 'Gespeicherten Stand verworfen.' }); persist(); } runState.clear(); return true; },
     isPaused: () => !!paused,
     isBusy: () => !!current || queue.length > 0,
     isRunning: () => !!current,

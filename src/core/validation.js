@@ -44,6 +44,8 @@ const ScanRequestSchema = z.object({
   providerId: z.enum(['ollama', 'anthropic', 'openai', 'gemini', 'compat', 'mistral', 'deepseek', 'groq', 'openrouter', 'azure', 'bedrock', 'vertex']).optional(),
   // Monatsbudget ueberschritten und der Nutzer hat ausdruecklich bestaetigt
   budgetConfirmed: z.boolean().optional(),
+  // Gespeicherte Pruefung fortsetzen
+  resumeId: z.string().uuid().optional(),
 });
 
 const StatusUpdateSchema = z.object({ status: z.enum(FINDING_STATUSES), note: z.string().max(500).optional(), expiresInDays: z.number().int().min(1).max(3650).optional() });

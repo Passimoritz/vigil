@@ -72,6 +72,8 @@ It combines **fixed rules and live vulnerability databases** (which find known p
 - **Greenbone OpenVAS:** with at least 8 GB of memory and WSL present, Vigil offers on first start to set up the free Greenbone Community Edition: in a separate WSL environment with Docker Engine, without Docker Desktop. This downloads several GB and takes at least 40 GB of disk. Greenbone only needs memory during a scan. Checks of approved servers take much longer with it; under *Settings → Checks* you can cancel, switch off or remove it.
 - **Linux packages:** the SSH check compares installed packages with OSV (Debian, Ubuntu, Rocky, AlmaLinux). Only package names and versions go to osv.dev.
 - **End of support:** dates come daily from endoflife.date; the built-in values are only a fallback.
+- **Pause:** A paused check, or one interrupted by closing the app, continues later where it stopped. Finished steps and AI blocks are kept; only the step that was running starts over. Greenbone setup can be paused too and resumes at the next start.
+- **Export:** The overview exports the filtered findings or the report of a single run, in the same formats as the Results tab.
 - **Tools:** Vigil updates installed tools daily from the official sources, with checksums and an automatic return to the old file if the new one does not run. For nmap, Windows asks for administrator rights once. An unmodified Git copy of Vigil fast-forwards itself. Can be switched off in the settings.
 
 ## Safe by design

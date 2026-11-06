@@ -215,7 +215,7 @@
     return (one && two && still2) || `eins ${one}, zwei ${two}, max zwei ${still2}`;
   });
   await t('Prüfung: Pause-Knopf nur während eines Laufs', () => (!!$('pauseBtn') && $('pauseBtn').hidden && $('pauseBtn').textContent.trim() === 'Pausieren') || 'Pause-Knopf falsch');
-  await t('Export: neue Formate im Menü', () => { const f = [...$('exportMenu').querySelectorAll('[data-fmt]')].map((b) => b.dataset.fmt).join(); return f === 'docx,xlsx,csv,auditzip,openvex,cdxvex,badge' || f; });
+  await t('Export: neue Formate im Menü', () => { const f = [...$('exportMenu').querySelectorAll('[data-fmt]')].map((b) => b.dataset.fmt).join(); return f === 'execpdf,pdf,html,md,sarif,json,cyclonedx,spdx,docx,xlsx,csv,auditzip,openvex,cdxvex,badge' || f; });
   await t('Einstellungen: Branding und Normen-Auswahl werden gespeichert', async () => {
     showView('settings'); setGroup('general'); await wait(80);
     const fw = $('reportFrameworks').querySelectorAll('[data-fw]');

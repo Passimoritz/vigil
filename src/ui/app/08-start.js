@@ -78,10 +78,7 @@ async function init() {
     if (r.ok && r.markdown) { try { await navigator.clipboard.writeText(r.markdown); } catch { /* egal */ } toast('Abzeichen gespeichert – Markdown-Schnipsel kopiert: ' + r.markdown, 'ok'); return; }
     flash(r.ok ? (r.signature || r.signed ? 'Gespeichert und signiert: ' : 'Gespeichert: ') + r.path : (r.canceled ? '' : 'Fehler: ' + r.error));
   };
-  $('exportHtmlBtn').onclick = exportAs('html');
-  $('exportMdBtn').onclick = exportAs('md');
-  $('exportSarifBtn').onclick = exportAs('sarif');
-  $('exportPdfBtn').onclick = exportAs('pdf');
+  bindDashExport();
   $('exportBtn').onclick = (e) => {
     e.stopPropagation();
     const open = $('exportMenu').hidden;
@@ -126,9 +123,6 @@ async function init() {
   ['depthSelect', 'validateChk', 'cveChk', 'activeChk', 'domChk', 'malwareChk', 'crawlChk'].forEach((id) => $(id).addEventListener('change', () => { collectSettings(); renderPresets(); }));
   // Einstellungen: vier Bereiche statt einer langen Seite
   $('setNav').querySelectorAll('[data-group]').forEach((b) => b.onclick = () => setGroup(b.dataset.group));
-  $('exportJsonBtn').onclick = exportAs('json');
-  $('exportCdxBtn').onclick = exportAs('cyclonedx');
-  $('exportSpdxBtn').onclick = exportAs('spdx');
   $('exportMenu').querySelectorAll('[data-fmt]').forEach((b) => b.onclick = exportAs(b.dataset.fmt));
   $('verifyReportBtn').onclick = () => { closeMenus(); verifyReportUi(); };
   setupExtras();

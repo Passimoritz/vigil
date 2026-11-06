@@ -72,6 +72,8 @@ Vigil kombiniert **feste Regeln und tagesaktuelle Schwachstellen-Datenbanken** (
 - **Greenbone OpenVAS:** Ab 8 GB Arbeitsspeicher und mit vorhandenem WSL bietet Vigil beim ersten Start an, die kostenlose Greenbone Community Edition einzurichten: in einer eigenen WSL-Umgebung mit Docker Engine, ohne Docker Desktop. Das lädt mehrere GB und belegt mindestens 40 GB. Arbeitsspeicher braucht Greenbone nur während eines Scans. Prüfungen freigegebener Server dauern damit deutlich länger; unter *Einstellungen → Prüfungen* lässt es sich abbrechen, abschalten oder entfernen.
 - **Linux-Pakete:** Bei der SSH-Prüfung gleicht Vigil installierte Pakete mit OSV ab (Debian, Ubuntu, Rocky, AlmaLinux). Es gehen nur Paketnamen und Versionen an osv.dev.
 - **Support-Enden:** kommen täglich von endoflife.date; die eingebauten Werte sind nur noch die Reserve.
+- **Pausieren:** Eine pausierte oder durch Schließen unterbrochene Prüfung macht später dort weiter. Fertige Schritte und KI-Blöcke bleiben erhalten, nur der gerade laufende Schritt beginnt neu. Auch die Greenbone-Einrichtung lässt sich pausieren und setzt beim nächsten Start fort.
+- **Export:** Die Übersicht exportiert die gefilterten Befunde oder den Bericht eines einzelnen Laufs, in denselben Formaten wie der Reiter Ergebnis.
 - **Werkzeuge:** Vigil aktualisiert installierte Werkzeuge täglich von den offiziellen Quellen, mit Prüfsumme und automatischer Rückkehr zur alten Datei, falls die neue nicht läuft. Für nmap fragt Windows einmal nach Administratorrechten. Eine unveränderte Git-Kopie von Vigil spult sich selbst vor. Abschaltbar in den Einstellungen.
 
 ## Sicher von Grund auf

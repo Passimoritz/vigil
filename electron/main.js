@@ -281,16 +281,19 @@ function setGbSetup(patch) {
   saveConfig(c);
   gbChanged();
 }
-function startGbSetup({ auto = false } = {}) {
+function startGbSetup({ auto = false, force = false } = {}) {
   if (gbSetupRun) return gbSetupRun;
   const gb = require('../src/core/greenbone');
   const c = loadConfig();
   const de = c.lang === 'de';
   gbSetupCtl = new AbortController();
-  setGbSetup({ state: 'running', error: null, at: new Date().toISOString() });
+  const wasAt = ((c.greenbone || {}).setup || {}).step;
+  setGbSetup({ state: 'running', error: null, at: new Date().toISOString(), ...(force ? { step: null } : {}) });
+  // Bis der erste Schritt sich meldet: dort anzeigen, wo die Einrichtung zuletzt stand
+  gbStep = wasAt && !force ? { step: wasAt, message: 'Setze die Einrichtung fort …' } : null;
   gbSetupRun = gbSetup.runSetup({
-    password: dec((c.greenbone || {}).passEnc || ''), auto, signal: gbSetupCtl.signal,
-    onStep: (s) => { gbStep = s; gbChanged(); },
+    password: dec((c.greenbone || {}).passEnc || ''), auto, force, signal: gbSetupCtl.signal,
+    onStep: (s) => { const moved = !gbStep || gbStep.step !== s.step; gbStep = s; if (moved) setGbSetup({ step: s.step }); else gbChanged(); },
     onPassword: (pw) => { const n = loadConfig(); n.greenbone = { ...(n.greenbone || {}), user: 'admin', passEnc: enc(pw) }; saveConfig(n); },
     deps: { checkReady: (pw) => gb.status(gb.createClient({ user: 'admin', password: pw, signal: gbSetupCtl.signal })) },
   }).then((r) => {
@@ -312,7 +315,8 @@ function startGbSetup({ auto = false } = {}) {
 // Beim Start nur fortsetzen, was der Nutzer begonnen hat. Gefragt wird im Fenster (greenbone:get -> needsAnswer).
 function resumeGbSetup() {
   if (process.platform !== 'win32' || process.env.VIGIL_E2E_DATA) return;
-  if (((loadConfig().greenbone || {}).setup || {}).state === 'running') startGbSetup();
+  // "paused" wartet auf den Nutzer. Nach einem Fehler oder fehlendem WSL lohnt ein neuer Versuch bei jedem Start.
+  if (['running', 'error', 'needs_wsl'].includes(((loadConfig().greenbone || {}).setup || {}).state)) startGbSetup();
 }
 ipcMain.handle('greenbone:get', () => {
   const g = loadConfig().greenbone || {};
@@ -320,7 +324,7 @@ ipcMain.handle('greenbone:get', () => {
   const state = gbSetupRun ? 'running' : s.state || null;
   // Noch nie gefragt: einmal im Fenster fragen, wenn der Rechner die Mindestwerte erfuellt
   const needsAnswer = !g.asked && !process.env.VIGIL_E2E_DATA && process.platform === 'win32' && state !== 'running' && state !== 'ready' && gbSetup.prerequisites().ok;
-  return { enabled: !!g.enabled, needsAnswer, steps: gbSetup.STEPS, setup: { state, error: s.error || null, startedAt: s.at || null, progress: gbSetupRun ? gbStep : null } };
+  return { enabled: !!g.enabled, needsAnswer, steps: gbSetup.STEPS, setup: { state, step: s.step || null, error: s.error || null, startedAt: s.at || null, progress: gbSetupRun ? gbStep : null } };
 });
 ipcMain.handle('greenbone:answer', (_e, yes) => {
   const c = loadConfig();
@@ -335,7 +339,8 @@ ipcMain.handle('greenbone:setEnabled', (_e, on) => {
   c.greenbone = { ...(c.greenbone || {}), enabled: !!on };
   return { ok: saveConfig(c) };
 });
-ipcMain.handle('greenbone:setupRun', () => { const c = loadConfig(); c.greenbone = { ...(c.greenbone || {}), asked: true }; saveConfig(c); startGbSetup(); return { ok: true }; });
+ipcMain.handle('greenbone:setupPause', () => { if (gbSetupRun) { setGbSetup({ state: 'paused', error: null }); if (gbSetupCtl) gbSetupCtl.abort(); } return { ok: true }; });
+ipcMain.handle('greenbone:setupRun', () => { const c = loadConfig(); const force = ((c.greenbone || {}).setup || {}).state === 'ready'; c.greenbone = { ...(c.greenbone || {}), asked: true }; saveConfig(c); startGbSetup({ force }); return { ok: true }; });
 ipcMain.handle('greenbone:setupCancel', () => { if (gbSetupCtl) gbSetupCtl.abort(); setGbSetup({ state: 'declined', error: null, at: new Date().toISOString() }); return { ok: true }; });
 ipcMain.handle('greenbone:remove', async () => {
   if (gbSetupCtl) gbSetupCtl.abort();
@@ -479,6 +484,7 @@ const mdReport = () => { const m = report.toMarkdown(reportResult(), reportOpts(
 const brandOpts = (c) => ({ accent: c.reportAccent || '', coverText: c.reportCoverText || '', footerText: c.reportFooterText || '', frameworks: Array.isArray(c.reportFrameworks) && c.reportFrameworks.length ? c.reportFrameworks : undefined });
 const reportOpts = () => { const c = loadConfig(); return { targets: lastTargets, company: c.reportCompany || '', logoDataUrl: c.reportLogo || '', ...brandOpts(c) }; };
 let orchestrator = null;
+let runState = null;
 let api = null;
 
 const CONFIG_PATH = () => path.join(app.getPath('userData'), 'config.json');
@@ -491,13 +497,13 @@ function loadHistory() {
   try { const j = secure.readJson(HISTORY_PATH(), dataCipher).data; return j && Array.isArray(j.runs) ? j.runs : []; }
   catch { return []; }
 }
-function recordHistory(result, targets) {
+function recordHistory(result, targets, runId) {
   try {
     fs.mkdirSync(HISTORY_DIR(), { recursive: true });
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     lastHistoryId = id;
     const entry = {
-      id, at: new Date().toISOString(),
+      id, at: new Date().toISOString(), ...(runId ? { runId } : {}),
       provider: (result.meta && result.meta.provider) || '', model: (result.meta && result.meta.model) || '',
       targets: (targets || []).map((t) => t.value).slice(0, 5),
       total: (result.summary && result.summary.total) || 0,
@@ -774,6 +780,13 @@ function createWindow() {
   win.loadFile(path.join(__dirname, '..', 'src', 'ui', 'index.html'));
   // Automatische Oberflaechen-Tests (test/e2e.js): Skript im Fenster ausfuehren, Ergebnis schreiben, beenden
   if (process.env.VIGIL_E2E_SCRIPT) {
+    ipcMain.handle('e2e:wheel', async (_e, { x, y, deltaY }) => {
+      const d = win.webContents.debugger;
+      if (!d.isAttached()) d.attach('1.3');
+      await d.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      await d.sendCommand('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY });
+      return { ok: true };
+    });
     win.webContents.once('did-finish-load', async () => {
       let out;
       try { out = await win.webContents.executeJavaScript(fs.readFileSync(process.env.VIGIL_E2E_SCRIPT, 'utf8'), true); }
@@ -831,9 +844,11 @@ app.whenReady().then(() => {
   appLock.init();
   const cfg = loadConfig();
   applyProxySafe(cfg);
+  runState = require('../src/core/runstate').createRunState({ file: path.join(app.getPath('userData'), 'paused-run.json'), cipher: dataCipher });
   orchestrator = createOrchestrator({
     storeFile: STORE_PATH(),
     runAudit,
+    runState,
     buildConfig: (providerId) => {
       const c = loadConfig(); applyProxySafe(c);
       return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel: loadIntel(INTEL_PATH()), domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), greenbone: greenboneFor(c), webCrawl: c.webCrawl !== false, allowlist: c.allowlist || [], malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4, secretLiveCheck: c.secretLiveCheck === true, yara: { rulesDir: YARA_DIR() }, osvOffline: c.osvOffline ? osvOffline.createOfflineQuery(OSV_DIR()) : null, systemSettings: systemSettingsFor(c) };
@@ -856,7 +871,7 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('will-quit', () => { ollama.stop(); }); // nur den von Vigil gestarteten Dienst beenden
+app.on('will-quit', () => { ollama.stop(); try { if (orchestrator) orchestrator.shutdown(); } catch { /* egal */ } }); // nur den von Vigil gestarteten Dienst beenden
 
 // --- IPC ----------------------------------------------------------------
 ipcMain.handle('meta:providers', () => {
@@ -935,8 +950,9 @@ ipcMain.handle('audit:run', async (e, payload) => {
   // Monatliches KI-Budget: ausgeschoepft -> nur nach ausdruecklicher Bestaetigung starten
   const over = v.data.targets.some((t) => t.type === 'path') ? budgetBlocked(cfg, effectiveConfig(cfg, providerId)) : null;
   if (over && !v.data.budgetConfirmed) return { ok: false, budgetExceeded: true, budget: over, error: budgetMsg(over) };
+  const saved = v.data.resumeId && runState.read();
   const job = orchestrator.enqueue({
-    targets: scope.targets, providerId, origin: 'app',
+    targets: scope.targets, providerId, origin: 'app', ...(saved && saved.id === v.data.resumeId ? { resumeId: saved.id } : {}),
     onProgress: (p) => { clock.tick(p); if (!orchestrator.isPaused()) taskbar(p.total ? Math.min(1, (p.done || 0) / p.total) : 2, p.total ? 'normal' : 'indeterminate'); try { e.sender.send('audit:progress', p); } catch { /* Fenster weg */ } },
   });
   taskbar(2, 'indeterminate');
@@ -944,7 +960,7 @@ ipcMain.handle('audit:run', async (e, payload) => {
   taskbar(null); updateOverlay();
   try { if (win && !win.isDestroyed() && !win.isFocused()) win.flashFrame(true); } catch { /* egal */ }
   if (out.ok) {
-    lastResult = out.result; lastTargets = scope.targets; recordHistory(out.result, scope.targets);
+    lastResult = out.result; lastTargets = scope.targets; recordHistory(out.result, scope.targets, out.runId);
     const meta = out.result.meta || {};
     const usd = ((meta.usage && meta.usage.usd) || 0) + ((meta.runSummary && meta.runSummary.usd) || 0);
     recordSpend({ kind: 'run', usd, provider: meta.provider, model: meta.model, inputTokens: meta.usage && meta.usage.inputTokens, outputTokens: meta.usage && meta.usage.outputTokens, runId: out.runId });
@@ -1080,7 +1096,7 @@ ipcMain.handle('finding:explain', (_e, payload) => onDemand('explain', async (ef
 }));
 function saveLastToHistory() {
   if (!lastHistoryId || !lastResult) return;
-  try { fs.writeFileSync(path.join(HISTORY_DIR(), lastHistoryId + '.json'), JSON.stringify(lastResult), 'utf8'); } catch { /* egal */ }
+  try { secure.writeJson(path.join(HISTORY_DIR(), lastHistoryId + '.json'), lastResult, dataCipher); } catch { /* egal */ }
 }
 ipcMain.handle('threat:model', () => {
   if (!lastResult) return { ok: false, error: 'Noch kein Ergebnis vorhanden.' };
@@ -1119,7 +1135,7 @@ ipcMain.handle('localai:hardware', async () => {
 ipcMain.handle('history:details', (_e, id) => {
   const safe = String(id || '').replace(/[^a-z0-9]/gi, '');
   try {
-    const r = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR(), safe + '.json'), 'utf8'));
+    const r = secure.readJson(path.join(HISTORY_DIR(), safe + '.json'), dataCipher).data;
     const m = r.meta || {};
     const repro = m.repro ? { ...m.repro, integrity: require('../src/core/repro').verifyLog(m.repro) } : null;
     return { ok: true, provider: m.provider, model: m.model, at: m.at, usage: m.usage || null, runSummary: m.runSummary || null, focus: !!m.focus, lookups: m.lookups ?? null, privacyMode: !!m.privacyMode, skippedByBudget: m.skippedByBudget || 0, repro };
@@ -1150,6 +1166,8 @@ ipcMain.handle('sample:demo', async () => {
 ipcMain.handle('aicache:info', () => ({ entries: aiCache().size() }));
 ipcMain.handle('aicache:clear', () => { aiCache().clear(); return { ok: true }; });
 ipcMain.handle('audit:cancel', () => ({ ok: orchestrator.cancel() }));
+ipcMain.handle('audit:savedInfo', () => (orchestrator.isBusy() ? null : runState.info()));
+ipcMain.handle('audit:savedDiscard', () => ({ ok: orchestrator.discardSaved() }));
 // Pause/Fortsetzen: der Lauf haelt am naechsten Haltepunkt (zwischen Phasen bzw. KI-Bloecken)
 ipcMain.handle('audit:pause', () => { const ok = orchestrator.pause(); if (ok) taskbar(taskbarFrac || 0.01, 'paused'); return { ok, paused: orchestrator.isPaused() }; });
 ipcMain.handle('audit:resume', () => { const ok = orchestrator.resume(); if (ok) taskbar(taskbarFrac || 2, taskbarFrac ? 'normal' : 'indeterminate'); return { ok, paused: orchestrator.isPaused() }; });
@@ -1339,7 +1357,7 @@ function loadCompare(idA, idB) {
   const ea = hist.find((h) => h.id === safe(idA)), eb = hist.find((h) => h.id === safe(idB));
   if (!ea || !eb || ea.id === eb.id) throw new Error(reportEnglish() ? 'Please choose two different runs.' : 'Bitte zwei verschiedene Läufe wählen.');
   const [older, newer] = Date.parse(ea.at) <= Date.parse(eb.at) ? [ea, eb] : [eb, ea];
-  const read = (e) => { const r = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR(), e.id + '.json'), 'utf8')); return reportEnglish() ? findingsI18n.localizeResult(r) : r; };
+  const read = (e) => { const r = secure.readJson(path.join(HISTORY_DIR(), e.id + '.json'), dataCipher).data; return reportEnglish() ? findingsI18n.localizeResult(r) : r; };
   return { diff: compare.diffResults(read(older), read(newer)), a: { id: older.id, at: older.at, targets: older.targets || [] }, b: { id: newer.id, at: newer.at, targets: newer.targets || [] } };
 }
 ipcMain.handle('history:compare', (_e, idA, idB) => { try { return { ok: true, ...loadCompare(idA, idB) }; } catch (err) { return { ok: false, error: err.message }; } });
@@ -1408,7 +1426,10 @@ async function auditPackage() {
   return signing.buildAuditPackage(parts, keys, { title: 'Vigil audit package' });
 }
 
-ipcMain.handle('report:save', async (_e, { format }) => {
+// Tests speichern ohne Dialog
+const askSavePath = (opts) => (process.env.VIGIL_E2E_SCRIPT && process.env.VIGIL_E2E_SAVE_DIR ? Promise.resolve({ canceled: false, filePath: path.join(process.env.VIGIL_E2E_SAVE_DIR, path.basename(opts.defaultPath)) }) : dialog.showSaveDialog(win, opts));
+ipcMain.handle('report:save', (_e, { format }) => saveReportFile(format));
+async function saveReportFile(format) {
   if (!lastResult) return { ok: false, error: 'Noch kein Ergebnis vorhanden.' };
   // Paketliste (SBOM) als CycloneDX 1.5 bzw. SPDX 2.3 (JSON)
   if (format === 'cyclonedx' || format === 'spdx') {
@@ -1416,7 +1437,7 @@ ipcMain.handle('report:save', async (_e, { format }) => {
     if (!sbom.packagesOf(lastResult).length) return { ok: false, error: 'Keine Paketliste im Ergebnis – es wurden keine Abhängigkeiten erkannt.' };
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
     const ext = format === 'spdx' ? 'spdx.json' : 'cdx.json';
-    const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('documents'), `vigil-sbom-${stamp}.${ext}`), filters: [{ name: format === 'spdx' ? 'SPDX JSON' : 'CycloneDX JSON', extensions: ['json'] }] });
+    const r = await askSavePath({ defaultPath: path.join(app.getPath('documents'), `vigil-sbom-${stamp}.${ext}`), filters: [{ name: format === 'spdx' ? 'SPDX JSON' : 'CycloneDX JSON', extensions: ['json'] }] });
     if (r.canceled) return { ok: false, canceled: true };
     const name = (lastTargets.find((t) => t.type === 'path') || lastTargets[0] || {}).value || 'vigil-project';
     try { fs.writeFileSync(r.filePath, sbom.sbomJson(lastResult, format, { name }), 'utf8'); return { ok: true, path: r.filePath }; }
@@ -1425,7 +1446,7 @@ ipcMain.handle('report:save', async (_e, { format }) => {
   const exec = format === 'exec' || format === 'execpdf';
   const ext = EXT[format] || 'html';
   const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
-  const r = await dialog.showSaveDialog(win, {
+  const r = await askSavePath({
     defaultPath: path.join(app.getPath('documents'), `vigil-${exec ? (reportEnglish() ? 'summary' : 'kurzbericht') : 'report'}-${stamp}.${ext}`),
     filters: [{ name: ext.split('.').pop().toUpperCase(), extensions: [ext.split('.').pop()] }],
   });
@@ -1448,4 +1469,39 @@ ipcMain.handle('report:save', async (_e, { format }) => {
     fs.writeFileSync(r.filePath, data);
     return done(data);
   } catch (err) { return { ok: false, error: err.message }; }
+}
+
+// Export aus der Uebersicht: Die Befunde der aktuellen Auswahl oder der Bericht eines frueheren Laufs
+function resultFromStore(filter) {
+  const { summarize } = require('../src/core/schema');
+  const f = filter || {};
+  const findings = orchestrator.listFindings({ status: f.status, severity: f.severity, targetId: f.targetId, q: f.q, newSinceBaseline: !!f.newSinceBaseline, toxic: !!f.toxic, limit: 5000 });
+  const ids = new Set(findings.map((x) => x.targetId));
+  const sboms = orchestrator.sboms();
+  const sbom = [...ids].flatMap((id) => (sboms[id] && sboms[id].packages) || []);
+  const targets = orchestrator.allTargets().filter((t) => ids.has(t.id)).map((t) => ({ type: t.type, value: t.identifier || t.name }));
+  return { result: { findings, summary: summarize(findings), errors: [], meta: { at: new Date().toISOString(), provider: '', model: '', units: 0, sbom, fromDashboard: true } }, targets };
+}
+function resultOfRun(runId) {
+  const run = orchestrator.getRun(runId);
+  if (!run) throw new Error(reportEnglish() ? 'Run not found.' : 'Lauf nicht gefunden.');
+  const list = loadHistory();
+  const at = Date.parse(run.finishedAt || run.startedAt || run.createdAt);
+  const hit = list.find((e) => e.runId === runId) || list.find((e) => !e.runId && Math.abs(Date.parse(e.at) - at) < 120000);
+  if (!hit) throw new Error(reportEnglish() ? 'The report of this run is no longer stored (Vigil keeps the last 50).' : 'Der Bericht dieses Laufs ist nicht mehr gespeichert (Vigil behält die letzten 50).');
+  return { result: secure.readJson(path.join(HISTORY_DIR(), hit.id + '.json'), dataCipher).data, targets: run.targets || [] };
+}
+let exportBusy = false;
+ipcMain.handle('report:saveFrom', async (_e, p) => {
+  const { format, source } = p || {};
+  if (exportBusy) return { ok: false, error: reportEnglish() ? 'Another export is running.' : 'Es läuft schon ein Export.' };
+  let from;
+  try { from = source && source.kind === 'run' ? resultOfRun(String(source.runId || '')) : resultFromStore(source && source.filter); }
+  catch (err) { return { ok: false, error: err.message }; }
+  // Die Berichtsfunktionen lesen den aktuellen Lauf: fuer die Dauer des Exports austauschen
+  const keep = [lastResult, lastTargets, lastHistoryId];
+  exportBusy = true;
+  lastResult = from.result; lastTargets = from.targets; lastHistoryId = null;
+  try { return await saveReportFile(String(format || '')); }
+  finally { [lastResult, lastTargets, lastHistoryId] = keep; exportBusy = false; }
 });

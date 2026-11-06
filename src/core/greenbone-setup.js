@@ -123,7 +123,9 @@ const distroExists = async (run) => { const r = await run('wsl', ['-l', '-q'], {
 
 // Ergebnis: { ok, state: 'ready' | 'needs_wsl' | 'error', error? }. onPassword speichert sofort, damit ein
 // Neustart mitten im Abgleich der Tests das Passwort nicht verliert. checkReady(password) -> status()
-async function runSetup({ password = '', auto = false, signal, onStep = () => {}, onPassword = () => {}, deps = {} }) {
+// force: alles neu laden ("Einrichtung wiederholen"). Sonst zaehlt, was in der Umgebung schon liegt: Der Stand steht
+// dort auf der Platte und ueberlebt Neustarts, Pausen und Abstuerze.
+async function runSetup({ password = '', auto = false, force = false, signal, onStep = () => {}, onPassword = () => {}, deps = {} }) {
   const { run = runCmd, keepAlive = defaultKeepAlive, fetchImpl = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), prereq = prerequisites, waitMs = 10 * 60 * 1000, syncWaitMs = 8 * 60 * 60 * 1000, pollMs = 15000, progressMs = 8000, checkReady } = deps;
   const fail = (error) => ({ ok: false, state: 'error', error });
   const stopped = () => signal && signal.aborted;
@@ -152,17 +154,23 @@ async function runSetup({ password = '', auto = false, signal, onStep = () => {}
     // 3. Offizielle compose.yaml und Hilfsskripte
     onStep({ step: 'compose', message: 'Lade die Greenbone-Konfiguration …' });
     let text;
-    try {
+    // Schon heruntergeladen? Dann weiter, auch ohne Netz
+    const have = force ? null : await script(`[ -x ${BASE}/gmp.sh ] && [ -x ${BASE}/setpw.sh ] && cat ${COMPOSE}\n`, { timeoutMs: 60000 });
+    if (have && have.ok && validCompose(have.stdout || '')) text = have.stdout;
+    else try {
       const r = await fetchImpl(COMPOSE_URL, { redirect: 'error', signal: signal ? AbortSignal.any([AbortSignal.timeout(60000), signal]) : AbortSignal.timeout(60000) });
       if (!r.ok) return fail(`Greenbone-Konfiguration nicht geladen (HTTP ${r.status}).`);
       text = await r.text();
     } catch (e) { return fail(`Greenbone-Konfiguration nicht geladen (${e.message}).`); }
     if (text.length > 512 * 1024 || !validCompose(text) || text.includes('VIGIL_EOF')) return fail('Die heruntergeladene Greenbone-Konfiguration sieht nicht wie erwartet aus.');
-    const wrote = await script(`set -e\nmkdir -p ${BASE}\n${heredoc(COMPOSE, text)}${heredoc(`${BASE}/gmp.sh`, GMP_SH, '700')}${heredoc(`${BASE}/setpw.sh`, SETPW_SH, '700')}`, { timeoutMs: 60000 });
+    const wrote = await script(`set -e\nmkdir -p ${BASE}\n${heredoc(COMPOSE, text.replace(/\n$/, ''))}${heredoc(`${BASE}/gmp.sh`, GMP_SH, '700')}${heredoc(`${BASE}/setpw.sh`, SETPW_SH, '700')}`, { timeoutMs: 60000 });
     if (!wrote.ok) return fail(`Greenbone-Konfiguration nicht gespeichert (${lastLines(wrote)}).`);
 
     // 4. Images laden und starten
     const totalImages = countImages(text);
+    // .feed entsteht erst nach einem vollstaendigen Download
+    const pulledBefore = !force && /VIGIL_PULLED/.test((await script(`[ -f ${BASE}/.feed ] && echo VIGIL_PULLED; true\n`, { timeoutMs: 60000 })).stdout || '');
+    if (!pulledBefore) {
     onStep({ step: 'pull', message: 'Greenbone wird heruntergeladen …', done: 0, total: totalImages });
     // Fortschritt aus dem, was schon fertig da ist: unabhaengig vom Ausgabeformat von docker compose
     const watch = setInterval(async () => {
@@ -173,6 +181,7 @@ async function runSetup({ password = '', auto = false, signal, onStep = () => {}
     const pulled = await script(`set -e\nsystemctl start docker 2>/dev/null || service docker start\ndocker compose -f ${COMPOSE} pull -q\ntouch ${BASE}/.feed ${BASE}/.weekly\n`, { timeoutMs: 6 * 60 * 60 * 1000 }).finally(() => clearInterval(watch));
     if (stopped()) return fail('Abgebrochen.');
     if (!pulled.ok) return fail(`Greenbone konnte nicht geladen werden (${lastLines(pulled)}).`);
+    }
     onStep({ step: 'up', message: 'Starte Greenbone …' });
     const started = await script(`docker compose -f ${COMPOSE} up -d --quiet-pull\n`, { timeoutMs: 30 * 60 * 1000 });
     if (stopped()) return fail('Abgebrochen.');

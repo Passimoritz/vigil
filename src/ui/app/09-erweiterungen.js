@@ -102,7 +102,7 @@ async function togglePause() {
   $('pauseBtn').disabled = false;
   if (!r || !r.ok) return;
   setPaused(r.paused);
-  $('progressTitle').textContent = r.paused ? 'Pausiert – hält am nächsten Zwischenschritt' : 'Prüfung läuft …';
+  $('progressTitle').textContent = r.paused ? 'Pausiert – Stand gespeichert, Vigil darf geschlossen werden' : 'Prüfung läuft …';
   toast(r.paused ? 'Prüfung pausiert' : 'Prüfung fortgesetzt', 'ok');
 }
 

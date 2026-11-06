@@ -78,7 +78,12 @@ function runSandboxed(cmd, args, { signal, timeoutMs = DEFAULT_TIMEOUT_MS, maxBy
     try { if (child.pid) os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* best effort */ }
     const out = [], err = [];
     let outLen = 0, errLen = 0, truncated = false, timedOut = false, settled = false;
-    const kill = () => { try { child.kill(); } catch { /* ignore */ } };
+    const kill = () => {
+      try {
+        if (process.platform === 'win32' && child.pid) spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
+        else child.kill();
+      } catch { /* ignore */ }
+    };
     const onAbort = () => kill();
     if (signal) { if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true }); }
     const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);

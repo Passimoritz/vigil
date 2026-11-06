@@ -13,6 +13,40 @@ function renderToolHealth() {
   }).catch(() => { box.innerHTML = ''; });
 }
 
+// --- Gespeicherte Pruefung ------------------------------------------------------------
+function renderPausedRun() {
+  const box = $('pausedRun');
+  if (!box) return;
+  const p = state.pausedRun;
+  box.hidden = !p;
+  if (!p) return;
+  $('pausedRunTitle').textContent = p.paused ? 'Pausierte Prüfung' : 'Unterbrochene Prüfung';
+  const when = new Date(p.savedAt).toLocaleString(uiLocale());
+  $('pausedRunInfo').textContent = `${p.targets.map((t) => t.value).join(', ')} · ${p.steps} Schritte erledigt · ${when}`;
+  $('pausedRunInfo').title = p.targets.map((t) => t.value).join('\n');
+}
+async function loadPausedRun() {
+  if (!window.vigil.pausedRunInfo) return;
+  state.pausedRun = state.running ? null : await window.vigil.pausedRunInfo();
+  renderPausedRun();
+}
+function bindPausedRun() {
+  if (!$('pausedRun')) return;
+  $('pausedRunGo').onclick = () => {
+    const p = state.pausedRun;
+    if (!p || state.running) return;
+    state.targets = p.targets.map((t) => ({ ...t }));
+    if (typeof renderTargets === 'function') renderTargets();
+    runAudit({ resumeId: p.id, providerId: p.providerId });
+  };
+  $('pausedRunDrop').onclick = async () => {
+    if (!confirm('Den gespeicherten Stand verwerfen? Die Prüfung müsste dann von vorn beginnen.')) return;
+    await window.vigil.pausedRunDiscard();
+    state.pausedRun = null;
+    renderPausedRun();
+  };
+}
+
 // --- Automatische Updates der Werkzeuge -----------------------------------------------
 function renderToolUpdates() {
   if (!$('toolUpdateChk') || !window.vigil.toolUpdateInfo) return;
@@ -76,11 +110,13 @@ function renderGreenbone() {
     $('gbEnabled').disabled = !ready;
     $('gbAuto').hidden = running;
     $('gbCancel').hidden = !running;
-    $('gbAuto').textContent = ready ? 'Einrichtung wiederholen' : st.state === 'error' || st.state === 'needs_wsl' ? 'Einrichtung fortsetzen' : 'Einrichten';
+    $('gbPause').hidden = !running;
+    $('gbAuto').textContent = ready ? 'Einrichtung wiederholen' : st.state === 'error' || st.state === 'needs_wsl' || st.state === 'paused' ? 'Einrichtung fortsetzen' : 'Einrichten';
     $('gbTest').disabled = !ready;
     const out = $('gbAutoStatus');
     out.className = st.state === 'error' || st.state === 'needs_wsl' ? 'small err' : 'small muted';
-    out.textContent = running ? '' : ready ? 'Eingerichtet.' : st.error || (st.state === 'declined' ? 'Nicht eingerichtet.' : '');
+    const stepName = (g.steps.find((x) => x.id === st.step) || {}).label;
+    out.textContent = running ? '' : ready ? 'Eingerichtet.' : st.state === 'paused' ? `Pausiert${stepName ? ` bei: ${stepName}` : ''}. Der Stand ist gespeichert.` : st.error || (st.state === 'declined' ? 'Nicht eingerichtet.' : '');
     renderGbProgress(g);
     if (g.needsAnswer && !$('gbAsk').open && !gbAsked && $('onboard').hidden) { gbAsked = true; $('gbAsk').showModal(); }
   });
@@ -94,6 +130,7 @@ function bindGreenbone() {
   $('gbChip').onclick = () => { showView('settings'); setGroup('checks'); $('set-greenbone').scrollIntoView({ block: 'start' }); };
   $('gbAuto').onclick = async () => { await window.vigil.greenboneSetupRun(); renderGreenbone(); };
   $('gbCancel').onclick = async () => { await window.vigil.greenboneSetupCancel(); renderGreenbone(); };
+  $('gbPause').onclick = async () => { await window.vigil.greenboneSetupPause(); renderGreenbone(); };
   $('gbRemove').onclick = async () => {
     if (!confirm('Greenbone entfernen? Die WSL-Umgebung von Vigil wird gelöscht und der Speicher freigegeben. Andere WSL-Umgebungen bleiben unberührt.')) return;
     const r = await window.vigil.greenboneRemove();
@@ -169,6 +206,8 @@ function bindSchedules() {
   if (window.vigil.onSchedulesUpdate) window.vigil.onSchedulesUpdate(renderSchedules);
 }
 
+bindPausedRun();
+loadPausedRun();
 bindToolUpdates();
 renderToolUpdates();
 bindGreenbone();

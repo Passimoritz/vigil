@@ -12,7 +12,6 @@ const { enrich } = require('./harness');
 const report = require('./report');
 const { fingerprint, atOrAbove, dedupeFindings, sortFindings, summarize } = require('./schema');
 const { PROVIDERS, callProvider, pingProvider, fetchModels } = require('./providers');
-const { runStaticModules } = require('./modules/static');
 const { runWebModules } = require('./modules/web');
 const { applyIntel, contextualRisk, correlate } = require('./intel');
 const { enrichRemedy } = require('./remedies');
@@ -51,9 +50,8 @@ async function runAudit(targets, config, onProgress = () => {}) {
   for (const t of targets) if (t.type === 'path' && !ing.notes.some((n) => n.includes(t.value) && /nicht gefunden|Fehler/.test(n))) scannersRun.push({ target: t.value, source: 'prescan' });
 
   onProgress({ phase: 'prescan', message: 'Statische Vorprüfung (Secrets, Deps, Muster) …' });
-  const pre = prescan(ing.units, { customSecrets: config.customRules, disabledRules: config.disabledRules });
-  // Native Audit-Module (Lieferkette, Container, Code-Regeln, KI, Server-Konfiguration)
-  const mods = runStaticModules(ing.units, onProgress);
+  // Native Audit-Module (Lieferkette, Container, Code-Regeln, KI, Server-Konfiguration) laufen mit: im eigenen Thread
+  const { pre, mods } = await require('./prescan-worker').runPrescan(ing.units, { customSecrets: config.customRules, disabledRules: config.disabledRules }, onProgress);
   for (const t of targets) if (t.type === 'path') for (const id of mods.ran) scannersRun.push({ target: t.value, source: id });
   const moduleNotes = [...mods.errors];
   // Aktive Werkzeuge veraltet oder ohne Vorlagen? Sonst sieht ein leeres Ergebnis wie "alles sauber" aus.
@@ -72,10 +70,23 @@ async function runAudit(targets, config, onProgress = () => {}) {
   const aborted = () => !!(config.signal && config.signal.aborted);
   // Pause-Haltepunkt (Orchestrator): wartet hier, solange der Lauf pausiert ist
   const checkpoint = async () => { if (typeof config.checkpoint === 'function') await config.checkpoint(); };
+  // Gespeicherter Stand (runstate.js): Fertige Schritte kommen beim Fortsetzen von dort. Fehler und abgebrochene
+  // Schritte werden nicht gespeichert, sie laufen beim naechsten Mal neu.
+  const stepCache = config.stepCache || null;
+  const step = async (key, label, fn) => {
+    await checkpoint();
+    if (stepCache) {
+      const hit = stepCache.get(key);
+      if (hit !== undefined) { onProgress({ phase: 'prescan', message: `Schon erledigt: ${label}` }); return hit; }
+    }
+    const r = await fn();
+    if (stepCache && !aborted()) stepCache.set(key, r);
+    return r;
+  };
   await checkpoint();
   if (config.cveLookup !== false && pre.deps.length && !aborted()) {
     try {
-      const cve = await lookupCves(pre.deps, onProgress, config.signal, { offline: config.osvOffline });
+      const cve = await step('cve', 'CVE-Abgleich', () => lookupCves(pre.deps, onProgress, config.signal, { offline: config.osvOffline }));
       cveFindings = cve.findings;
       cveNotes = cve.notes;
       if (completed(cve.notes)) for (const t of targets) if (t.type === 'path') scannersRun.push({ target: t.value, source: 'osv' });
@@ -96,7 +107,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
     // Scope: nur bestaetigte bzw. freigegebene Ziele (die App setzt `authorized` erst nach Pruefung).
     const authorized = !!t.authorized;
     try {
-      const w = await scanWeb(t.value, authorized, onProgress, config.signal);
+      const w = await step(`web:${t.value}`, `Server-Prüfung ${t.value}`, () => scanWeb(t.value, authorized, onProgress, config.signal));
       webFindings.push(...w.findings);
       webNotes.push(...w.notes);
       if (authorized && completed(w.notes)) scannersRun.push({ target: t.value, source: 'webscan' });
@@ -107,7 +118,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
     // Weitere Web-Module; tiefe Pruefung nur fuer verifizierte oder interne Ziele.
     if (authorized && !throttled && !aborted()) {
       const deep = !!t.verified || isInternalHost(hostOf(t));
-      const wm = await runWebModules(t.value, { deep, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress });
+      const wm = await step(`webmod:${t.value}`, `Web-Module ${t.value}`, () => runWebModules(t.value, { deep, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress }));
       webFindings.push(...wm.findings); webNotes.push(...wm.notes);
       if (wm.throttled) throttled = true;
       else for (const id of wm.ran) scannersRun.push({ target: t.value, source: id });
@@ -116,7 +127,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
       if (!throttled && !aborted() && t.type === 'url' && config.webCrawl !== false) {
         const { runDeepWeb } = require('./modules/webdeep');
         const login = deep && typeof config.webLogin === 'function' ? config.webLogin(t.value) : null;
-        dw = await runDeepWeb(t.value, { deep, login, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress });
+        dw = await step(`webdeep:${t.value}`, `Unterseiten ${t.value}`, () => runDeepWeb(t.value, { deep, login, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress }));
         webFindings.push(...dw.findings); webNotes.push(...dw.notes);
         // Eingebundene Skripte gegen die taeglich aktualisierte retire.js-Datenbank
         if (config.feeds && config.feeds.retire.length && dw.scripts && dw.scripts.length) webFindings.push(...require('./feedscan').scanScriptUris(dw.scripts, config.feeds.retire, t.value));
@@ -127,7 +138,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
       // Browser-Laufzeitpruefung (nur in der App verfuegbar, nur verifiziert/intern)
       if (deep && t.type === 'url' && typeof config.domAudit === 'function' && !throttled && !aborted()) {
         try {
-          const d = await config.domAudit(t.value, { signal: config.signal, onProgress });
+          const d = await step(`dom:${t.value}`, `Browser-Prüfung ${t.value}`, () => config.domAudit(t.value, { signal: config.signal, onProgress }));
           webFindings.push(...d.findings); webNotes.push(...d.notes);
           if (d.ok) scannersRun.push({ target: t.value, source: 'headless-dom-audit' });
           if (d.ok && d.observed) observed = d.observed;
@@ -139,7 +150,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
       if (t.type === 'url' && config.webSuite !== false && !throttled && !aborted()) {
         try {
           const { runWebSuite } = require('./modules/websuite');
-          const s = await runWebSuite(t.value, { deep, pages: (dw && dw.pages) || [], scripts: (dw && dw.scripts) || [], observed, allowlist: config.allowlist || [], previous: config.webWatch ? config.webWatch[t.value] : null, feeds: config.feeds, openApi: typeof config.openApiFor === 'function' ? config.openApiFor(t.value) : null, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress });
+          const s = await step(`websuite:${t.value}`, `Web-Zusatzprüfungen ${t.value}`, () => runWebSuite(t.value, { deep, pages: (dw && dw.pages) || [], scripts: (dw && dw.scripts) || [], observed, allowlist: config.allowlist || [], previous: config.webWatch ? config.webWatch[t.value] : null, feeds: config.feeds, openApi: typeof config.openApiFor === 'function' ? config.openApiFor(t.value) : null, rps: config.maxRequestsPerSecond || 4, signal: config.signal, onProgress }));
           webFindings.push(...s.findings); webNotes.push(...s.notes);
           if (s.throttled) throttled = true;
           else for (const id of s.ran) scannersRun.push({ target: t.value, source: id });
@@ -149,7 +160,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
       // API-Rechtematrix (BOLA/IDOR) fuer konfigurierte Endpunkte dieses Hosts
       if (deep && typeof config.apiMatrix === 'function' && !aborted()) {
         try {
-          const a = await config.apiMatrix(t.value, { signal: config.signal, onProgress });
+          const a = await step(`apimatrix:${t.value}`, `API-Rechtematrix ${t.value}`, () => config.apiMatrix(t.value, { signal: config.signal, onProgress }));
           webFindings.push(...a.findings); webNotes.push(...a.notes);
           if (a.ran) scannersRun.push({ target: t.value, source: 'api-auth-matrix' });
         } catch (e) { webNotes.push('API-Rechtematrix: ' + e.message); }
@@ -159,12 +170,12 @@ async function runAudit(targets, config, onProgress = () => {}) {
     // Aktive Pruefung ueber nmap/nuclei - nur mit Opt-in und bestaetigter Berechtigung.
     if (config.activeScan && authorized && !aborted()) {
       try {
-        const nm = await runNmap(t.value, { signal: config.signal, onProgress });
+        const nm = await step(`nmap:${t.value}`, `nmap ${t.value}`, () => runNmap(t.value, { signal: config.signal, onProgress }));
         webFindings.push(...nm.findings); webNotes.push(...nm.notes);
       } catch (e) { webNotes.push(`nmap ${t.value}: ${e.message}`); }
       if (!aborted()) {
         try {
-          const nu = await runNuclei(t.value, { signal: config.signal, onProgress });
+          const nu = await step(`nuclei:${t.value}`, `nuclei ${t.value}`, () => runNuclei(t.value, { signal: config.signal, onProgress }));
           webFindings.push(...nu.findings); webNotes.push(...nu.notes);
         } catch (e) { webNotes.push(`nuclei ${t.value}: ${e.message}`); }
       }
@@ -173,14 +184,16 @@ async function runAudit(targets, config, onProgress = () => {}) {
     if (config.greenbone && config.greenbone.enabled && authorized && !aborted()) {
       const gb = require('./greenbone');
       try {
-        // Greenbone laeuft nur waehrend der Scans: einmal je Lauf starten, am Ende wieder beenden
-        if (!gbSession) {
-          onProgress({ phase: 'active', message: 'Greenbone wird gestartet …' });
-          gbSession = await require('./greenbone-setup').startSession({ signal: config.signal });
-          if (!gbSession.ok) { const why = gbSession.error; gbSession = null; throw new Error(why); }
-        }
-        const call = gb.createClient({ user: config.greenbone.user, password: config.greenbone.password, signal: config.signal });
-        const r = await gb.scanHost(hostOf(t), call, { signal: config.signal, onProgress, readyWaitMs: 30 * 60 * 1000 });
+        const r = await step(`greenbone:${t.value}`, `Greenbone ${t.value}`, async () => {
+          // Greenbone laeuft nur waehrend der Scans: einmal je Lauf starten, am Ende wieder beenden
+          if (!gbSession) {
+            onProgress({ phase: 'active', message: 'Greenbone wird gestartet …' });
+            gbSession = await require('./greenbone-setup').startSession({ signal: config.signal });
+            if (!gbSession.ok) { const why = gbSession.error; gbSession = null; throw new Error(why); }
+          }
+          const call = gb.createClient({ user: config.greenbone.user, password: config.greenbone.password, signal: config.signal });
+          return gb.scanHost(hostOf(t), call, { signal: config.signal, onProgress, readyWaitMs: 30 * 60 * 1000 });
+        });
         webFindings.push(...r.findings); webNotes.push(...r.notes);
         if (r.ran) scannersRun.push({ target: t.value, source: 'greenbone' });
       } catch (e) { webNotes.push(`Greenbone nicht ausgeführt: ${e.message}`); }
@@ -191,14 +204,14 @@ async function runAudit(targets, config, onProgress = () => {}) {
   for (const t of targets.filter((x) => x.type === 'image')) {
     if (aborted()) break;
     try {
-      const r = await runTrivyImage(t.value, { signal: config.signal, onProgress });
+      const r = await step(`trivy-image:${t.value}`, `trivy ${t.value}`, () => runTrivyImage(t.value, { signal: config.signal, onProgress }));
       webFindings.push(...r.findings); webNotes.push(...r.notes);
       if (completed(r.notes)) scannersRun.push({ target: t.value, source: 'trivy' });
     } catch (e) { webNotes.push(`trivy ${t.value}: ${e.message}`); }
     // Schichten-Analyse: geloeschte, aber noch enthaltene Dateien mit Zugangsdaten (docker save)
     if (config.layerAnalysis !== false && !aborted()) {
       try {
-        const l = await require('./layers').analyzeImageLayers(t.value, { signal: config.signal, onProgress });
+        const l = await step(`layers:${t.value}`, `Schichten-Analyse ${t.value}`, () => require('./layers').analyzeImageLayers(t.value, { signal: config.signal, onProgress }));
         webFindings.push(...l.findings); webNotes.push(...l.notes);
         if (l.ran) scannersRun.push({ target: t.value, source: 'image-layers' });
       } catch (e) { webNotes.push(`Schichten-Analyse ${t.value}: ${e.message}`); }
@@ -208,7 +221,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   for (const t of targets.filter((x) => x.type === 'system')) {
     if (aborted()) break;
     try {
-      const r = await require('./hostaudit').auditSystem(t.value, { signal: config.signal, onProgress, settings: { ...(config.systemSettings || {}), osvLookup: config.cveLookup !== false } });
+      const r = await step(`system:${t.value}`, `System-Prüfung ${t.value}`, () => require('./hostaudit').auditSystem(t.value, { signal: config.signal, onProgress, settings: { ...(config.systemSettings || {}), osvLookup: config.cveLookup !== false } }));
       webFindings.push(...r.findings); webNotes.push(...r.notes);
       if (r.ok) scannersRun.push({ target: t.value, source: `system-${t.value}` });
     } catch (e) { webNotes.push(`System-Prüfung ${t.value}: ${e.message}`); }
@@ -221,7 +234,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
       for (const [nm, fn] of [['gitleaks', runGitleaks], ['trufflehog', runTrufflehog], ['trivy', runTrivyFs], ['grype', runGrype], ['semgrep', runSemgrep], ['bandit', runBandit], ['checkov', runCheckov], ['retire', runRetire], ['hadolint', runHadolint], ['osv-scanner', runOsvScanner]]) {
         if (aborted()) break;
         try {
-          const r = await fn(t.value, { signal: config.signal, onProgress, rulesFile: nm === 'semgrep' && config.feeds ? config.feeds.semgrepFile : undefined });
+          const r = await step(`tool:${nm}:${t.value}`, `${nm} ${t.value}`, () => fn(t.value, { signal: config.signal, onProgress, rulesFile: nm === 'semgrep' && config.feeds ? config.feeds.semgrepFile : undefined }));
           webFindings.push(...r.findings); webNotes.push(...r.notes);
           if (completed(r.notes)) scannersRun.push({ target: t.value, source: nm === 'retire' ? 'retire' : nm });
         } catch (e) { webNotes.push(`${nm} ${t.value}: ${e.message}`); }
@@ -249,7 +262,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
     const { runYara } = require('./yara');
     for (const t of targets.filter((x) => x.type === 'path')) {
       try {
-        const y = await runYara(t.value, { rulesDir: config.yara.rulesDir, feedFile: config.feeds && config.feeds.yaraFile, signal: config.signal, onProgress });
+        const y = await step(`yara:${t.value}`, `YARA ${t.value}`, () => runYara(t.value, { rulesDir: config.yara.rulesDir, feedFile: config.feeds && config.feeds.yaraFile, signal: config.signal, onProgress }));
         webFindings.push(...y.findings); moduleNotes.push(...y.notes);
         if (y.ran) scannersRun.push({ target: t.value, source: 'yara' });
       } catch (e) { moduleNotes.push('YARA: ' + e.message); }
@@ -260,7 +273,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
     const { scanMalware } = require('./malware');
     for (const t of targets.filter((x) => x.type === 'path')) {
       try {
-        const m = await scanMalware(t.value, { signal: config.signal, onProgress, malwareBazaarKey: config.malwareBazaarKey });
+        const m = await step(`malware:${t.value}`, `Schadsoftware-Prüfung ${t.value}`, () => scanMalware(t.value, { signal: config.signal, onProgress, malwareBazaarKey: config.malwareBazaarKey }));
         webFindings.push(...m.findings); moduleNotes.push(...m.notes);
         for (const src of m.ran) scannersRun.push({ target: t.value, source: src });
       } catch (e) { moduleNotes.push('Schadsoftware-Prüfung: ' + e.message); }
@@ -273,7 +286,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
     const currentText = ing.units.map((u) => u.content || '').join('\n');
     for (const t of targets.filter((x) => x.type === 'path')) {
       try {
-        const g = await scanGitHistory(t.value, { currentText, signal: config.signal, onProgress });
+        const g = await step(`git:${t.value}`, `Git-Historie ${t.value}`, () => scanGitHistory(t.value, { currentText, signal: config.signal, onProgress }));
         gitFindings.push(...g.findings); moduleNotes.push(...g.notes);
         if (g.ran) scannersRun.push({ target: t.value, source: 'git-history' });
       } catch (e) { moduleNotes.push('Git-Historie: ' + e.message); }
@@ -282,7 +295,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   // Lieferkette & Container: Live-Pruefung von Schluesseln (opt-in), Helm/Kustomize, deps.dev, CMS/NVD
   if (!aborted()) {
     try {
-      const sx = await require('./supplychain').runSupplyExtras({ targets, units: ing.units, deps: pre.deps, prescanFindings: pre.findings, webCms, config, onProgress });
+      const sx = await step('supply', 'Lieferkette', () => require('./supplychain').runSupplyExtras({ targets, units: ing.units, deps: pre.deps, prescanFindings: pre.findings, webCms, config, onProgress }));
       pre.findings = sx.prescanFindings; webFindings.push(...sx.findings); moduleNotes.push(...sx.notes); scannersRun.push(...sx.ran);
     } catch (e) { moduleNotes.push('Lieferkette: ' + e.message); }
   }
@@ -291,7 +304,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
     const pathTargets = targets.filter((x) => x.type === 'path').map((x) => x.value);
     if (pathTargets.length) {
       try {
-        const o = await require('./ocr').scanImages(pathTargets, { signal: config.signal, onProgress });
+        const o = await step('ocr', 'Texterkennung', () => require('./ocr').scanImages(pathTargets, { signal: config.signal, onProgress }));
         gitFindings.push(...o.findings);
         if (o.ran) for (const t of pathTargets) scannersRun.push({ target: t, source: 'ocr-image-audit' });
       } catch { /* OCR ist optional */ }
@@ -303,7 +316,7 @@ async function runAudit(targets, config, onProgress = () => {}) {
   // KI-Gegencheck: Regel-Befunde ab "mittel" liest die KI einmal mit Beleg und Lauf-Hinweisen gegen
   const review = async (list) => {
     if (aborted()) return { findings: list, errors: [], reviewed: 0, doubted: 0 };
-    try { return await require('./harness').reviewRuleFindings({ findings: list, notes: [...webNotes, ...moduleNotes], config, onProgress }); }
+    try { return await step('ai-review', 'KI-Gegencheck', () => require('./harness').reviewRuleFindings({ findings: list, notes: [...webNotes, ...moduleNotes], config, onProgress })); }
     catch (e) { return { findings: list, errors: ['KI-Gegencheck: ' + e.message], reviewed: 0, doubted: 0 }; }
   };
 

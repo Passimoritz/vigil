@@ -91,16 +91,27 @@ async function refreshEstimate() {
   $('estSwitch').onclick = () => { state.config.analysisDepth = o.depth; saveCfg(); refreshEstimate(); toast(`${modeName(o.depth)}-Modus aktiv`, 'ok'); };
 }
 
-async function runAudit() {
+// Protokoll: folgt nur dann den neuen Zeilen, wenn man unten steht. Wer nach oben scrollt, bleibt dort.
+function appendRunLog(line) {
+  const log = $('log');
+  const follow = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+  log.textContent += line;
+  if (follow) log.scrollTop = log.scrollHeight;
+}
+
+async function runAudit(opts = {}) {
   if (state.running || !state.targets.length) return;
+  const resumeId = opts.resumeId || null;
+  // Es gibt nur einen gespeicherten Stand: ein neuer Lauf ersetzt ihn
+  if (!resumeId && state.pausedRun && !confirm('Es gibt noch eine pausierte Prüfung. Wenn du jetzt neu startest, wird ihr Stand verworfen.\n\nTrotzdem starten?')) return;
   // Kostenbremse: teure Cloud-Laeufe vorher bestaetigen lassen
   const est = state.estimate;
-  if (needsAi() && est && !est.local && est.priced && est.usd > (state.config.costWarnUsd ?? 2)
+  if (!resumeId && needsAi() && est && !est.local && est.priced && est.usd > (state.config.costWarnUsd ?? 2)
     && !confirm(`Dieser Lauf kostet voraussichtlich ${fmtUsd(est.usd)} (${fmtK(est.inputTokens + est.outputTokens)} Tokens, ${est.calls} KI-Aufrufe).\n\nTrotzdem starten?`)) return;
   // Monatliches KI-Budget: erreicht oder durch diesen Lauf ueberschritten -> ausdruecklich bestaetigen
   let budgetConfirmed = false;
   const localRun = (est && est.local) || state.config.selected === 'ollama';
-  if (needsAi() && !localRun && (state.config.monthlyBudgetUsd || 0) > 0 && window.vigil.budgetStats) {
+  if (!resumeId && needsAi() && !localRun && (state.config.monthlyBudgetUsd || 0) > 0 && window.vigil.budgetStats) {
     let b = null;
     try { b = await window.vigil.budgetStats(); } catch { /* ohne Budget-Info */ }
     const add = est && est.priced ? est.usd : 0;
@@ -109,6 +120,7 @@ async function runAudit() {
       budgetConfirmed = true;
     }
   }
+  state.pausedRun = null; if (typeof renderPausedRun === 'function') renderPausedRun();
   state.runStartedAt = Date.now();
   state.running = true; updateRunState();
   $('cancelBtn').hidden = false; $('cancelBtn').disabled = false;
@@ -148,13 +160,12 @@ async function runAudit() {
     if (p.phase === 'validate' && p.total) { live.valTotal = p.total; live.valDone = p.done || 0; }
     renderStepper(p.phase);
     updateStage(p);
-    $('log').textContent += `[${p.phase}]${p.total ? ` ${p.done}/${p.total}` : ''} ${p.message}\n`;
-    $('log').scrollTop = $('log').scrollHeight;
+    appendRunLog(`[${p.phase}]${p.total ? ` ${p.done}/${p.total}` : ''} ${p.message}\n`);
     if (p.total) $('barFill').style.width = Math.round((p.done / p.total) * 100) + '%';
     if (p.cost) updateCost(p.cost, false);
   });
 
-  const res = await window.vigil.runAudit({ targets: state.targets, providerId: state.config.selected, ...(budgetConfirmed ? { budgetConfirmed: true } : {}) });
+  const res = await window.vigil.runAudit({ targets: state.targets, providerId: opts.providerId || state.config.selected, ...(budgetConfirmed ? { budgetConfirmed: true } : {}), ...(resumeId ? { resumeId } : {}) });
   // Bestaetigte Hosts hat der Main-Prozess auf die Freigabeliste gesetzt.
   try { state.config.allowlist = (await window.vigil.getConfig()).allowlist || []; } catch { /* egal */ }
   loadKnown();

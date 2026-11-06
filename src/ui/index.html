@@ -68,6 +68,11 @@
         <p class="page-sub">Ordner hineinziehen, Adresse eintippen oder unten eine Art wählen. Vigil prüft nur, was dir gehört – zerstörungsfrei.</p>
       </div>
     </header>
+    <div id="pausedRun" class="paused-run" role="status" hidden>
+      <div><b id="pausedRunTitle">Pausierte Prüfung</b><span id="pausedRunInfo" class="muted small"></span></div>
+      <button id="pausedRunDrop" type="button" class="btn">Verwerfen</button>
+      <button id="pausedRunGo" type="button" class="btn primary">Fortsetzen</button>
+    </div>
 
     <div class="scan-grid">
       <div class="scan-main">
@@ -282,14 +287,14 @@
             Exportieren
           </button>
           <div id="exportMenu" class="menu" role="menu" hidden>
-            <button id="exportExecBtn" role="menuitem"><b>Kurzbericht (PDF)</b><span>eine Seite für die Geschäftsführung</span></button>
-            <button id="exportPdfBtn" role="menuitem"><b>PDF</b><span>zum Teilen und Archivieren</span></button>
-            <button id="exportHtmlBtn" role="menuitem"><b>HTML</b><span>interaktiver Bericht</span></button>
-            <button id="exportMdBtn" role="menuitem"><b>Markdown</b><span>für Tickets und Wikis</span></button>
-            <button id="exportSarifBtn" role="menuitem"><b>SARIF</b><span>VS Code, GitHub Code Scanning, CI</span></button>
-            <button id="exportJsonBtn" role="menuitem"><b>JSON</b><span>maschinenlesbar, inkl. Risiko und Lösungen</span></button>
-            <button id="exportCdxBtn" role="menuitem"><b>SBOM (CycloneDX)</b><span>Paketliste, CycloneDX 1.5 JSON</span></button>
-            <button id="exportSpdxBtn" role="menuitem"><b>SBOM (SPDX)</b><span>Paketliste, SPDX 2.3 JSON</span></button>
+            <button id="exportExecBtn" role="menuitem" data-fmt="execpdf"><b>Kurzbericht (PDF)</b><span>eine Seite für die Geschäftsführung</span></button>
+            <button id="exportPdfBtn" role="menuitem" data-fmt="pdf"><b>PDF</b><span>zum Teilen und Archivieren</span></button>
+            <button id="exportHtmlBtn" role="menuitem" data-fmt="html"><b>HTML</b><span>interaktiver Bericht</span></button>
+            <button id="exportMdBtn" role="menuitem" data-fmt="md"><b>Markdown</b><span>für Tickets und Wikis</span></button>
+            <button id="exportSarifBtn" role="menuitem" data-fmt="sarif"><b>SARIF</b><span>VS Code, GitHub Code Scanning, CI</span></button>
+            <button id="exportJsonBtn" role="menuitem" data-fmt="json"><b>JSON</b><span>maschinenlesbar, inkl. Risiko und Lösungen</span></button>
+            <button id="exportCdxBtn" role="menuitem" data-fmt="cyclonedx"><b>SBOM (CycloneDX)</b><span>Paketliste, CycloneDX 1.5 JSON</span></button>
+            <button id="exportSpdxBtn" role="menuitem" data-fmt="spdx"><b>SBOM (SPDX)</b><span>Paketliste, SPDX 2.3 JSON</span></button>
             <div class="menu-sep" role="separator"></div>
             <button id="exportDocxBtn" role="menuitem" data-fmt="docx"><b>Word (.docx)</b><span>vollständiger Bericht zum Weiterbearbeiten</span></button>
             <button id="exportXlsxBtn" role="menuitem" data-fmt="xlsx"><b>Excel (.xlsx)</b><span>Befunde als Tabelle mit Filter</span></button>
@@ -412,6 +417,9 @@
         <div class="menu-wrap">
           <button type="button" class="btn ghost" id="dashLayoutBtn" aria-haspopup="true" aria-expanded="false" aria-controls="dashLayoutMenu">Anpassen</button>
           <div id="dashLayoutMenu" class="menu layout-menu" role="group" aria-label="Karten der Übersicht" hidden></div>
+        </div>
+        <div class="menu-wrap">
+          <button type="button" class="btn" id="dashExportBtn" aria-haspopup="menu" aria-expanded="false">Exportieren</button>
         </div>
         <div class="menu-wrap">
           <button type="button" class="btn" id="dashCleanBtn" aria-haspopup="menu" aria-expanded="false">Aufräumen ▾</button>
@@ -819,7 +827,7 @@
           <h2>Greenbone OpenVAS</h2>
           <p class="hint">Zusätzlicher Netzwerk-Scanner mit täglich aktualisierten Tests. Vigil richtet die kostenlose Greenbone Community Edition auf Wunsch ein: in einer eigenen WSL-Umgebung mit Docker Engine, ohne Docker Desktop. Das belegt mindestens 40 GB auf der Festplatte. Arbeitsspeicher braucht Greenbone nur während eines Scans (4 bis 8 GB), danach wird es wieder beendet. Ein Scan kann pro Host deutlich über eine Stunde dauern und ist im Netz sichtbar. Geprüft werden nur freigegebene Ziele, ohne Passwort-Rateversuche, Standard-Zugänge und Denial-of-Service-Tests.</p>
           <div id="gbProgress" class="gb-progress" hidden aria-live="polite"></div>
-          <div class="row-inline"><button id="gbAuto" type="button" class="btn">Einrichten</button><button id="gbCancel" type="button" class="btn" hidden>Abbrechen</button><span id="gbAutoStatus" class="small muted" aria-live="polite"></span></div>
+          <div class="row-inline"><button id="gbAuto" type="button" class="btn">Einrichten</button><button id="gbPause" type="button" class="btn" hidden>Pausieren</button><button id="gbCancel" type="button" class="btn" hidden>Abbrechen</button><span id="gbAutoStatus" class="small muted" aria-live="polite"></span></div>
           <div class="set-row">
             <div class="set-label"><b>Bei Prüfungen freigegebener Server mitlaufen lassen</b><span>Verlängert jede Prüfung einer Webadresse oder eines Servers deutlich.</span></div>
             <label class="switch"><input type="checkbox" id="gbEnabled" /><span></span></label>

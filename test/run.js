@@ -698,6 +698,23 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const ready = (o = {}) => async () => ({ ok: true, syncing: !!o.syncing, nvts: o.nvts == null ? 120000 : o.nvts });
     const fs1 = fakeSetup();
     let savedPw = null;
+    {
+      // Fortsetzen: Was in der Umgebung schon liegt, wird nicht noch einmal geladen
+      const seen = []; let fetched = 0;
+      const compose = 'name: greenbone-community-edition\nservices:\n  gvm-tools:\n    image: a\n  gvmd:\n    image: b\n';
+      const run = async (cmd, args, o = {}) => {
+        const inp = String((o && o.input) || ''); seen.push(inp);
+        if (cmd === 'wsl' && args[0] === '-l') return { ok: true, stdout: 'vigil-gvm\n' };
+        if (/gmp\.sh \] && \[ -x/.test(inp)) return { ok: true, stdout: compose };
+        if (/echo VIGIL_PULLED/.test(inp)) return { ok: true, stdout: 'VIGIL_PULLED\n' };
+        return { ok: true, stdout: '' };
+      };
+      const r = await setup.runSetup({ password: 'x', deps: { run, prereq: () => ({ ok: true }), keepAlive: () => () => {}, fetchImpl: async () => { fetched++; return { ok: true, text: async () => compose }; }, sleep: async () => {}, progressMs: 100000, checkReady: async () => ({ nvts: 5, syncing: false }) } });
+      check('greenbone: Fortsetzen lädt nichts doppelt', r.ok && fetched === 0 && !seen.some((s) => /compose\.yaml pull -q\n/.test(s) && !/-f .* pull -q [a-z]/.test(s) && !/mmin/.test(s)));
+      seen.length = 0;
+      const r2 = await setup.runSetup({ password: 'x', force: true, deps: { run, prereq: () => ({ ok: true }), keepAlive: () => () => {}, fetchImpl: async () => { fetched++; return { ok: true, text: async () => compose }; }, sleep: async () => {}, progressMs: 100000, checkReady: async () => ({ nvts: 5, syncing: false }) } });
+      check('greenbone: Einrichtung wiederholen lädt neu', r2.ok && fetched === 1 && seen.some((s) => /pull -q\ntouch/.test(s)));
+    }
     const sr1 = await setup.runSetup({ onPassword: (p) => { savedPw = p; }, deps: { ...fs1.deps, checkReady: ready() } });
     const wslArgs = fs1.log.map((x) => x.args.join(' '));
     const inputs = fs1.log.map((x) => x.input || '').join('\n');
@@ -735,6 +752,66 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     const lateCall = async (x) => { if (/^<get_version/.test(x) && tries++ < 2) throw new Error('noch nicht bereit'); return makeServer().call(x); };
     const late = await gb.status(await (async () => { for (;;) { try { await lateCall('<get_version/>'); return makeServer().call; } catch { /* nochmal */ } } })());
     check('sitzung: spät erreichbarer Scanner wird abgewartet', late.ok && tries === 3);
+
+    // Vorpruefung im eigenen Thread: gleiches Ergebnis wie direkt gerechnet
+    {
+      const { runPrescan } = require('../src/core/prescan-worker');
+      const { prescan } = require('../src/core/prescan');
+      const units = [{ label: 'p/a.js', kind: 'file', language: 'javascript', content: 'const k = "AKIAIOSFODNN7EXAMPLE";\nrequire("child_process").exec(x);' }, { label: 'p/package.json', kind: 'file', language: 'json', content: '{"dependencies":{"lodash":"4.17.0"}}' }];
+      const seen = [];
+      const w = await runPrescan(units, {}, (p) => seen.push(p));
+      const direct = prescan(units, {});
+      check('vorprüfung im Thread: gleiche Funde wie direkt', w.pre.findings.length === direct.findings.length && direct.findings.length > 0 && w.pre.deps.length === direct.deps.length && w.mods.ran.length > 0 && seen.length > 0);
+      // Eigene Regel und deaktivierte Regeln kommen im Thread an
+      const custom = await runPrescan([{ label: 'x.txt', kind: 'file', content: 'FIRMA-GEHEIM-12345' }], { customSecrets: [{ name: 'Firma', regex: 'FIRMA-GEHEIM-\\d+', severity: 'high' }] });
+      check('vorprüfung im Thread: eigene Regeln gelten', custom.pre.findings.some((f) => /Firma/.test(f.title || '') || /Firma/.test(f.ruleId || '')));
+    }
+
+    // Pruefung speichern und fortsetzen
+    {
+      const nfs = require('fs'); const npath = require('path');
+      const dir = nfs.mkdtempSync(npath.join(require('os').tmpdir(), 'vigil-resume-test-'));
+      const { createRunState } = require('../src/core/runstate');
+      const rs = createRunState({ file: npath.join(dir, 'p.json') });
+      const id = '11111111-1111-4111-8111-111111111111';
+      const c1 = rs.open({ id, targets: [{ type: 'url', value: 'https://a.example', authorized: true }], providerId: 'ollama' });
+      c1.set('nmap:a', { findings: [], notes: ['x'] }); c1.setPaused(true);
+      const inf = rs.info();
+      check('fortsetzen: Stand überlebt den Neustart, Freigabe-Vermerk wird nicht gespeichert', inf.id === id && inf.paused && inf.steps === 1 && inf.targets[0].authorized === undefined);
+      const c2 = createRunState({ file: npath.join(dir, 'p.json') }).open({ id, targets: inf.targets, providerId: 'ollama' }, { resume: true });
+      check('fortsetzen: fertige Schritte kommen zurück', c2.get('nmap:a') && c2.get('nmap:a').notes[0] === 'x' && c2.get('fehlt') === undefined && rs.info().paused === false);
+      const c3 = rs.open({ id: '22222222-2222-4222-8222-222222222222', targets: [], providerId: null });
+      check('fortsetzen: neuer Lauf übernimmt keinen fremden Stand', c3.get('nmap:a') === undefined);
+      c3.clear();
+      check('fortsetzen: nach Ende ist der Stand weg', rs.info() === null);
+
+      // Echter Durchlauf: Beim zweiten Mal laeuft kein gespeicherter Schritt und kein KI-Block noch einmal
+      const http = require('http');
+      const { analyze } = require('../src/core/analyze');
+      let calls = 0;
+      const srv = http.createServer((req, res) => { let b = ''; req.on('data', (d) => { b += d; }); req.on('end', () => { calls++; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ message: { content: JSON.stringify({ findings: [{ title: 'SQL-Injection in getUser', severity: 'high', category: 'Injection', location: 'p/a.js:1', description: 'x', recommendation: 'y', confidence: 0.9, evidence: 'q' }] }) }, prompt_eval_count: 10, eval_count: 2 })); }); });
+      await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+      const mem = {}; const stepCache = { get: (k) => mem[k], set: (k, v) => { mem[k] = JSON.parse(JSON.stringify(v)); } };
+      const cfgR = { provider: 'ollama', model: 'big', baseUrl: `http://127.0.0.1:${srv.address().port}`, analysisDepth: 'thorough', aiValidation: false, incremental: false, stepCache };
+      const unitsR = [{ label: 'p/a.js', kind: 'file', language: 'javascript', content: 'db.query("x" + y);' }];
+      const a1 = await analyze({ units: unitsR, config: cfgR });
+      const n1 = calls;
+      // Stand wie nach einer Pause mitten in der Analyse: ein Block fehlt noch
+      const lastKey = Object.keys(mem).filter((k) => k.startsWith('ai:')).pop(); delete mem[lastKey];
+      const a2 = await analyze({ units: unitsR, config: cfgR });
+      check('fortsetzen: nur der fehlende KI-Block läuft neu', n1 >= 2 && calls === n1 + 1 && a2.findings.length === a1.findings.length);
+      srv.close();
+      const pdir = npath.join(dir, 'proj'); nfs.mkdirSync(pdir); nfs.writeFileSync(npath.join(pdir, 'a.txt'), 'hallo');
+      const { runAudit: runA } = require('../src/core');
+      const memA = {}; const seen = [];
+      const cacheA = { get: (k) => memA[k], set: (k, v) => { memA[k] = JSON.parse(JSON.stringify(v)); seen.push(k); } };
+      const base = { provider: 'ollama', model: 'x', baseUrl: 'http://127.0.0.1:9', cveLookup: false, ocr: false, malwareScan: false, stepCache: cacheA };
+      await runA([{ type: 'path', value: pdir }], base, () => {}).catch(() => {});
+      const first = seen.length; const msgs = [];
+      await runA([{ type: 'path', value: pdir }], base, (p) => msgs.push(p.message)).catch(() => {});
+      check('fortsetzen: fertige Schritte der Pipeline laufen nicht noch einmal', first >= 1 && seen.length === first && msgs.some((m) => /^Schon erledigt/.test(m)));
+      nfs.rmSync(dir, { recursive: true, force: true });
+    }
 
     // Automatische Updates der Werkzeuge
     {

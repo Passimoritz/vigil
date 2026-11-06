@@ -6,7 +6,7 @@
 // --- Uebersicht (Dashboard über alle Läufe) ------------------------------
 const dash = { status: 'OPEN,IN_PROGRESS', severity: '', targetId: '', q: '', newSinceBaseline: false, toxic: false };
 const gradeOf = (score) => (score >= 92 ? 'A' : score >= 78 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : score >= 20 ? 'E' : 'F');
-const RUN_LABEL = { QUEUED: 'wartet', RUNNING: 'läuft', COMPLETED: 'fertig', FAILED: 'fehlgeschlagen', PARTIAL_FAILURE: 'teilweise', THROTTLED_ABORTED: 'gedrosselt' };
+const RUN_LABEL = { PAUSED: 'pausiert', QUEUED: 'wartet', RUNNING: 'läuft', COMPLETED: 'fertig', FAILED: 'fehlgeschlagen', PARTIAL_FAILURE: 'teilweise', THROTTLED_ABORTED: 'gedrosselt' };
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString(uiLocale(), { dateStyle: 'short', timeStyle: 'short' }) : '–');
 
 // Seiten: Neue Pruefung | Ergebnis | Uebersicht | Verlauf | Einstellungen
@@ -30,9 +30,55 @@ function showView(v) {
     setGroup(state.setGroup || 'general');
   }
 }
+// Exportmenue der Uebersicht: dieselben Formate wie im Reiter Ergebnis, nur die Quelle ist eine andere
+function closeDashExport() {
+  document.querySelectorAll('.export-menu').forEach((m) => { const b = m.parentElement.querySelector('[aria-haspopup]'); if (b) b.setAttribute('aria-expanded', 'false'); m.remove(); });
+}
+function openDashExport(btn, source, scopeText) {
+  const open = btn.getAttribute('aria-expanded') === 'true';
+  closeDashExport();
+  if (open) return;
+  const menu = document.createElement('div');
+  menu.className = 'menu export-menu';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = `<div class="export-scope">${esc(scopeText)}</div>`;
+  $('exportMenu').querySelectorAll('[data-fmt], .menu-sep').forEach((el) => {
+    if (el.matches('.menu-sep') && !menu.lastElementChild.matches('[data-fmt]')) return;
+    const c = el.cloneNode(true);
+    c.removeAttribute('id');
+    menu.appendChild(c);
+  });
+  if (menu.lastElementChild.matches('.menu-sep')) menu.lastElementChild.remove();
+  menu.querySelectorAll('[data-fmt]').forEach((b) => { b.type = 'button'; b.onclick = async () => {
+    const fmt = b.dataset.fmt;
+    closeDashExport();
+    if (fmt === 'pdf' || fmt === 'execpdf' || fmt === 'auditzip') flash(fmt === 'auditzip' ? 'Erzeuge Audit-Paket …' : 'Erzeuge PDF …');
+    const r = await window.vigil.saveReportFrom(fmt, source);
+    if (r.ok && r.markdown) { try { await navigator.clipboard.writeText(r.markdown); } catch { /* egal */ } toast('Abzeichen gespeichert – Markdown-Schnipsel kopiert: ' + r.markdown, 'ok'); return; }
+    if (r.ok) toast((r.signature || r.signed ? 'Gespeichert und signiert: ' : 'Gespeichert: ') + r.path, 'ok');
+    else if (!r.canceled) toast('Fehler: ' + r.error, 'err');
+  }; });
+  btn.after(menu);
+  btn.setAttribute('aria-expanded', 'true');
+  menu.querySelector('button').focus();
+}
 function closeMenus() {
+  closeDashExport();
   $('exportMenu').hidden = true;
   $('exportBtn').setAttribute('aria-expanded', 'false');
+}
+
+function bindDashExport() {
+  const btn = $('dashExportBtn');
+  if (!btn) return;
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    const filter = { ...dash };
+    const res = await window.vigil.dashboard({ ...filter, limit: 5000 });
+    const n = (res.findings || []).length;
+    if (!n && btn.getAttribute('aria-expanded') !== 'true') { toast('Die aktuelle Auswahl enthält keine Befunde.', 'info'); return; }
+    openDashExport(btn, { kind: 'findings', filter }, `${n} Befunde der aktuellen Auswahl`);
+  };
 }
 
 async function loadDashboard() {
@@ -224,8 +270,10 @@ function renderDashRuns(runs) {
     <div class="run-main"><span class="run-tgt" title="${esc(r.targets.map((t) => t.value).join(', '))}">${esc(r.targets.map((t) => t.value).join(', ') || '–')}</span>
       <span class="muted small">${r.summary ? `${r.summary.total ?? 0} Befunde · ${r.summary.created || 0} neu · ${r.summary.resolved || 0} behoben` : (r.errorLog ? esc(r.errorLog) : '')}${r.durationMs ? ` · ${fmtElapsed(r.durationMs)}` : ''}</span></div>
     <span class="muted small run-when">${r.origin === 'api' ? 'API · ' : ''}${fmtDate(r.finishedAt || r.startedAt || r.createdAt)}</span>
-    ${r.status === 'RUNNING' || r.status === 'QUEUED' ? '' : `<button type="button" class="btn tiny ghost danger" data-run="${esc(r.id)}" aria-label="Lauf löschen">Löschen</button>`}
+    ${r.summary ? `<div class="menu-wrap"><button type="button" class="btn tiny ghost" data-run-export="${esc(r.id)}" aria-haspopup="menu" aria-expanded="false">Exportieren</button></div>` : ''}
+    ${r.status === 'RUNNING' || r.status === 'QUEUED' || r.status === 'PAUSED' ? '' : `<button type="button" class="btn tiny ghost danger" data-run="${esc(r.id)}" aria-label="Lauf löschen">Löschen</button>`}
   </div>`).join('') : '<p class="muted small">Noch keine Läufe.</p>';
+  box.querySelectorAll('[data-run-export]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); openDashExport(b, { kind: 'run', runId: b.dataset.runExport }, 'Bericht dieses Laufs'); });
   box.querySelectorAll('[data-run]').forEach((b) => b.onclick = async () => {
     if (!(await askConfirm('Lauf löschen?', 'Der Eintrag verschwindet aus dem Verlauf. Die Befunde dieses Laufs bleiben erhalten.'))) return;
     const r = await window.vigil.deleteRun(b.dataset.run);

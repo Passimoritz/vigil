@@ -59,6 +59,18 @@ function runApp(script, label) {
 
   // Uebersetzungen: keine Texte der jeweils anderen Sprache in irgendeiner Ansicht
   try {
+    const check = (name, ok, info = '') => all.push({ name, ok: !!ok, info });
+    const sc = await require('./scroll-audit').run();
+    check('Mausrad: scrollt überall', !!sc && Array.isArray(sc.dead) && sc.dead.length === 0, sc && sc.dead ? sc.dead.slice(0, 6).join(' | ') : JSON.stringify(sc));
+    check('Mausrad: fokussiertes Auswahlfeld scrollt die Seite, Wert bleibt', !!sc && sc.focusOk);
+    check('Protokoll: folgt unten, bleibt beim Hochscrollen stehen', !!sc && sc.follows && sc.stays);
+    const ra = await require('./resume-audit').run();
+    check('Pausieren: Stand liegt verschlüsselt auf der Platte', !!ra && ra.onDisk && ra.encrypted && ra.p1 && ra.p1.paused);
+    check('Neustart: Lauf gilt als pausiert, Hinweis sichtbar', !!ra && ra.p2 && ra.p2.runBefore === 'PAUSED' && !!ra.p2.banner);
+    check('Fortsetzen: Lauf wird fertig, gespeicherter Stand ist weg', !!ra && ra.p2 && ra.p2.status === 'COMPLETED' && ra.p2.after === null);
+    check('Übersicht: Export in allen Formaten', !!ra && ra.p2 && Object.values(ra.p2.saved).every((x) => x === 'ok') && ra.jsonOk, ra && ra.p2 ? JSON.stringify(ra.p2.saved).slice(0, 200) : '');
+    check('Übersicht: Export eines einzelnen Laufs', !!ra && ra.p2 && ra.p2.byRun === 'ok' && ra.p2.noRunErr);
+    check('Übersicht: dieselben Formate wie im Reiter Ergebnis', !!ra && ra.p2 && ra.p2.same && ra.p2.open === 0);
     const a = await require('./i18n-audit').run();
     if (!a || !a.german) all.push({ name: 'Sprache: Prüflauf', ok: false, info: 'kein Ergebnis' });
     else {

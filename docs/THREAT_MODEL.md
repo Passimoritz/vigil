@@ -56,6 +56,13 @@ like Vigil can) and physical attacks on an unlocked, logged-in machine beyond th
 | I | External links leak data | `link:open` only for allow-listed HTTPS documentation hosts (`isAllowedLink`) |
 | E | Permission prompts (camera, geolocation …) | Default session denies every permission except sanitized clipboard writes |
 
+### Saved progress of a check
+
+| Threat | Risk | Mitigation |
+| --- | --- | --- |
+| I | Findings of an unfinished check lie on disk | Same encryption as the history; removed when the check ends or is discarded |
+| E | A resumed check reaches a target whose approval was withdrawn | The approval flag is not saved. Resuming checks the target against the current approval list again; checks never resume without a click |
+
 ### Automatic tool updates
 
 | Threat | Risk | Mitigation |

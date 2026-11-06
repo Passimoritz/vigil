@@ -1441,3 +1441,18 @@ textarea::placeholder { font-family: "Segoe UI Variable Text", "Segoe UI", Inter
 /* Automatische Updates */
 .tool-update-status { display: block; margin-top: 6px; color: var(--text); font-size: 12.5px; }
 .tool-update-status:empty { display: none; }
+
+/* Mausrad: gleich anspringen statt weich animieren, sonst kaempft die Animation mit dem Rad */
+.main { scroll-behavior: auto; }
+/* Gespeicherte Pruefung */
+.paused-run { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; padding: 14px 18px; border: 1px solid var(--line-strong); border-left: 3px solid var(--accent); border-radius: var(--r); background: var(--panel-2); }
+.paused-run > div { flex: 1; min-width: 0; }
+.paused-run b { display: block; color: var(--text-strong); }
+.paused-run .small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* Export in der Uebersicht */
+.export-menu { max-height: min(72vh, 640px); overflow-y: auto; }
+.export-scope { padding: 8px 10px 6px; color: var(--muted); font-size: 12px; }
+.run-card .menu-wrap { flex: none; }
+
+/* Laeufe: Aktionen in einer Zeile */
+@media (min-width: 761px) { .run-card { grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; } }
