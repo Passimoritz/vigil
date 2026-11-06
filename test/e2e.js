@@ -70,6 +70,8 @@ function runApp(script, label) {
     check('Fortsetzen: Lauf wird fertig, gespeicherter Stand ist weg', !!ra && ra.p2 && ra.p2.status === 'COMPLETED' && ra.p2.after === null);
     check('Übersicht: Export in allen Formaten', !!ra && ra.p2 && Object.values(ra.p2.saved).every((x) => x === 'ok') && ra.jsonOk, ra && ra.p2 ? JSON.stringify(ra.p2.saved).slice(0, 200) : '');
     check('Übersicht: Export eines einzelnen Laufs', !!ra && ra.p2 && ra.p2.byRun === 'ok' && ra.p2.noRunErr);
+    check('Greenbone je Prüfung: Schalter ändert die voraussichtliche Zeit', !!ra && ra.p3 && ra.p3.etaOn > 3600 && ra.p3.etaOff < 3600 && /^≈ 1[.,]\d (h|Std\.)$/.test(ra.p3.etaOnText) && /Min\.$|min$/.test(ra.p3.etaText), ra && ra.p3 ? `${ra.p3.etaOnText} / ${ra.p3.etaText}` : '');
+    check('Greenbone je Prüfung: abgewählt startet es nicht, Einstellung bleibt an', !!ra && ra.p3 && ra.p3.shown && ra.p3.def && ra.p3.locked && ra.p3.finished && ra.p3.steps > 0 && !ra.p3.gbMsgs.length && ra.p3.reset && ra.p3.stillOn, ra ? JSON.stringify(ra.p3).slice(0, 240) : '');
     check('Übersicht: dieselben Formate wie im Reiter Ergebnis', !!ra && ra.p2 && ra.p2.same && ra.p2.open === 0);
     const a = await require('./i18n-audit').run();
     if (!a || !a.german) all.push({ name: 'Sprache: Prüflauf', ok: false, info: 'kein Ergebnis' });

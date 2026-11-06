@@ -226,7 +226,7 @@ async function scanHost(host, call, { signal, onProgress = () => {}, pollMs = 30
   }
   const rep = await call(`<get_reports report_id="${xmlEsc(reportId)}" format_id="${REPORT_XML}" details="1" ignore_pagination="1" filter="apply_overrides=0 min_qod=70 rows=${MAX_FINDINGS} sort-reverse=severity"/>`, { timeoutMs: 600000 });
   const findings = parseReport(rep, host);
-  return { ran: true, findings, notes: [`Greenbone: ${findings.length} Befund(e) auf ${host}${st.nvts ? ` (${st.nvts} Tests verfügbar)` : ''}.`] };
+  return { ran: true, findings, scanSeconds: (Date.now() - t0) / 1000, notes: [`Greenbone: ${findings.length} Befund(e) auf ${host}${st.nvts ? ` (${st.nvts} Tests verfügbar)` : ''}.`] };
 }
 
 module.exports = { parseXml, createClient, wslExec, status, ensureGentleConfig, scanHost, parseReport, resultToFinding, BANNED_FAMILIES, CONFIG_NAME, validHost };

@@ -252,6 +252,10 @@
             <div><dt>KI</dt><dd id="sumAi">–</dd></div>
             <div><dt>Gründlichkeit</dt><dd><button type="button" class="link-btn" id="sbMode" title="Umschalten">Gründlich</button></dd></div>
           </dl>
+          <div class="set-row gb-run" id="gbRunRow" hidden>
+            <div class="set-label"><b>Greenbone OpenVAS</b><span>Gilt nur für diese Prüfung. Verlängert sie deutlich.</span></div>
+            <label class="switch"><input type="checkbox" id="gbRunChk" aria-label="Greenbone in dieser Prüfung mitlaufen lassen" /><span></span></label>
+          </div>
           <div id="estimateCard" class="estimate" hidden aria-live="polite"></div>
           <button id="runBtn" class="btn primary big" disabled>
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 5.5v13l11-6.5-11-6.5z" fill="currentColor"/></svg>
@@ -679,6 +683,10 @@
           <div class="set-row">
             <div class="set-label"><b>Zusammenfassung per KI</b><span>Nach jedem Lauf ein Absatz in Alltagssprache über das Ergebnis. Aus: Vigil schreibt ihn regelbasiert.</span></div>
             <label class="switch"><input type="checkbox" id="runSumChk" /><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-label"><b>KI auch für Webadressen</b><span>Gibt die Serverantwort (Header und Seitenanfang) an die gewählte KI. Mit Cloud-KI verlässt sie deinen Rechner und kostet Geld. Aus: Webadressen und Server prüft Vigil ohne KI.</span></div>
+            <label class="switch"><input type="checkbox" id="aiWebChk" /><span></span></label>
           </div>
         </section>
 

@@ -27,7 +27,7 @@ It combines **fixed rules and live vulnerability databases** (which find known p
 - **One place for everything you own** – drop a folder, a ZIP/JAR/EXE, type a URL, a server or a container image, or pick *This Windows PC*, Docker, AWS, Azure or Google Cloud (read-only).
 - **Clear results** – a security grade, findings sorted by risk, no duplicates, and for each one: what is wrong, what can happen, and a concrete fix with copy-ready snippets.
 - **AI that has to prove itself** – AI-only findings are cross-checked against the code; refuted ones are dropped, unclear ones are marked *unconfirmed*.
-- **Privacy first** – with Ollama nothing leaves your computer. With cloud AI, detected secrets are redacted before sending. Keys and tokens are stored encrypted.
+- **Privacy first** – with Ollama nothing leaves your computer. With cloud AI, detected secrets are redacted before sending. The AI reads code only; server responses from web addresses reach it only if you turn on **AI for web addresses too** in the settings. Keys and tokens are stored encrypted.
 - **Up to date without app updates** – detection data (gitleaks rules, retire.js, CISA KEV, EPSS, OSV) is fetched and validated automatically, at least once a day.
 - **Knows your history** – findings are tracked across runs: new, fixed, back again, false positive, accepted risk, plus trend, baseline and package search (SBOM).
 - **Reports for everyone** – one-page executive summary (PDF), full PDF/HTML/Markdown report, SARIF and JSON for CI.
@@ -69,7 +69,7 @@ It combines **fixed rules and live vulnerability databases** (which find known p
 ## Staying current
 
 - **Scheduled checks:** daily or weekly, reporting only new findings (Windows notification, webhook for Slack, Teams, Discord). Missed runs are caught up. Unattended, Vigil only checks approved targets.
-- **Greenbone OpenVAS:** with at least 8 GB of memory and WSL present, Vigil offers on first start to set up the free Greenbone Community Edition: in a separate WSL environment with Docker Engine, without Docker Desktop. This downloads several GB and takes at least 40 GB of disk. Greenbone only needs memory during a scan. Checks of approved servers take much longer with it; under *Settings → Checks* you can cancel, switch off or remove it.
+- **Greenbone OpenVAS:** with at least 8 GB of memory and WSL present, Vigil offers on first start to set up the free Greenbone Community Edition: in a separate WSL environment with Docker Engine, without Docker Desktop. This downloads several GB and takes at least 40 GB of disk. Greenbone only needs memory during a scan. Checks of approved servers take much longer with it. Under *New check* you can include or exclude it for a single check; under *Settings → Checks* you can cancel, switch it off entirely or remove it.
 - **Linux packages:** the SSH check compares installed packages with OSV (Debian, Ubuntu, Rocky, AlmaLinux). Only package names and versions go to osv.dev.
 - **End of support:** dates come daily from endoflife.date; the built-in values are only a fallback.
 - **Pause:** A paused check, or one interrupted by closing the app, continues later where it stopped. Finished steps and AI blocks are kept; only the step that was running starts over. Greenbone setup can be paused too and resumes at the next start.

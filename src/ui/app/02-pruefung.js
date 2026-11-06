@@ -59,7 +59,7 @@ async function refreshEstimate() {
   card.classList.add('loading');
   card.innerHTML = '<div class="est-head"><span>Vorschau dieses Laufs</span><span class="muted small">rechne …</span></div>';
   let r;
-  try { r = await window.vigil.estimateAudit({ targets: state.targets, providerId: state.config.selected }); } catch (e) { r = { ok: false, error: e.message }; }
+  try { r = await window.vigil.estimateAudit({ targets: state.targets, providerId: state.config.selected, ...(gbRunApplies() ? { useGreenbone: gbRunOn() } : {}) }); } catch (e) { r = { ok: false, error: e.message }; }
   if (seq !== estSeq) return; // inzwischen geaendert
   card.classList.remove('loading');
   if (!showCard) { state.estimate = r && r.ok ? r.current : null; setRunEta(); updateReady({ ok: true }); return; }
@@ -134,6 +134,7 @@ async function runAudit(opts = {}) {
   $('barFill').style.width = '0%';
   $('progressTitle').textContent = 'Prüfung läuft …';
   $('progressPanel').classList.remove('done', 'failed');
+  state.runPhases = phasesForTargets();
   renderStepper('ingest');
   resetStage();
   $('baselineStatus').textContent = 'Prüfung läuft – die Befunde erscheinen hier, sobald sie fertig ist.';
@@ -165,12 +166,13 @@ async function runAudit(opts = {}) {
     if (p.cost) updateCost(p.cost, false);
   });
 
-  const res = await window.vigil.runAudit({ targets: state.targets, providerId: opts.providerId || state.config.selected, ...(budgetConfirmed ? { budgetConfirmed: true } : {}), ...(resumeId ? { resumeId } : {}) });
+  const res = await window.vigil.runAudit({ targets: state.targets, providerId: opts.providerId || state.config.selected, ...(budgetConfirmed ? { budgetConfirmed: true } : {}), ...(resumeId ? { resumeId } : {}), ...(!resumeId && gbRunApplies() ? { useGreenbone: gbRunOn() } : {}) });
   // Bestaetigte Hosts hat der Main-Prozess auf die Freigabeliste gesetzt.
   try { state.config.allowlist = (await window.vigil.getConfig()).allowlist || []; } catch { /* egal */ }
   loadKnown();
   unsub();
   clearInterval(state.elapsedTimer);
+  state.gbChoice = null; // Die Wahl gilt nur fuer diese eine Pruefung
   state.running = false; updateRunState(); setRunEta();
   $('cancelBtn').hidden = true;
   $('pauseBtn').hidden = true; setPaused(false);
@@ -202,19 +204,20 @@ async function runAudit(opts = {}) {
 function resetStage() {
   state.stagePhase = null;
   $('radarBlips').innerHTML = '';
-  $('stagePhase').textContent = PHASES[0].label;
-  $('stageStep').textContent = `Schritt 1 von ${PHASES.length}`;
+  $('stagePhase').textContent = state.runPhases[0].label;
+  $('stageStep').textContent = `Schritt 1 von ${state.runPhases.length}`;
   $('stageMsg').textContent = 'Starte …';
   $('stagePct').textContent = '0 %';
 }
 function updateStage(p) {
-  const i = PHASES.findIndex((x) => x.key === p.phase);
+  const phases = state.runPhases;
+  const i = phases.findIndex((x) => x.key === p.phase);
   if (i >= 0 && p.phase !== state.stagePhase) {
     state.stagePhase = p.phase;
     const el = $('stagePhase');
-    el.textContent = PHASES[i].label;
+    el.textContent = phases[i].label;
     el.classList.remove('swap'); void el.offsetWidth; el.classList.add('swap');
-    $('stageStep').textContent = `Schritt ${i + 1} von ${PHASES.length}`;
+    $('stageStep').textContent = `Schritt ${i + 1} von ${phases.length}`;
   }
   if (p.message) $('stageMsg').textContent = p.message;
   $('stagePct').textContent = p.total ? Math.round((p.done / p.total) * 100) + ' %' : '–';

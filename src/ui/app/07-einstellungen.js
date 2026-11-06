@@ -197,6 +197,7 @@ function renderSettings() {
   $('fileBudgetInput').value = state.config.aiFileBudget || 0;
   $('embedModelInput').value = state.config.embedModel || '';
   $('runSumChk').checked = state.config.aiRunSummary !== false;
+  $('aiWebChk').checked = !!state.config.aiForWeb;
   $('monthlyBudgetInput').value = state.config.monthlyBudgetUsd || 0;
   $('privacyChk').checked = !!state.config.privacyMode;
   $('privacyTermsInput').value = (state.config.privacyTerms || []).join('\n');
@@ -268,6 +269,7 @@ function collectSettings() {
   state.config.aiFileBudget = Math.max(0, parseInt($('fileBudgetInput').value, 10) || 0);
   state.config.embedModel = $('embedModelInput').value.trim();
   state.config.aiRunSummary = $('runSumChk').checked;
+  state.config.aiForWeb = $('aiWebChk').checked;
   state.config.monthlyBudgetUsd = Math.max(0, parseFloat($('monthlyBudgetInput').value) || 0);
   state.config.privacyMode = $('privacyChk').checked;
   const lines = (id) => $(id).value.split(/\n/).map((x) => x.trim()).filter(Boolean).slice(0, 200);

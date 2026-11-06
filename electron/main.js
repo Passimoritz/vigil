@@ -265,9 +265,9 @@ ipcMain.handle('schedules:run', (_e, id) => runSchedule(String(id)));
 ipcMain.handle('schedules:background', (_e, p) => { const c = loadConfig(); c.runInBackground = !!(p && p.runInBackground); c.startAtLogin = !!(p && p.startAtLogin); const ok = saveConfig(c); applyBackground(c); return { ok }; });
 
 // --- Greenbone (OpenVAS) und Zustand der aktiven Werkzeuge ---
-function greenboneFor(c) {
+function greenboneFor(c, choice) {
   const g = c.greenbone || {};
-  return g.enabled && (g.setup || {}).state === 'ready' ? { enabled: true, user: 'admin', password: dec(g.passEnc || '') } : null;
+  return gbSetup.greenboneActive(g, choice) ? { enabled: true, user: 'admin', password: dec(g.passEnc || '') } : null;
 }
 // Automatische Einrichtung: laeuft im Hintergrund, Stand wird gespeichert und laesst sich fortsetzen
 const gbSetup = require('../src/core/greenbone-setup');
@@ -684,6 +684,8 @@ function effectiveConfig(cfg, providerId) {
     analysisDepth: cfg.analysisDepth === 'standard' ? 'standard' : 'thorough',
     activeScan: !!cfg.activeScan,
     aiValidation: cfg.aiValidation !== false,
+    // Serverantworten von Webadressen ebenfalls an die KI geben (aus: die KI sieht nur Code)
+    aiForWeb: !!cfg.aiForWeb,
     redactSecrets: cfg.redactSecrets !== false,
     customRules: Array.isArray(cfg.customRules) ? cfg.customRules : [],
     disabledRules: Array.isArray(cfg.disabledRules) ? cfg.disabledRules : [],
@@ -849,9 +851,9 @@ app.whenReady().then(() => {
     storeFile: STORE_PATH(),
     runAudit,
     runState,
-    buildConfig: (providerId) => {
+    buildConfig: (providerId, job = {}) => {
       const c = loadConfig(); applyProxySafe(c);
-      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel: loadIntel(INTEL_PATH()), domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), greenbone: greenboneFor(c), webCrawl: c.webCrawl !== false, allowlist: c.allowlist || [], malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4, secretLiveCheck: c.secretLiveCheck === true, yara: { rulesDir: YARA_DIR() }, osvOffline: c.osvOffline ? osvOffline.createOfflineQuery(OSV_DIR()) : null, systemSettings: systemSettingsFor(c) };
+      return { ...effectiveConfig(c, providerId || c.selected), aiCache: aiCache(), intel: loadIntel(INTEL_PATH()), domAudit: c.domAudit !== false ? domAudit : null, apiMatrix: apiMatrixFor(c), webLogin: webLoginFor(c), feeds: currentFeeds(), greenbone: greenboneFor(c, job.useGreenbone), webCrawl: c.webCrawl !== false, allowlist: c.allowlist || [], malwareScan: c.malwareScan !== false, malwareBazaarKey: dec(c.malwareBazaarKeyEnc || ''), maxRequestsPerSecond: c.maxRequestsPerSecond || 4, secretLiveCheck: c.secretLiveCheck === true, yara: { rulesDir: YARA_DIR() }, osvOffline: c.osvOffline ? osvOffline.createOfflineQuery(OSV_DIR()) : null, systemSettings: systemSettingsFor(c) };
     },
   });
   // Browser-Erweiterung: Adresse nur vormerken – das Fenster fragt nach, bevor sie in die Pruefliste kommt
@@ -948,11 +950,14 @@ ipcMain.handle('audit:run', async (e, payload) => {
   const clock = new timing.PhaseClock();
   const providerId = v.data.providerId || cfg.selected;
   // Monatliches KI-Budget: ausgeschoepft -> nur nach ausdruecklicher Bestaetigung starten
-  const over = v.data.targets.some((t) => t.type === 'path') ? budgetBlocked(cfg, effectiveConfig(cfg, providerId)) : null;
+  const over = v.data.targets.some((t) => t.type === 'path' || (cfg.aiForWeb && (t.type === 'url' || t.type === 'endpoint'))) ? budgetBlocked(cfg, effectiveConfig(cfg, providerId)) : null;
   if (over && !v.data.budgetConfirmed) return { ok: false, budgetExceeded: true, budget: over, error: budgetMsg(over) };
   const saved = v.data.resumeId && runState.read();
+  const resuming = !!saved && saved.id === v.data.resumeId;
   const job = orchestrator.enqueue({
-    targets: scope.targets, providerId, origin: 'app', ...(saved && saved.id === v.data.resumeId ? { resumeId: saved.id } : {}),
+    targets: scope.targets, providerId, origin: 'app', ...(resuming ? { resumeId: saved.id } : {}),
+    // Beim Fortsetzen gilt die Wahl vom Start der Pruefung
+    useGreenbone: resuming ? saved.useGreenbone : v.data.useGreenbone,
     onProgress: (p) => { clock.tick(p); if (!orchestrator.isPaused()) taskbar(p.total ? Math.min(1, (p.done || 0) / p.total) : 2, p.total ? 'normal' : 'indeterminate'); try { e.sender.send('audit:progress', p); } catch { /* Fenster weg */ } },
   });
   taskbar(2, 'indeterminate');
@@ -1177,7 +1182,7 @@ ipcMain.handle('audit:estimate', async (_e, payload) => {
   const v = check(ScanRequestSchema, payload);
   if (!v.ok) return { ok: false, error: v.error };
   const cfg = loadConfig();
-  const eff = { ...effectiveConfig(cfg, v.data.providerId || cfg.selected), timingCalib: timing.load(TIMING_PATH()) };
+  const eff = { ...effectiveConfig(cfg, v.data.providerId || cfg.selected), timingCalib: timing.load(TIMING_PATH()), greenbone: gbSetup.greenboneActive(cfg.greenbone || {}, v.data.useGreenbone) ? { enabled: true } : null };
   const targets = withVerified(v.data.targets);
   try {
     const current = await estimateAudit(targets, eff);

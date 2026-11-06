@@ -100,12 +100,32 @@ function renderGbProgress(g) {
   fill.parentElement.classList.toggle('busy', pct == null);
   fill.style.width = `${pct == null ? 100 : pct}%`;
 }
+// Greenbone fuer eine einzelne Pruefung: Vorgabe aus den Einstellungen, die Einstellung selbst bleibt unveraendert
+function gbRunApplies() {
+  return !!(state.gb && state.gb.ready) && state.targets.some((t) => t.type === 'url' || t.type === 'endpoint');
+}
+function gbRunOn() {
+  return state.gbChoice == null ? !!(state.gb && state.gb.enabled) : state.gbChoice;
+}
+function renderGbRun() {
+  const row = $('gbRunRow');
+  if (!row) return;
+  row.hidden = !gbRunApplies();
+  $('gbRunChk').checked = gbRunOn();
+  $('gbRunChk').disabled = state.running;
+}
+
 let gbAsked = false;
 function renderGreenbone() {
   if (!$('gbEnabled') || !window.vigil.greenboneGet) return;
   window.vigil.greenboneGet().then((g) => {
     const st = g.setup || {};
     const running = st.state === 'running', ready = st.state === 'ready';
+    const prevGb = state.gb;
+    state.gb = { ready, enabled: !!g.enabled };
+    // Geaenderter Stand aendert auch die voraussichtliche Dauer
+    if (prevGb && (prevGb.ready !== ready || prevGb.enabled !== !!g.enabled)) updateRunState();
+    else renderGbRun();
     $('gbEnabled').checked = !!g.enabled;
     $('gbEnabled').disabled = !ready;
     $('gbAuto').hidden = running;
@@ -137,9 +157,11 @@ function bindGreenbone() {
     toast(r && r.ok ? 'Greenbone entfernt.' : (r && r.error) || 'Nicht entfernt.', r && r.ok ? 'ok' : 'err');
     renderGreenbone();
   };
+  $('gbRunChk').onchange = () => { state.gbChoice = $('gbRunChk').checked; updateRunState(); };
   $('gbEnabled').onchange = async () => {
     const r = await window.vigil.greenboneSetEnabled($('gbEnabled').checked);
-    if (!r || !r.ok) { toast((r && r.error) || 'Nicht gespeichert.', 'err'); renderGreenbone(); }
+    if (!r || !r.ok) toast((r && r.error) || 'Nicht gespeichert.', 'err');
+    renderGreenbone();
   };
   $('gbTest').onclick = async () => {
     const out = $('gbResult');

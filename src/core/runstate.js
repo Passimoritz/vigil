@@ -21,10 +21,10 @@ function createRunState({ file, cipher = null }) {
       return d ? { id: d.id, targets: d.targets, providerId: d.providerId || null, paused: !!d.paused, savedAt: d.savedAt, steps: Object.keys(d.steps || {}).length } : null;
     },
     // Oeffnet den Stand eines Laufs. Ziele ohne Freigabe-Vermerk: Beim Fortsetzen prueft die App die Freigabe neu.
-    open({ id, targets, providerId }, { resume = false } = {}) {
+    open({ id, targets, providerId, useGreenbone }, { resume = false } = {}) {
       const old = resume ? read() : null;
       const data = old && old.id === id ? old : { id, steps: {} };
-      Object.assign(data, { targets: targets.map((t) => ({ type: t.type, value: t.value })), providerId: providerId || null, paused: false });
+      Object.assign(data, { targets: targets.map((t) => ({ type: t.type, value: t.value })), providerId: providerId || null, useGreenbone, paused: false });
       const save = () => { data.savedAt = new Date().toISOString(); try { secure.writeJson(file, data, cipher); } catch (e) { console.warn('Prüfungsstand nicht gespeichert:', e.message); } };
       save();
       return {

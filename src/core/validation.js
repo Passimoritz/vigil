@@ -46,6 +46,8 @@ const ScanRequestSchema = z.object({
   budgetConfirmed: z.boolean().optional(),
   // Gespeicherte Pruefung fortsetzen
   resumeId: z.string().uuid().optional(),
+  // Greenbone nur fuer diese Pruefung dazu- oder abgewaehlt
+  useGreenbone: z.boolean().optional(),
 });
 
 const StatusUpdateSchema = z.object({ status: z.enum(FINDING_STATUSES), note: z.string().max(500).optional(), expiresInDays: z.number().int().min(1).max(3650).optional() });

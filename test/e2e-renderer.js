@@ -228,6 +228,42 @@
     return (ok && Array.isArray(state.config.reportFrameworks) && !state.config.reportFrameworks.length && !!$('signChk') && !!$('verifyBtn')) || 'nicht gespeichert';
   });
 
+  await t('Greenbone je Prüfung: Schalter nur bei passendem Ziel, Einstellung unverändert', async () => {
+    const before = { gb: state.gb, targets: state.targets };
+    showView('scan');
+    state.gb = { ready: false, enabled: true }; state.targets = [{ type: 'url', value: 'https://a.example' }]; renderTargets();
+    const noSetup = $('gbRunRow').hidden;
+    state.gb = { ready: true, enabled: true }; state.targets = [{ type: 'path', value: 'C:\\x' }]; renderTargets();
+    const noWeb = $('gbRunRow').hidden;
+    state.targets = [{ type: 'endpoint', value: '192.0.2.1:22' }]; renderTargets();
+    const shown = !$('gbRunRow').hidden && $('gbRunChk').checked && $('gbRunRow').getBoundingClientRect().height > 0;
+    $('gbRunChk').click();
+    const off = state.gbChoice === false && gbRunOn() === false && state.gb.enabled === true;
+    state.gb = { ready: true, enabled: false }; state.gbChoice = null; renderGbRun();
+    const defaultOff = !$('gbRunChk').checked;
+    $('gbRunChk').click();
+    const on = gbRunOn() === true;
+    state.gbChoice = null; state.gb = before.gb; state.targets = before.targets; renderTargets();
+    return (noSetup && noWeb && shown && off && defaultOff && on) || JSON.stringify({ noSetup, noWeb, shown, off, defaultOff, on });
+  });
+
+  await t('Prüfungsverlauf: KI-Schritte nur, wenn Code dabei ist', async () => {
+    const before = { targets: state.targets, phases: state.runPhases };
+    const keysFor = (targets) => { state.targets = targets; state.runPhases = phasesForTargets(); renderStepper('ingest'); return state.runPhases.map((p) => p.key); };
+    const noAi = [[{ type: 'url', value: 'https://a.example' }], [{ type: 'image', value: 'nginx' }], [{ type: 'system', value: 'browserext' }]].map(keysFor);
+    const shownSteps = $('stepper').querySelectorAll('.pstep').length;
+    const mixed = keysFor([{ type: 'path', value: 'C:\\x' }, { type: 'url', value: 'https://a.example' }]);
+    // Mit der Einstellung gehoert die KI auch bei Webadressen dazu, bei Images weiterhin nicht
+    const wasWeb = state.config.aiForWeb;
+    state.config.aiForWeb = true;
+    const webOn = keysFor([{ type: 'endpoint', value: '192.0.2.1:443' }]);
+    const imageOn = keysFor([{ type: 'image', value: 'nginx' }]);
+    state.config.aiForWeb = wasWeb;
+    state.targets = before.targets; state.runPhases = before.phases;
+    const ok = noAi.every((k) => !k.includes('analyze') && !k.includes('validate') && k.includes('done')) && shownSteps === noAi[2].length && mixed.includes('analyze') && mixed.includes('validate') && webOn.includes('analyze') && !imageOn.includes('analyze') && !!$('aiWebChk') && !$('aiWebChk').checked;
+    return ok || JSON.stringify({ noAi, shownSteps, mixed, webOn, imageOn });
+  });
+
   await t('Englisch: Befundtexte im Ergebnis übersetzt', async () => {
     const r = await window.vigil.sampleDemo();
     state.config.lang = 'en'; window.applyLanguage('en');

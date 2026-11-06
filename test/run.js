@@ -767,6 +767,31 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
       check('vorprüfung im Thread: eigene Regeln gelten', custom.pre.findings.some((f) => /Firma/.test(f.title || '') || /Firma/.test(f.ruleId || '')));
     }
 
+    // Greenbone je Pruefung: Wahl geht vor der Einstellung, ohne Einrichtung laeuft nichts
+    {
+      const { greenboneActive: gbA } = require('../src/core/greenbone-setup');
+      const ready = { setup: { state: 'ready' } };
+      check('greenbone je Prüfung: ohne Wahl gilt die Einstellung', gbA({ ...ready, enabled: true }) === true && gbA({ ...ready, enabled: false }) === false);
+      check('greenbone je Prüfung: Wahl geht vor der Einstellung', gbA({ ...ready, enabled: true }, false) === false && gbA({ ...ready, enabled: false }, true) === true);
+      check('greenbone je Prüfung: ohne fertige Einrichtung läuft nichts', gbA({ enabled: true, setup: { state: 'paused' } }, true) === false && gbA({}, true) === false && gbA(null, true) === false);
+      const nfs = require('fs'); const npath = require('path');
+      const dir = nfs.mkdtempSync(npath.join(require('os').tmpdir(), 'vigil-gbrun-test-'));
+      const { createRunState } = require('../src/core/runstate');
+      const { createOrchestrator } = require('../electron/orchestrator');
+      const file = npath.join(dir, 'p.json');
+      const rs = createRunState({ file });
+      const id = '33333333-3333-4333-8333-333333333333';
+      rs.open({ id, targets: [], providerId: null, useGreenbone: false }).setPaused(true);
+      check('greenbone je Prüfung: Wahl überlebt den Neustart', createRunState({ file }).read().useGreenbone === false);
+      rs.clear();
+      const seen = [];
+      const orch = createOrchestrator({ storeFile: npath.join(dir, 's.json'), runState: rs, buildConfig: (_p, job) => { seen.push(job.useGreenbone); return {}; }, runAudit: async () => ({ result: { findings: [], meta: {} } }) });
+      await orch.enqueue({ targets: [{ type: 'url', value: 'https://a.example' }], origin: 'app', useGreenbone: false }).done;
+      await orch.enqueue({ targets: [{ type: 'url', value: 'https://a.example' }], origin: 'app' }).done;
+      check('greenbone je Prüfung: Wahl kommt beim Lauf an, ohne Wahl bleibt sie offen', seen[0] === false && seen[1] === undefined);
+      nfs.rmSync(dir, { recursive: true, force: true });
+    }
+
     // Pruefung speichern und fortsetzen
     {
       const nfs = require('fs'); const npath = require('path');
@@ -1021,6 +1046,52 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     try { fs.unlinkSync(file); } catch { /* egal */ }
   }
 
+  // --- KI liest nur Code: Webadressen gehen nie an den KI-Anbieter ---
+  {
+    const http = require('http');
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const { runAudit } = require('../src/core');
+    let aiHits = 0;
+    let aiBodies = '';
+    const ai = http.createServer((q, s) => { aiHits++; let b = ''; q.on('data', (d) => { b += d; }); q.on('end', () => { aiBodies += b; s.setHeader('Content-Type', 'application/json'); s.end(JSON.stringify({ choices: [{ message: { content: '{"findings":[]}' } }] })); }); });
+    const web = http.createServer((_q, s) => { s.setHeader('Content-Type', 'text/html'); s.end('<!doctype html><title>WEBMARKE123</title>'); });
+    await new Promise((r) => ai.listen(0, '127.0.0.1', r));
+    await new Promise((r) => web.listen(0, '127.0.0.1', r));
+    const cfg = { provider: 'compat', model: 'm', baseUrl: `http://127.0.0.1:${ai.address().port}/v1`, apiKey: 'x', webCrawl: false, cveLookup: false };
+    const phases = new Set();
+    const { result } = await runAudit([{ type: 'url', value: `http://127.0.0.1:${web.address().port}`, authorized: true }], cfg, (p) => phases.add(p.phase));
+    check('ki nur für Code: Webadresse ruft den KI-Anbieter nicht auf', aiHits === 0 && !phases.has('analyze') && !phases.has('validate') && result.meta.batches === 0, `${aiHits} Aufrufe`);
+    check('ki nur für Code: Webadresse liefert trotzdem Befunde', result.findings.length > 0 && phases.has('webscan'));
+    check('ki nur für Code: Zusammenfassung kommt aus den Regeln', result.meta.runSummary && result.meta.runSummary.source === 'rules');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-aipath-'));
+    fs.writeFileSync(path.join(dir, 'a.js'), 'const x = 1;\n');
+    await runAudit([{ type: 'path', value: dir }], { ...cfg, aiValidation: false, aiRunSummary: false }, () => {});
+    check('ki nur für Code: Ordner geht weiter an die KI', aiHits > 0);
+    // Die Einstellung entscheidet, ob Serverantworten an die KI gehen, auch in gemischten Pruefungen
+    const webT = { type: 'url', value: `http://127.0.0.1:${web.address().port}`, authorized: true };
+    const quiet = { ...cfg, aiValidation: false, aiRunSummary: false };
+    aiBodies = ''; aiHits = 0;
+    await runAudit([webT, { type: 'path', value: dir }], quiet, () => {});
+    check('ki für Webadressen aus: gemischte Prüfung schickt nur den Code', aiHits > 0 && !aiBodies.includes('WEBMARKE123') && aiBodies.includes('const x'));
+    // Auch der KI-Gegencheck der Regel-Befunde sieht nichts von der Webadresse
+    fs.writeFileSync(path.join(dir, 'b.js'), 'const k = "AKIAIOSFODNN7EXAMPLE";\nrequire("child_process").exec(x);\n');
+    aiBodies = ''; aiHits = 0;
+    const webPort = `:${web.address().port}`;
+    const reviewed = await runAudit([webT, { type: 'path', value: dir }], { ...cfg, aiRunSummary: false }, () => {});
+    check('ki für Webadressen aus: Gegencheck ohne Web-Befunde, sie bleiben im Ergebnis', aiHits > 0 && !aiBodies.includes(webPort) && !aiBodies.includes('WEBMARKE123') && reviewed.result.findings.some((f) => String(f.location || '').includes(webPort)) && aiBodies.includes('verdicts'), JSON.stringify({ aiHits, port: aiBodies.includes(webPort), marke: aiBodies.includes('WEBMARKE123'), gegencheck: aiBodies.includes('verdicts'), webBefund: reviewed.result.findings.some((f) => String(f.location || '').includes(webPort)) }));
+    aiBodies = ''; aiHits = 0;
+    const webPhases = new Set();
+    const on = await runAudit([webT], { ...quiet, aiForWeb: true }, (p) => webPhases.add(p.phase));
+    check('ki für Webadressen an: Serverantwort geht an die KI', aiHits > 0 && aiBodies.includes('WEBMARKE123') && webPhases.has('analyze') && on.result.meta.batches > 0);
+    const { estimateAudit } = require('../src/core');
+    const estOff = await estimateAudit([webT], quiet), estOn = await estimateAudit([webT], { ...quiet, aiForWeb: true });
+    check('ki für Webadressen: Vorschau rechnet KI nur mit Einstellung ein, ohne Abruf', estOff.calls === 0 && estOn.calls > 0 && estOn.seconds > estOff.seconds && estOn.files === 0);
+    fs.rmSync(dir, { recursive: true, force: true });
+    ai.close(); web.close();
+  }
+
   // --- Dauer-Schaetzung lernt aus echten Laeufen ---
   {
     const t = require('../src/core/timing');
@@ -1038,6 +1109,20 @@ console.log('Harness (Schwaerzen, Slices, Gegenpruefung, Belege):');
     check('timing: nach einem 6-Min-Lauf schaetzt Vigil ~6 Min.', after.measured && Math.abs(after.seconds - 350) < 40);
     const web = t.estimate({ targets: [{ type: 'url' }], config: {} }, {});
     check('timing: Webadresse ohne KI nicht unter einer Minute', web.seconds >= 60);
+    // Greenbone zaehlt nur mit, wenn es laeuft und ein Web-Ziel da ist
+    const gbOn = { greenbone: { enabled: true } };
+    const webs2 = [{ type: 'url' }, { type: 'endpoint' }];
+    const gb2 = t.estimate({ targets: webs2, config: gbOn }, {});
+    check('timing: Greenbone verlängert die Schätzung um Start und Scan je Host', gb2.parts.greenbone === t.DEFAULTS.greenboneStart + 2 * t.DEFAULTS.greenbone && gb2.seconds - t.estimate({ targets: webs2, config: {} }, {}).seconds === gb2.parts.greenbone);
+    check('timing: Greenbone zählt nicht ohne Einschalten oder ohne Web-Ziel', t.estimate({ targets: webs2, config: { greenbone: null } }, {}).parts.greenbone === undefined && t.estimate({ targets: [{ type: 'path' }], config: gbOn }, {}).parts.greenbone === undefined);
+    // Lernt aus der Messung; ohne Messung bleibt die Schaetzung als Annahme gekennzeichnet
+    const clk2 = new t.PhaseClock(() => 0);
+    clk2.tick({ phase: 'active', message: 'x', gbTiming: { startSeconds: 120, scanSeconds: 1500 } });
+    clk2.tick({ phase: 'active', message: 'y', gbTiming: { startSeconds: null, scanSeconds: 1500 } });
+    const cal = t.learn({ web: { v: 90, n: 1 } }, clk2.finish(), { targets: webs2 });
+    const gbLearned = t.estimate({ targets: webs2, config: gbOn }, cal);
+    check('timing: Greenbone-Dauer wird gelernt', gbLearned.parts.greenbone === 120 + 2 * 1500 && gbLearned.measured);
+    check('timing: ungemessenes Greenbone gilt nicht als gelernt', !t.estimate({ targets: webs2, config: gbOn }, { web: { v: 90, n: 1 } }).measured);
   }
 
   // --- Server-Einrichtung als Code, Lizenzen, weitere Sprachen, Git-Historie ---

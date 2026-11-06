@@ -242,4 +242,11 @@ async function removeSetup({ deps = {} } = {}) {
   return r.ok ? { ok: true } : { ok: false, error: lastLines(r) };
 }
 
-module.exports = { STEPS, countImages, parseImageCount, DISTRO, COMPOSE_URL, GMP_SH, SETPW_SH, START_SH, BASE, inDistro, prerequisites, validCompose, runSetup, startSession, removeSetup, runCmd };
+// Laeuft Greenbone in dieser Pruefung mit? Eingerichtet muss es immer sein. Die Wahl fuer den Lauf geht vor der Einstellung.
+function greenboneActive(g, choice) {
+  const c = g || {};
+  if ((c.setup || {}).state !== 'ready') return false;
+  return typeof choice === 'boolean' ? choice : !!c.enabled;
+}
+
+module.exports = { greenboneActive, STEPS, countImages, parseImageCount, DISTRO, COMPOSE_URL, GMP_SH, SETPW_SH, START_SH, BASE, inDistro, prerequisites, validCompose, runSetup, startSession, removeSetup, runCmd };

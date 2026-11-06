@@ -23,6 +23,8 @@ const DEFAULTS = {
   image: 120,           // trivy je Container-Image
   tool: 25,             // je externem Werkzeug je Ordner (gitleaks, semgrep …)
   activeWeb: 300,       // nmap + nuclei je Webadresse
+  greenboneStart: 300,  // Greenbone hochfahren, einmal je Lauf
+  greenbone: 3600,      // Greenbone-Scan je Host: Annahme bis zum ersten gemessenen Scan
   gitHistory: 8,
   system: 30,           // Windows/Docker
   cloud: 120,           // Cloud-Konto (viele CLI-Aufrufe)
@@ -60,6 +62,9 @@ function estimate({ targets = [], files = 0, deps = 0, calls = 0, local = false,
   if (config.activeScan) {
     parts.active = paths.length * EXTERNAL_TOOLS * learned(calib, 'tool', DEFAULTS.tool) + webs.length * learned(calib, 'activeWeb', DEFAULTS.activeWeb);
   }
+  if (config.greenbone && config.greenbone.enabled && webs.length) {
+    parts.greenbone = learned(calib, 'greenboneStart', DEFAULTS.greenboneStart) + webs.length * learned(calib, 'greenbone', DEFAULTS.greenbone);
+  }
   if (calls) {
     const per = learned(calib, aiKey(config), local ? DEFAULTS.aiLocal : DEFAULTS.aiCloud);
     // Gegenpruefung: ein Zusatzaufruf je etwa 4 Hauptaufrufe
@@ -67,14 +72,19 @@ function estimate({ targets = [], files = 0, deps = 0, calls = 0, local = false,
     parts.ai = (calls + validate) * per + (local && !(calib[aiKey(config)] && calib[aiKey(config)].n) ? DEFAULTS.aiWarmup : 0);
   }
   const seconds = Math.round(Object.values(parts).reduce((a, b) => a + b, 0));
-  const measured = !!(calls ? calib[aiKey(config)] && calib[aiKey(config)].n : Object.keys(calib).length);
+  // Solange kein Greenbone-Scan gemessen ist, bleibt dessen grosser Anteil eine Annahme
+  const measured = !!(calls ? calib[aiKey(config)] && calib[aiKey(config)].n : Object.keys(calib).length) && (!parts.greenbone || !!(calib.greenbone && calib.greenbone.n));
   return { seconds, parts, measured };
 }
 
 // Misst die Phasen eines Laufs anhand der Fortschrittsmeldungen.
 class PhaseClock {
-  constructor(now = () => Date.now()) { this.now = now; this.t0 = now(); this.cur = null; this.since = this.t0; this.spent = {}; this.aiCalls = 0; this.validateCalls = 0; }
+  constructor(now = () => Date.now()) { this.now = now; this.t0 = now(); this.cur = null; this.since = this.t0; this.spent = {}; this.aiCalls = 0; this.validateCalls = 0; this.gbStart = []; this.gbScan = []; }
   tick(p) {
+    if (p && p.gbTiming) {
+      if (p.gbTiming.startSeconds != null) this.gbStart.push(p.gbTiming.startSeconds);
+      this.gbScan.push(p.gbTiming.scanSeconds);
+    }
     const ph = p && p.phase;
     if (!ph) return;
     if (ph !== this.cur) { this.close(); this.cur = ph; this.since = this.now(); }
@@ -82,7 +92,7 @@ class PhaseClock {
     if (ph === 'validate' && p.total) this.validateCalls = Math.max(this.validateCalls, p.done || 0);
   }
   close() { if (this.cur) this.spent[this.cur] = (this.spent[this.cur] || 0) + (this.now() - this.since) / 1000; }
-  finish() { this.close(); this.cur = null; return { total: (this.now() - this.t0) / 1000, spent: this.spent, aiCalls: this.aiCalls, validateCalls: this.validateCalls }; }
+  finish() { this.close(); this.cur = null; return { total: (this.now() - this.t0) / 1000, spent: this.spent, aiCalls: this.aiCalls, validateCalls: this.validateCalls, gbStart: this.gbStart, gbScan: this.gbScan }; }
 }
 
 function blend(calib, key, value) {
@@ -102,6 +112,8 @@ function learn(calib, m, { targets = [], files = 0, deps = 0, config = {} }) {
   if (webs && !images && s.webscan) blend(calib, 'web', s.webscan / webs);
   if (images && !webs && s.webscan) blend(calib, 'image', s.webscan / images);
   if (config.activeScan && paths && !webs && s.active) blend(calib, 'tool', s.active / (paths * EXTERNAL_TOOLS));
+  for (const v of m.gbStart || []) blend(calib, 'greenboneStart', v);
+  for (const v of m.gbScan || []) blend(calib, 'greenbone', v);
   const calls = m.aiCalls + m.validateCalls;
   if (calls && (s.analyze || s.validate)) blend(calib, aiKey(config), ((s.analyze || 0) + (s.validate || 0)) / calls);
   calib.updatedAt = new Date().toISOString();

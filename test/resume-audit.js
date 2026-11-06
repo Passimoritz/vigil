@@ -62,6 +62,31 @@ const PHASE2 = `(async () => {
   return { ok: true, results: [{ name: 'p2', info, runBefore: runBefore && runBefore.status, banner, resumed: msgs.length, after, status: run && run.status, saved, byRun: byRun.ok ? 'ok' : byRun.error, noRunErr: !noRun.ok, same: dashMenu.join() === resultMenu.join() && dashMenu.length > 8, open }] };
 })();`;
 
+// Echte App, Greenbone eingerichtet und eingeschaltet: Fuer diesen Lauf abgewaehlt darf es nicht starten.
+const PHASE3 = (url) => `(async () => {
+  ${WAIT}
+  showView('scan');
+  state.targets = [{ type: 'url', value: ${JSON.stringify(url)}, authorized: true }];
+  renderTargets();
+  for (let i = 0; i < 50 && !(state.gb && state.gb.ready); i++) await wait(100);
+  const shown = !$('gbRunRow').hidden, def = $('gbRunChk').checked;
+  const etaOf = async (want) => { for (let i = 0; i < 100; i++) { const s = expectedSeconds(); if (s != null && want(s)) break; await wait(100); } return expectedSeconds(); };
+  const etaOn = await etaOf((s) => s > 3600);
+  const etaOnText = $('runEta').textContent;
+  $('gbRunChk').click();
+  const etaOff = await etaOf((s) => s < 3600);
+  const etaText = $('runEta').textContent;
+  const msgs = [];
+  const un = window.vigil.onProgress((p) => msgs.push(String(p.message || '')));
+  runAudit();
+  await wait(200);
+  const locked = $('gbRunChk').disabled;
+  for (let i = 0; i < 1200 && state.running; i++) await wait(100);
+  un();
+  const cfg = await window.vigil.greenboneGet();
+  return { ok: true, results: [{ name: 'p3', shown, def, etaOn, etaOnText, etaOff, etaText, locked, finished: !state.running, steps: msgs.length, gbMsgs: msgs.filter((m) => /greenbone/i.test(m)), reset: state.gbChoice === null && $('gbRunChk').checked, stillOn: cfg.enabled }] };
+})();`;
+
 function start(data, code, name) {
   const out = path.join(data, `${name}.json`);
   const script = path.join(data, `${name}.js`);
@@ -92,7 +117,16 @@ async function run() {
   let jsonOk = false;
   try { const j = JSON.parse(fs.readFileSync(path.join(data, 'saved', jsonFile), 'utf8')); jsonOk = Array.isArray(j.findings) || !!j.summary; } catch { /* bleibt false */ }
   try { fs.rmSync(data, { recursive: true, force: true }); } catch { /* egal */ }
-  return { p1, onDisk, encrypted, p2, files: files.length, jsonOk };
+  // Eigene Daten mit eingerichtetem Greenbone, Ziel ist ein kleiner Server auf diesem Rechner
+  const data3 = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-gbrun-'));
+  fs.mkdirSync(path.join(data3, 'userData'));
+  fs.writeFileSync(path.join(data3, 'userData', 'config.json'), JSON.stringify({ greenbone: { enabled: true, asked: true, setup: { state: 'ready' } } }));
+  const srv = require('http').createServer((_q, s) => { s.setHeader('Content-Type', 'text/html'); s.end('<!doctype html><title>t</title>'); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const p3 = await start(data3, PHASE3(`http://127.0.0.1:${srv.address().port}`), 'p3');
+  srv.close();
+  try { fs.rmSync(data3, { recursive: true, force: true }); } catch { /* egal */ }
+  return { p1, onDisk, encrypted, p2, p3, files: files.length, jsonOk };
 }
 
 module.exports = { run };

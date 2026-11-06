@@ -58,14 +58,14 @@ function createOrchestrator({ storeFile, runAudit, buildConfig, runState = null 
     if (current || !queue.length) return;
     const job = queue.shift();
     const ctrl = new AbortController();
-    const ck = runState && job.origin === 'app' ? runState.open({ id: job.id, targets: job.targets, providerId: job.providerId }, { resume: !!job.resumeId }) : null;
+    const ck = runState && job.origin === 'app' ? runState.open({ id: job.id, targets: job.targets, providerId: job.providerId, useGreenbone: job.useGreenbone }, { resume: !!job.resumeId }) : null;
     current = { job, ctrl, ck };
     store.updateRun(db, job.id, { status: 'RUNNING', startedAt: new Date().toISOString() });
     persist();
     let outcome;
     const t0 = Date.now();
     try {
-      const cfg = buildConfig(job.providerId);
+      const cfg = buildConfig(job.providerId, job);
       cfg.signal = ctrl.signal;
       cfg.checkpoint = checkpoint;
       if (ck) cfg.stepCache = ck;

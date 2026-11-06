@@ -185,6 +185,8 @@ async function runAudit(targets, config, onProgress = () => {}) {
       const gb = require('./greenbone');
       try {
         const r = await step(`greenbone:${t.value}`, `Greenbone ${t.value}`, async () => {
+          const gbT0 = Date.now();
+          const startsSession = !gbSession;
           // Greenbone laeuft nur waehrend der Scans: einmal je Lauf starten, am Ende wieder beenden
           if (!gbSession) {
             onProgress({ phase: 'active', message: 'Greenbone wird gestartet …' });
@@ -192,7 +194,10 @@ async function runAudit(targets, config, onProgress = () => {}) {
             if (!gbSession.ok) { const why = gbSession.error; gbSession = null; throw new Error(why); }
           }
           const call = gb.createClient({ user: config.greenbone.user, password: config.greenbone.password, signal: config.signal });
-          return gb.scanHost(hostOf(t), call, { signal: config.signal, onProgress, readyWaitMs: 30 * 60 * 1000 });
+          const res = await gb.scanHost(hostOf(t), call, { signal: config.signal, onProgress, readyWaitMs: 30 * 60 * 1000 });
+          // Echte Dauer fuer die naechste Schaetzung (timing.js). Aus dem gespeicherten Stand kommt keine Messung.
+          if (res.ran) onProgress({ phase: 'active', message: res.notes[0], gbTiming: { startSeconds: startsSession ? (Date.now() - gbT0) / 1000 - res.scanSeconds : null, scanSeconds: res.scanSeconds } });
+          return res;
         });
         webFindings.push(...r.findings); webNotes.push(...r.notes);
         if (r.ran) scannersRun.push({ target: t.value, source: 'greenbone' });
@@ -314,13 +319,26 @@ async function runAudit(targets, config, onProgress = () => {}) {
   const extraMeta = { scannersRun, throttled, sbom, modulesRun: [...new Set(scannersRun.map((s) => s.source))], ...(Object.keys(webWatch).length ? { webWatch } : {}) };
 
   // KI-Gegencheck: Regel-Befunde ab "mittel" liest die KI einmal mit Beleg und Lauf-Hinweisen gegen
+  // Die KI liest Code. Webadressen und Server nur mit der Einstellung aiForWeb, Images und Systeme nie.
+  const webAi = !!config.aiForWeb;
+  const usesAi = targets.some((t) => t.type === 'path') || (webAi && webTargets.length > 0);
+  const aiUnits = webAi ? ing.units : ing.units.filter((u) => u.kind !== 'endpoint');
+  // Ohne die Einstellung bleibt auch in gemischten Pruefungen alles von Web-Zielen bei der KI aussen vor
+  const webKeyOf = (f) => `${f.ruleId}|${f.location}`;
+  const webKeys = new Set(webFindings.map(webKeyOf));
+  const webLabels = ing.units.filter((u) => u.kind === 'endpoint').map((u) => u.label);
+  const isWebFinding = (f) => webKeys.has(webKeyOf(f)) || webLabels.some((l) => String(f.location || '').startsWith(l));
   const review = async (list) => {
-    if (aborted()) return { findings: list, errors: [], reviewed: 0, doubted: 0 };
-    try { return await step('ai-review', 'KI-Gegencheck', () => require('./harness').reviewRuleFindings({ findings: list, notes: [...webNotes, ...moduleNotes], config, onProgress })); }
-    catch (e) { return { findings: list, errors: ['KI-Gegencheck: ' + e.message], reviewed: 0, doubted: 0 }; }
+    if (aborted() || !usesAi) return { findings: list, errors: [], reviewed: 0, doubted: 0 };
+    const kept = webAi ? [] : list.filter(isWebFinding);
+    const toReview = webAi ? list : list.filter((f) => !isWebFinding(f));
+    try {
+      const r = await step('ai-review', 'KI-Gegencheck', () => require('./harness').reviewRuleFindings({ findings: toReview, notes: [...(webAi ? webNotes : []), ...moduleNotes], config, onProgress }));
+      return { ...r, findings: [...r.findings, ...kept] };
+    } catch (e) { return { findings: list, errors: ['KI-Gegencheck: ' + e.message], reviewed: 0, doubted: 0 }; }
   };
 
-  if (!ing.units.length) {
+  if (!aiUnits.length || !usesAi) {
     const rv = await review(dedupeFindings(staticFindings));
     const findings = finalize(enrich(rv.findings), targets, config);
     const empty = {
@@ -335,8 +353,8 @@ async function runAudit(targets, config, onProgress = () => {}) {
 
   await checkpoint();
   const result = await analyze({
-    units: ing.units,
-    facts: pre.facts,
+    units: aiUnits,
+    facts: aiUnits.length === ing.units.length ? pre.facts : prescan(aiUnits, { customSecrets: config.customRules, disabledRules: config.disabledRules }).facts,
     prescanFindings: staticFindings,
     config,
     onProgress,
@@ -353,15 +371,18 @@ async function runAudit(targets, config, onProgress = () => {}) {
 
 // Kosten-/Token-/Zeit-Vorschau vor dem Start: liest die Dateien ein (ohne Netz/KI) und rechnet hoch.
 // Die Dauer kommt aus timing.js und beruecksichtigt gelernte Werte frueherer Laeufe (config.timingCalib).
+const WEB_UNIT_CHARS = 20000;
 async function estimateAudit(targets, config) {
   const { estimateRun } = require('./analyze');
   const timing = require('./timing');
   const ing = await ingestTargets(targets.filter((t) => t.type === 'path'), () => {});
   const pre = prescan(ing.units, { customSecrets: config.customRules, disabledRules: config.disabledRules });
-  const run = estimateRun({ units: ing.units, facts: pre.facts, config });
+  // Die Vorschau ruft keine Webadresse ab: Fuer die KI zaehlt je Ziel eine Antwort typischer Groesse
+  const webUnits = config.aiForWeb ? targets.filter((x) => x.type === 'url' || x.type === 'endpoint').map((x) => ({ label: x.value, kind: 'endpoint', language: 'http', content: 'x'.repeat(WEB_UNIT_CHARS) })) : [];
+  const run = estimateRun({ units: [...ing.units, ...webUnits], facts: pre.facts, config });
   const t = timing.estimate({
     targets: targets.map((x) => ({ ...x, internal: (x.type === 'url' || x.type === 'endpoint') && isInternalHost(hostOf(x)) })),
-    files: ing.units.length, deps: pre.deps.length, calls: ing.units.length ? run.calls : 0, local: run.local, config,
+    files: ing.units.length, deps: pre.deps.length, calls: ing.units.length + webUnits.length ? run.calls : 0, local: run.local, config,
   }, config.timingCalib || {});
   return { ...run, seconds: t.seconds, timeParts: t.parts, timeMeasured: t.measured, files: ing.units.length, deps: pre.deps.length, truncated: ing.notes.some((n) => /Limit|uebersprungen|Uebersprungen/i.test(n)) };
 }

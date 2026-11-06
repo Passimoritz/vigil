@@ -196,9 +196,10 @@ function addTypedTarget() {
 }
 
 // Startknopf + Hinweis: sagt immer, was als Naechstes fehlt.
-// Nur Dateien/Ordner analysiert die KI – Webadressen, Server und Images laufen ohne sie.
-const needsAi = () => state.targets.some((t) => t.type === 'path');
+// Dateien/Ordner analysiert die KI. Webadressen und Server nur mit der Einstellung, Images und Systeme nie.
+const needsAi = () => state.targets.some((t) => t.type === 'path' || (!!(state.config && state.config.aiForWeb) && (t.type === 'url' || t.type === 'endpoint')));
 function updateRunState() {
+  if (typeof renderGbRun === 'function') renderGbRun();
   const ready = needsAi() ? aiReady() : { ok: true, label: 'den passiven Checks (ohne KI)' };
   $('runBtn').disabled = state.running || !state.targets.length || !ready.ok;
   if (state.running) return;
@@ -247,9 +248,12 @@ function setupDropzone() {
 }
 
 // --- Analyse ------------------------------------------------------------
+// Schritte dieser Pruefung: Ohne Ordner oder Dateien laeuft keine KI, also auch keine KI-Schritte
+const phasesForTargets = () => PHASES.filter((p) => needsAi() || !['analyze', 'validate'].includes(p.key));
 function renderStepper(activeKey) {
-  const ai = PHASES.findIndex((p) => p.key === activeKey);
-  $('stepper').innerHTML = PHASES.map((p, i) => {
+  const phases = state.runPhases || PHASES;
+  const ai = phases.findIndex((p) => p.key === activeKey);
+  $('stepper').innerHTML = phases.map((p, i) => {
     const cls = i < ai ? 'past' : i === ai ? 'active' : '';
     return `<span class="pstep ${cls}">${esc(p.label)}</span>`;
   }).join('<span class="psep">›</span>');
